@@ -815,6 +815,9 @@ func onReady(store *settings.Store, histStore *history.Store, meetStore *history
 	mHistory := systray.AddMenuItem("History", "Open history")
 	mMeetings := systray.AddMenuItem("Meetings", "Open meetings")
 	mTasksDrawer := systray.AddMenuItem("Quick tasks", "Open the tasks drawer")
+	// Always-on's pause. Shown only while the feature is on: a menu item
+	// that pauses something not happening says nothing.
+	mListenPause := systray.AddMenuItem(listenPauseLabel(false), "Stop listening until you resume it")
 	systray.AddSeparator()
 	mSettings := systray.AddMenuItem("Settings", "Open settings")
 	systray.AddSeparator()
@@ -1049,6 +1052,25 @@ func onReady(store *settings.Store, histStore *history.Store, meetStore *history
 	// clicked the instant it fires has somewhere to go.
 	task.RescheduleAll(a.tasks)
 
+	// Always-on listening. The supervisor runs for the life of the app and
+	// decides on each tick whether the microphone should be open at all --
+	// the setting, the pause switch, the frontmost app and whatever else is
+	// already recording all get a say (see alwayson.go).
+	a.startAlwaysOn()
+	go func() {
+		for {
+			listening := a.store.Get().AlwaysOn
+			ui.RunOnMain(func() {
+				if listening {
+					mListenPause.Show()
+				} else {
+					mListenPause.Hide()
+				}
+			})
+			time.Sleep(listenPollInterval)
+		}
+	}()
+
 	go func() {
 		for {
 			select {
@@ -1058,6 +1080,9 @@ func onReady(store *settings.Store, histStore *history.Store, meetStore *history
 				go ui.ShowMainWindow("history", histStore, meetStore, a.tasks, store, knownModels, modelsDir, recordingsDir)
 			case <-mMeetings.ClickedCh:
 				go ui.ShowMainWindow("meetings", histStore, meetStore, a.tasks, store, knownModels, modelsDir, recordingsDir)
+			case <-mListenPause.ClickedCh:
+				paused := a.toggleListenPause()
+				ui.RunOnMain(func() { mListenPause.SetTitle(listenPauseLabel(paused)) })
 			case <-mTasksDrawer.ClickedCh:
 				// Same entry point as the tasks hotkey, so a menu open and a
 				// key open cannot drift apart.

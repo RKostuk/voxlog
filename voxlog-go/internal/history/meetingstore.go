@@ -38,6 +38,11 @@ type Meeting struct {
 	// in the turns table. 0 means it has none -- either it predates them or
 	// its decode never got that far.
 	TurnsVersion int `json:"-"`
+	// AutoStarted marks a recording always-on listening began by itself,
+	// rather than one the user started with the key or the menu. Retention
+	// is the reason it exists: an auto-started recording with no transcript
+	// is a guess that did not pay off, and it is swept within a day.
+	AutoStarted bool `json:"auto_started,omitempty"`
 }
 
 // MeetingStore is the meetings half of history. Its public surface is
@@ -103,8 +108,8 @@ func (s *MeetingStore) Append(m Meeting) error {
 
 	_, err = db.sql.Exec(`
 		INSERT INTO meetings
-			(start_ns, recording_secs, decode_secs, text, summary, audio_path, system_audio_path, entity)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+			(start_ns, recording_secs, decode_secs, text, summary, audio_path, system_audio_path, entity, auto_started)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(start_ns) DO UPDATE SET
 			recording_secs    = excluded.recording_secs,
 			decode_secs       = excluded.decode_secs,
@@ -112,9 +117,10 @@ func (s *MeetingStore) Append(m Meeting) error {
 			summary           = excluded.summary,
 			audio_path        = excluded.audio_path,
 			system_audio_path = excluded.system_audio_path,
-			entity            = excluded.entity`,
+			entity            = excluded.entity,
+			auto_started      = excluded.auto_started`,
 		m.Start.UnixNano(), m.RecordingSeconds, m.DurationSeconds, m.Text,
-		m.Summary, m.AudioPath, m.SystemAudioPath, m.Entity)
+		m.Summary, m.AudioPath, m.SystemAudioPath, m.Entity, m.AutoStarted)
 	if err != nil {
 		return fmt.Errorf("history: appending meeting: %w", err)
 	}
@@ -160,10 +166,11 @@ func (s *MeetingStore) Update(start time.Time, mutate func(*Meeting)) error {
 			summary           = ?,
 			audio_path        = ?,
 			system_audio_path = ?,
-			entity            = ?
+			entity            = ?,
+			auto_started      = ?
 		WHERE start_ns = ?`,
 		m.RecordingSeconds, m.DurationSeconds, m.Text, m.Summary,
-		m.AudioPath, m.SystemAudioPath, m.Entity, start.UnixNano())
+		m.AudioPath, m.SystemAudioPath, m.Entity, m.AutoStarted, start.UnixNano())
 	if err != nil {
 		return fmt.Errorf("history: writing meeting %s: %w", start.Format(time.RFC3339Nano), err)
 	}
@@ -190,7 +197,7 @@ func (s *MeetingStore) SetEntity(start time.Time, entity string) error {
 
 const selectMeetingSQL = `
 	SELECT start_ns, recording_secs, decode_secs, text, summary,
-	       audio_path, system_audio_path, entity, turns_version
+	       audio_path, system_audio_path, entity, turns_version, auto_started
 	FROM meetings`
 
 type rowScanner interface{ Scan(dest ...any) error }
@@ -201,7 +208,7 @@ func scanMeeting(row rowScanner) (Meeting, error) {
 		startNS int64
 	)
 	err := row.Scan(&startNS, &m.RecordingSeconds, &m.DurationSeconds, &m.Text,
-		&m.Summary, &m.AudioPath, &m.SystemAudioPath, &m.Entity, &m.TurnsVersion)
+		&m.Summary, &m.AudioPath, &m.SystemAudioPath, &m.Entity, &m.TurnsVersion, &m.AutoStarted)
 	if err != nil {
 		return Meeting{}, err
 	}

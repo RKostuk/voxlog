@@ -96,6 +96,26 @@ type Settings struct {
 	// the user binds a key, meetings do not exist and nothing about the app
 	// changes.
 	MeetingKeyID string `json:"meeting_key"`
+	// AlwaysOn turns on continuous listening: Voxlog watches the microphone
+	// for speech and starts a recording by itself when it hears some. Off by
+	// default, and deliberately not "record everything" -- the gate is a
+	// voice-activity model plus a second check (see internal/vad and
+	// alwayson.go), so keyboard noise, music and a fan never open a file.
+	AlwaysOn bool `json:"always_on"`
+	// AlwaysOnSplitMinutes is how long a recording has to go quiet before
+	// always-on ends it and waits for the next one. This is what turns a day
+	// of listening into separate meetings rather than one twelve-hour file.
+	AlwaysOnSplitMinutes float64 `json:"always_on_split_minutes"`
+	// AlwaysOnRetentionHours is how long an auto-started recording that
+	// never produced a transcript is kept. Retention stops being optional
+	// once the app is listening all day: the failed guesses are the bulk of
+	// what always-on writes.
+	AlwaysOnRetentionHours float64 `json:"always_on_retention_hours"`
+	// AlwaysOnExcludedApps names apps that suspend always-on while they are
+	// frontmost -- a password manager, a video call the user records
+	// elsewhere, anything they would rather Voxlog did not hear.
+	AlwaysOnExcludedApps []string `json:"always_on_excluded_apps"`
+
 	// TasksKeyID opens the quick-tasks drawer -- the small always-on-top
 	// window listing what is still open, with a one-line box for adding to
 	// it. Empty by default, like the meeting key: an unbound drawer is a
@@ -207,11 +227,14 @@ func DefaultSettings() Settings {
 		TranscriptsDir:      "",
 		// Unbound: a user who never wants meeting recording sees no change in
 		// behavior, and no key of theirs is quietly taken over.
-		MeetingKeyID:         "",
-		TasksKeyID:           "",
-		TasksDrawerPlacement: "top_centre",
-		DictateActivation:    ActivationToggle,
-		MeetingTranscribe:    MeetingTranscribeStop,
+		MeetingKeyID:           "",
+		AlwaysOn:               false,
+		AlwaysOnSplitMinutes:   5,
+		AlwaysOnRetentionHours: 24,
+		TasksKeyID:             "",
+		TasksDrawerPlacement:   "top_centre",
+		DictateActivation:      ActivationToggle,
+		MeetingTranscribe:      MeetingTranscribeStop,
 		// Recordings accumulate on purpose now: a transcript is not a
 		// substitute for hearing what was actually said, and nothing deletes
 		// audio until the user turns on the cleanup settings in a later phase.

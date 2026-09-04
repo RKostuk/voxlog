@@ -34,6 +34,9 @@ type app struct {
 	embedders *embedderCache
 	queue     *decodeQueue
 	tray      *tray
+	// listen is always-on listening: the microphone gate that starts a
+	// recording by itself when it hears a conversation (see alwayson.go).
+	listen alwaysOn
 
 	// mu guards the two session slots, and nothing else. It is held for as
 	// long as it takes to open or close a capture and never across a decode

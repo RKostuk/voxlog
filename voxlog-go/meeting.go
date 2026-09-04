@@ -59,6 +59,16 @@ type meeting struct {
 
 	sysRunning bool
 	stopTicker chan struct{}
+
+	// autoStarted marks a recording always-on listening began by itself. It
+	// travels into history.Meeting so retention can tell a guess apart from
+	// a deliberate recording.
+	autoStarted bool
+	// lastVoiced is when either side last carried something loud enough to
+	// be speech. Always-on watches it to decide a recording has ended --
+	// the microphone is busy recording, so the VAD gate cannot answer that
+	// question while a meeting is running. Guarded by mu.
+	lastVoiced time.Time
 }
 
 // meetingPaths builds the two file names for a meeting starting now.
@@ -68,7 +78,14 @@ func meetingPaths(dir string, at time.Time) (mic, system string) {
 }
 
 // startMeeting begins recording a call. a.mu must be held.
-func (a *app) startMeeting() {
+func (a *app) startMeeting() { a.startMeetingWith(nil, false) }
+
+// startMeetingWith records a call. preroll is audio captured before the
+// recording began -- always-on listening hands over the seconds it was
+// holding when it decided somebody was talking, so a recording that starts
+// on the first word does not start after it. autoStarted says the app
+// decided this, not the user.
+func (a *app) startMeetingWith(preroll []float32, autoStarted bool) {
 	// The backlog gives the machine back before the first sample is recorded,
 	// not after the call: an old meeting being re-read must never be why this
 	// one decodes slowly.
@@ -97,11 +114,23 @@ func (a *app) startMeeting() {
 	}
 
 	m := &meeting{
-		start:    at,
-		spec:     spec,
-		language: cfg.Language,
-		micWAV:   micWAV,
-		micPath:  micPath,
+		start:       at,
+		spec:        spec,
+		language:    cfg.Language,
+		micWAV:      micWAV,
+		micPath:     micPath,
+		autoStarted: autoStarted,
+		lastVoiced:  at,
+	}
+
+	// The pre-roll goes in before the live stream does, so it lands at the
+	// front of the file where it belongs. The recording's start instant is
+	// still now: a couple of seconds of skew on a timeline nobody compares
+	// against a clock is not worth backdating the meeting's identity for.
+	if len(preroll) > 0 {
+		if err := micWAV.Write(preroll); err != nil {
+			log.Printf("meeting: writing the pre-roll: %v", err)
+		}
 	}
 
 	rec, err := audio.NewRecorder(cfg.InputDevice, cfg.MicGain)
@@ -117,9 +146,12 @@ func (a *app) startMeeting() {
 	// StartUnbuffered: the samples are on their way to disk, and a second copy
 	// in memory is the thing this whole design avoids.
 	if err := rec.StartUnbuffered(func(chunk []float32) {
+		voiced := audio.Level(chunk) >= systemVoicedThreshold
 		m.mu.Lock()
 		if m.muted {
 			chunk = make([]float32, len(chunk)) // same length, no sound
+		} else if voiced {
+			m.lastVoiced = time.Now()
 		}
 		err := m.micWAV.Write(chunk)
 		m.mu.Unlock()
@@ -146,6 +178,7 @@ func (a *app) startMeeting() {
 		m.mu.Lock()
 		if level >= systemVoicedThreshold {
 			m.sysVoiced += float64(len(chunk)) / audio.SampleRate
+			m.lastVoiced = time.Now()
 		}
 		err := m.sysWAV.Write(chunk)
 		m.mu.Unlock()
@@ -236,6 +269,7 @@ func (a *app) stopMeeting() {
 		RecordingSeconds: seconds,
 		AudioPath:        m.micPath,
 		SystemAudioPath:  sysPath,
+		AutoStarted:      m.autoStarted,
 	}
 	if err := a.meetings.Append(rec); err != nil {
 		log.Printf("meeting: history append: %v", err)

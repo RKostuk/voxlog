@@ -399,6 +399,48 @@
           </div>
           <input type="checkbox" class="switch" id="keep_meeting_audio">
         </div>
+        <!-- Always-on is not "record everything": a voice-activity model
+             decides whether anyone is actually talking, and only then does a
+             recording start. The subtext says so, because a microphone that
+             may open by itself is the one feature where the user has to know
+             exactly what the rule is. -->
+        <div class="item">
+          <div class="title">Start recording when I'm talking
+            <div class="subtext">Listens for speech and records a meeting on its own &middot; keyboard noise,
+              music and a fan do not start one &middot; downloads a small (~2 MB) voice-activity model</div>
+          </div>
+          <input type="checkbox" class="switch" id="always_on">
+        </div>
+        <div class="item always-on-only">
+          <div class="title">End it after silence of</div>
+          <select id="always_on_split_minutes">
+            <option value="2">2 minutes</option>
+            <option value="5">5 minutes</option>
+            <option value="10">10 minutes</option>
+            <option value="20">20 minutes</option>
+          </select>
+        </div>
+        <div class="item always-on-only">
+          <div class="title">Drop auto recordings without a transcript after
+            <div class="subtext">The guesses that did not pay off &middot; anything transcribed, and anything you started yourself, is kept</div>
+          </div>
+          <select id="always_on_retention_hours">
+            <option value="6">6 hours</option>
+            <option value="24">24 hours</option>
+            <option value="72">3 days</option>
+            <option value="0">Never delete</option>
+          </select>
+        </div>
+        <div class="item stacked always-on-only">
+          <div class="title">Never listen while these apps are in front
+            <div class="subtext">By the name in the menu bar, e.g. &ldquo;1Password&rdquo;</div>
+          </div>
+          <div id="excluded-apps-list" class="entity-dict-list"></div>
+          <div class="entity-dict-add">
+            <input type="text" id="excluded-app-input" placeholder="Add an app name">
+            <button type="button" id="excluded-app-add-btn">Add</button>
+          </div>
+        </div>
         <div class="item">
           <div class="title">Keep dictation recordings
             <div class="subtext">Lets a take be replayed or re-run against another model &middot; about 20 MB a day at twenty takes</div>
@@ -528,6 +570,7 @@
     var models = [];
     var llmModel = { downloaded: false };
     var entityDict = [];
+    var excludedApps = [];
     var entityDictSeeded = false;
     // Raw KeyID strings ("vk:54"); the form shows human labels for these
     // but always saves the raw ids.
@@ -750,6 +793,50 @@
         });
       });
     }
+
+    // The exclusion list reuses the project dictionary's chips wholesale --
+    // it is the same shape of thing (a short list of names the user
+    // maintains by hand), and a second look for it would only make two
+    // lists that mean the same thing look like they do not.
+    function renderExcludedApps() {
+      var root = document.getElementById('excluded-apps-list');
+      if (!root) return;
+      root.innerHTML = excludedApps.length
+        ? excludedApps.map(function (name, i) {
+            return '<span class="entity-chip">' + escapeHtml(name) +
+              '<button type="button" class="entity-chip-remove" data-index="' + i + '" aria-label="Remove">&times;</button></span>';
+          }).join('')
+        : '<div class="subtext">Nothing excluded -- always-on listens whatever is in front.</div>';
+      root.querySelectorAll('.entity-chip-remove').forEach(function (btn) {
+        btn.addEventListener('click', function () {
+          excludedApps.splice(parseInt(btn.dataset.index, 10), 1);
+          renderExcludedApps();
+          save();
+        });
+      });
+    }
+
+    function addExcludedApp() {
+      var input = document.getElementById('excluded-app-input');
+      var v = input.value.trim();
+      input.value = '';
+      if (!v) return;
+      if (excludedApps.some(function (e) { return e.toLowerCase() === v.toLowerCase(); })) return;
+      excludedApps.push(v);
+      renderExcludedApps();
+      save();
+    }
+    document.getElementById('excluded-app-add-btn').addEventListener('click', addExcludedApp);
+    document.getElementById('excluded-app-input').addEventListener('keydown', function (e) {
+      if (e.key === 'Enter') { e.preventDefault(); addExcludedApp(); }
+    });
+
+    // The three rows under the switch are meaningless while it is off.
+    function syncAlwaysOnRows() {
+      var on = document.getElementById('always_on').checked;
+      document.querySelectorAll('.always-on-only').forEach(function (row) { row.hidden = !on; });
+    }
+    document.getElementById('always_on').addEventListener('change', syncAlwaysOnRows);
 
     document.getElementById('entity-dict-add-btn').addEventListener('click', addEntityDictEntry);
     document.getElementById('entity-dict-input').addEventListener('keydown', function (e) {
@@ -1118,6 +1205,10 @@
         history_retention: document.getElementById('history_retention').value,
         transcripts_dir: transcriptsDir,
         task_hub_enabled: document.getElementById('task_hub_enabled').checked,
+        always_on: document.getElementById('always_on').checked,
+        always_on_split_minutes: parseFloat(document.getElementById('always_on_split_minutes').value),
+        always_on_retention_hours: parseFloat(document.getElementById('always_on_retention_hours').value),
+        always_on_excluded_apps: excludedApps,
         entity_dictionary: entityDict,
         entity_dictionary_seeded: entityDictSeeded
       };
@@ -1479,6 +1570,13 @@
       syncIndicatorStyle();
 
       document.getElementById('task_hub_enabled').checked = !!settings.task_hub_enabled;
+      document.getElementById('always_on').checked = !!settings.always_on;
+      document.getElementById('always_on_split_minutes').value = String(settings.always_on_split_minutes || 5);
+      document.getElementById('always_on_retention_hours').value = String(
+        settings.always_on_retention_hours === 0 ? 0 : (settings.always_on_retention_hours || 24));
+      excludedApps = (settings.always_on_excluded_apps || []).slice();
+      renderExcludedApps();
+      syncAlwaysOnRows();
       entityDict = (settings.entity_dictionary || []).slice();
       entityDictSeeded = !!settings.entity_dictionary_seeded;
       // One-time migration convenience: tasks classified before projects

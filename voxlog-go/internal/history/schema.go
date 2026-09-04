@@ -126,6 +126,16 @@ var schemaSteps = []string{
 	-- covers the whole history or only what has been recorded since.
 	INSERT INTO turns_fts(rowid, text) SELECT id, text FROM turns;
 	`,
+	// Step 3 -- a meeting nobody asked for.
+	//
+	// Always-on listening starts a recording on its own when it hears
+	// speech. Those have to be distinguishable from the ones the user
+	// deliberately started, because retention treats them differently: an
+	// auto-started recording that never turned into a transcript is swept
+	// after a day, and one the user pressed a key for never is.
+	`
+	ALTER TABLE meetings ADD COLUMN auto_started INTEGER NOT NULL DEFAULT 0;
+	`,
 }
 
 func (d *DB) migrateSchema() error {

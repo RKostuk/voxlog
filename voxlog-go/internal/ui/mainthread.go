@@ -7,6 +7,7 @@ package ui
 #include <objc/message.h>
 #include <objc/runtime.h>
 #include <stdint.h>
+#include <string.h>
 #include <ApplicationServices/ApplicationServices.h>
 
 extern void goMainThreadTrampoline(uintptr_t handle);
@@ -365,6 +366,25 @@ static int frontmostAppPidC(void) {
 	return (int)((int (*)(id, SEL))objc_msgSend)(app, sel_registerName("processIdentifier"));
 }
 
+// frontmostAppNameC copies the frontmost app's localized name into buf.
+// Empty when there is no frontmost app or it has no name -- the caller then
+// simply has no exclusion to match against, which is the safe direction for
+// a feature that decides whether to listen.
+static void frontmostAppNameC(char *buf, int cap) {
+	if (cap > 0) buf[0] = '\0';
+	id ws = ((id (*)(id, SEL))objc_msgSend)(
+		(id)objc_getClass("NSWorkspace"), sel_registerName("sharedWorkspace"));
+	if (ws == nil) return;
+	id app = ((id (*)(id, SEL))objc_msgSend)(ws, sel_registerName("frontmostApplication"));
+	if (app == nil) return;
+	id name = ((id (*)(id, SEL))objc_msgSend)(app, sel_registerName("localizedName"));
+	if (name == nil) return;
+	const char *utf8 = ((const char *(*)(id, SEL))objc_msgSend)(name, sel_registerName("UTF8String"));
+	if (utf8 == NULL) return;
+	strncpy(buf, utf8, (size_t)cap - 1);
+	buf[cap - 1] = '\0';
+}
+
 // activateAppByPidC brings the app with the given pid back to the front.
 static void activateAppByPidC(int pid) {
 	if (pid <= 0) return;
@@ -563,6 +583,20 @@ func resizeWindow(window unsafe.Pointer, w, h float64) {
 // it, so the same window can be re-shown later. See keepAliveOnCloseC.
 func keepAliveOnClose(window unsafe.Pointer) {
 	C.keepAliveOnCloseC(window)
+}
+
+// FrontmostAppName reports the frontmost app's name ("" if unknown). Used by
+// always-on listening to honour the exclusion list. Called from a goroutine,
+// so the AppKit call hops to the main thread and waits, like every other
+// question this file answers.
+func FrontmostAppName() string {
+	var name string
+	runOnMainSync(func() {
+		var buf [256]C.char
+		C.frontmostAppNameC(&buf[0], C.int(len(buf)))
+		name = C.GoString(&buf[0])
+	})
+	return name
 }
 
 // FrontmostAppPid reports which app is frontmost right now (0 if unknown).

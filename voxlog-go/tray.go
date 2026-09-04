@@ -119,7 +119,13 @@ type tray struct {
 	meeting      bool
 	meetingSince time.Time
 	micMuted     bool
-	last         string
+	// listening is always-on's gate having the microphone open. Deliberately
+	// not a trayStateFor state: the icon means "something is being
+	// recorded", and listening is the opposite of that -- nothing is being
+	// written. It gets a title instead, because a machine that is listening
+	// must always say so.
+	listening bool
+	last      string
 	lastTitle    string
 
 	// onRecording fires when a dictation starts or stops -- when the count
@@ -164,6 +170,15 @@ func (t *tray) setDecoding(n int) {
 	t.refresh()
 }
 
+// setListening reports whether always-on has the microphone open. See the
+// field's comment for why this is a title and not an icon state.
+func (t *tray) setListening(on bool) {
+	t.mu.Lock()
+	t.listening = on
+	t.mu.Unlock()
+	t.refresh()
+}
+
 func (t *tray) startedMeeting(at time.Time) {
 	t.mu.Lock()
 	t.meeting, t.meetingSince, t.micMuted = true, at, false
@@ -196,6 +211,11 @@ func (t *tray) refresh() {
 	t.mu.Lock()
 	state := trayStateFor(t.recording, t.decoding, t.meeting, t.micMuted)
 	title := ""
+	if t.listening && !t.meeting {
+		// A hollow marker against the meeting's filled one: listening is the
+		// state where nothing is being written yet.
+		title = "◦ listening"
+	}
 	if t.meeting {
 		title = elapsedLabel(time.Since(t.meetingSince))
 		if t.micMuted {
