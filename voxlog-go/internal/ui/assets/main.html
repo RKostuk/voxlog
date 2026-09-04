@@ -75,6 +75,31 @@
     border-radius: 50%; width: 24px; height: 24px; cursor: pointer; font-size: 10px; opacity: 0;
   }
   .turn-row:hover .turn-play, .turn-row.playing .turn-play, .turn-play:focus-visible { opacity: 1; }
+  /* Search results across meetings: a row is a button, because clicking one
+     goes somewhere -- into the meeting, at that reply. */
+  .hit-row {
+    display: grid; grid-template-columns: 108px 1fr auto; gap: 10px;
+    width: 100%; text-align: left; align-items: start;
+    padding: 8px 11px; border: none; border-top: 0.5px solid var(--separator);
+    background: none; color: inherit; font: inherit; cursor: pointer;
+  }
+  .hit-row:first-child { border-top: none; }
+  .hit-row:hover { background: color-mix(in srgb, var(--accent) 9%, transparent); }
+  .hit-when, .hit-at { font-size: 11px; color: var(--tertiary); font-variant-numeric: tabular-nums; }
+  .hit-body { min-width: 0; line-height: 1.4; }
+  .hit-row mark { background: color-mix(in srgb, var(--yellow) 55%, transparent); color: inherit; border-radius: 3px; }
+
+  /* People: one row per named voice, bar relative to the person talked with
+     most. Who dominates the calendar reads faster as a length than as a
+     number of seconds. */
+  .person-row { display: flex; gap: 11px; align-items: center; padding: 10px 12px; border-top: 0.5px solid var(--separator); }
+  .person-row:first-child { border-top: none; }
+  .person-body { flex: 1; min-width: 0; }
+  .person-name { font-weight: 550; }
+  .person-bar { height: 6px; border-radius: 3px; background: var(--field); margin: 5px 0 4px; overflow: hidden; }
+  .person-bar i { display: block; height: 100%; border-radius: 3px; }
+  .person-meta { font-size: 11px; color: var(--tertiary); }
+
   .turn-row mark { background: color-mix(in srgb, var(--yellow) 55%, transparent); color: inherit; border-radius: 3px; }
 
   /* The whole call as a strip of who-spoke-when. Click it to seek. */
@@ -563,10 +588,12 @@
              they are the same subject at three depths. -->
         <div id="meetings-browse">
           <div class="pane-filters" id="meetings-filters"></div>
+          <div id="meeting-search-hits"></div>
           <div id="meetings-list"></div>
         </div>
         <div id="meeting-detail" hidden></div>
         <div id="voices-pane" hidden></div>
+        <div id="people-pane" hidden></div>
       </div>
       <div class="pane" data-pane="tasks">
         <div class="decode-banner-slot" id="tasks-decode"></div>
@@ -824,6 +851,7 @@
           return '<option value="' + escapeHtml(n) + '"' + (n === meetingEntityFilter ? ' selected' : '') + '>' + escapeHtml(n) + '</option>';
         }).join('') + '</select>' +
         '<input type="search" id="meeting-search" class="filter-search" placeholder="Search meetings" value="' + escapeHtml(meetingQuery) + '">' +
+        '<button type="button" class="act" id="open-people">People</button>' +
         '<button type="button" class="act" id="open-voices">Voices</button>';
 
       root.querySelector('#meeting-filter-entity').addEventListener('change', function (ev) {
@@ -835,8 +863,13 @@
         meetingQuery = ev.target.value;
         renderMeetingList(document.getElementById('meetings-list'),
           (window.voxlog && window.voxlog.meetings) || [], 'No meetings recorded yet.');
+        // The list filter above only sees the summary and the flat
+        // transcript; this searches the stored replies of every meeting, so
+        // a half-remembered sentence finds the moment it was said.
+        searchAllTranscripts(meetingQuery);
       });
       root.querySelector('#open-voices').addEventListener('click', openVoices);
+      root.querySelector('#open-people').addEventListener('click', openPeople);
     }
 
     var meetingQuery = '';
@@ -895,6 +928,7 @@
       document.getElementById('meetings-browse').hidden = which !== 'browse';
       document.getElementById('meeting-detail').hidden = which !== 'detail';
       document.getElementById('voices-pane').hidden = which !== 'voices';
+      document.getElementById('people-pane').hidden = which !== 'people';
       if (which !== 'detail') { stopTurnPlayer(); openMeetingID = ''; }
     }
 
@@ -917,7 +951,36 @@
         detailTurns = (detail && detail.turns) || [];
         detailSpeakers = (detail && detail.speakers) || [];
         renderMeetingDetail();
+        scrollToPendingTurn();
       });
+    }
+
+    // openMeetingAtTurn opens a meeting and scrolls to one reply. The seq is
+    // carried rather than the row index: the index is a position in whatever
+    // detailTurns happens to hold, and a re-decode between the search and
+    // the click would move it.
+    var pendingTurnSeq = -1;
+
+    function openMeetingAtTurn(id, seq) {
+      pendingTurnSeq = typeof seq === 'number' ? seq : -1;
+      openMeeting(id);
+    }
+
+    function scrollToPendingTurn() {
+      if (pendingTurnSeq < 0) return;
+      var seq = pendingTurnSeq;
+      pendingTurnSeq = -1;
+      var index = -1;
+      for (var i = 0; i < detailTurns.length; i++) {
+        if (detailTurns[i].seq === seq) { index = i; break; }
+      }
+      if (index < 0) return;
+      var row = document.querySelector('#meeting-detail .turn-row[data-turn="' + index + '"]');
+      if (!row) return;
+      row.scrollIntoView({ block: 'center' });
+      // Same highlight the player uses, so "the one you came here for" and
+      // "the one that is playing" look the same -- they usually are.
+      row.classList.add('playing');
     }
 
     function speakerByLocal(local) {
@@ -1185,6 +1248,113 @@
         var t = detailTurns[i];
         now.textContent = t ? speakerLabel(t.speaker, t.name) + ' · ' + clockTime(t.start) : '';
       }
+    }
+
+    // ---- searching every meeting at once --------------------------------
+
+    var searchSeq = 0, searchTimer = null;
+
+    // searchAllTranscripts queries the turns of every meeting. Debounced,
+    // and each result carries the request number it belongs to: typing is
+    // faster than the database, and an earlier query landing last would
+    // leave the wrong results on screen.
+    function searchAllTranscripts(query) {
+      if (searchTimer) clearTimeout(searchTimer);
+      var q = (query || '').trim();
+      if (!q) { searchSeq++; renderSearchHits([], ''); return; }
+      searchTimer = setTimeout(function () {
+        var mine = ++searchSeq;
+        window.searchMeetings(q).then(function (hits) {
+          if (mine !== searchSeq) return;
+          renderSearchHits(hits || [], q);
+        }).catch(function () {
+          if (mine !== searchSeq) return;
+          renderSearchHits([], q);
+        });
+      }, 180);
+    }
+
+    // snippetHTML renders the [[ ]] markers the database puts around matched
+    // words. Everything is escaped first and the markers replaced after, so
+    // a transcript containing literal brackets cannot inject anything.
+    function snippetHTML(snippet) {
+      return escapeHtml(snippet)
+        .split('[[').join('<mark>')
+        .split(']]').join('</mark>');
+    }
+
+    function renderSearchHits(hits, query) {
+      var root = document.getElementById('meeting-search-hits');
+      if (!root) return;
+      if (!query) { root.innerHTML = ''; return; }
+      if (!hits.length) {
+        root.innerHTML = '<div class="group-title day">In the transcripts</div>' +
+          '<div class="card"><div class="empty">Nothing said matches “' + escapeHtml(query) + '”.</div></div>';
+        return;
+      }
+      root.innerHTML = '<div class="group-title day">In the transcripts &middot; ' + hits.length +
+          (hits.length === 1 ? ' reply' : ' replies') + '</div>' +
+        '<div class="card">' + hits.map(function (h, i) {
+          return '<button type="button" class="hit-row" data-hit="' + i + '">' +
+            '<span class="hit-when">' + escapeHtml(h.day) + ' ' + escapeHtml(h.time) + '</span>' +
+            '<span class="hit-body">' +
+              '<span class="turn-who" style="color:' + speakerColor(h.speaker) + '">' +
+                escapeHtml(speakerLabel(h.speaker, h.name)) + '</span>' +
+              snippetHTML(h.snippet || h.text) +
+            '</span>' +
+            '<span class="hit-at">' + clockTime(h.start) + '</span>' +
+          '</button>';
+        }).join('') + '</div>';
+
+      root.querySelectorAll('.hit-row').forEach(function (btn) {
+        btn.addEventListener('click', function () {
+          var h = hits[parseInt(btn.dataset.hit, 10)];
+          if (h) openMeetingAtTurn(h.meeting_id, h.seq);
+        });
+      });
+    }
+
+    // ---- who I actually talk to -----------------------------------------
+
+    function openPeople() {
+      showMeetingView('people');
+      document.getElementById('people-pane').innerHTML = '<div class="empty">Adding it up…</div>';
+      window.peopleStats().then(renderPeople).catch(function (e) {
+        document.getElementById('people-pane').innerHTML =
+          '<div class="empty">' + escapeHtml(String(e)) + '</div>';
+      });
+    }
+
+    function renderPeople(people) {
+      var root = document.getElementById('people-pane');
+      people = people || [];
+      var head = '<div class="detail-head"><button type="button" class="back-btn" id="people-back">&#8249; Meetings</button>' +
+        '<span class="detail-title">People</span></div>';
+      if (!people.length) {
+        root.innerHTML = head + '<div class="empty">Nobody is named yet. Name a voice in Voices and every ' +
+          'meeting they were ever in starts counting towards this.</div>';
+        document.getElementById('people-back').addEventListener('click', function () { showMeetingView('browse'); });
+        return;
+      }
+      // Bars are relative to the person talked with most: the question is
+      // who dominates the calendar, not how many seconds exactly.
+      var top = people[0].talk_secs || 1;
+      root.innerHTML = head + '<div class="card">' + people.map(function (p) {
+        var share = Math.max(2, Math.round((p.talk_secs / top) * 100));
+        return '<div class="person-row">' +
+          '<span class="avatar" style="background:' + entityColor(p.name) + '">' +
+            escapeHtml(speakerInitials(0, p.name)) + '</span>' +
+          '<div class="person-body">' +
+            '<div class="person-name">' + escapeHtml(p.name) + '</div>' +
+            '<div class="person-bar"><i style="width:' + share + '%;background:' + entityColor(p.name) + '"></i></div>' +
+            '<div class="person-meta">' + duration(p.talk_secs) + ' across ' + p.meetings +
+              (p.meetings === 1 ? ' meeting' : ' meetings') + ' &middot; ' + p.turn_count +
+              (p.turn_count === 1 ? ' reply' : ' replies') + ' &middot; last ' + escapeHtml(p.last_seen) +
+            '</div>' +
+          '</div>' +
+        '</div>';
+      }).join('') + '</div>';
+      document.getElementById('people-back').addEventListener('click', function () { showMeetingView('browse'); });
     }
 
     // ---- voices ---------------------------------------------------------

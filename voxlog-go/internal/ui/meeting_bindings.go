@@ -33,6 +33,32 @@ type turnJSON struct {
 	Text    string `json:"text"`
 }
 
+// searchHitJSON is one search result: enough to draw the row and to open
+// the meeting scrolled to the reply that matched.
+type searchHitJSON struct {
+	MeetingID string  `json:"meeting_id"`
+	Day       string  `json:"day"`
+	Time      string  `json:"time"`
+	Seq       int     `json:"seq"`
+	Start     float64 `json:"start"`
+	LocalID   int     `json:"speaker"`
+	Name      string  `json:"name,omitempty"`
+	Text      string  `json:"text"`
+	// Snippet marks the matched words with [[ ]] rather than HTML: the page
+	// escapes everything it draws, and this is not the one exception.
+	Snippet string `json:"snippet"`
+}
+
+// personJSON is one voice across every meeting it was heard in.
+type personJSON struct {
+	VoiceID   int64   `json:"voice_id"`
+	Name      string  `json:"name"`
+	Meetings  int     `json:"meetings"`
+	TalkSecs  float64 `json:"talk_secs"`
+	TurnCount int     `json:"turn_count"`
+	LastSeen  string  `json:"last_seen"`
+}
+
 type speakerJSON struct {
 	// Row is the speaker's database id, and what naming a voice acts on.
 	Row       int64   `json:"row"`
@@ -136,6 +162,54 @@ func bindMeetings(w webview.WebView, store *history.Store, meetings *history.Mee
 			"turns":    turnsJSON(turns),
 			"speakers": speakersJSON(speakers),
 		}, nil
+	})
+
+	// searchMeetings searches every meeting's turns at once -- the pane's own
+	// search box only ever looked inside the meeting that was open. Called
+	// per keystroke, so it returns nothing for an empty query rather than
+	// every turn ever recorded.
+	w.Bind("searchMeetings", func(query string) ([]searchHitJSON, error) {
+		hits, err := meetings.SearchTurns(query)
+		if err != nil {
+			return nil, err
+		}
+		out := make([]searchHitJSON, 0, len(hits))
+		for _, h := range hits {
+			out = append(out, searchHitJSON{
+				MeetingID: h.Start.Format(time.RFC3339Nano),
+				Day:       h.Start.Format("2006-01-02"),
+				Time:      h.Start.Format("15:04"),
+				Seq:       h.Seq,
+				Start:     h.StartSecs,
+				LocalID:   h.LocalID,
+				Name:      h.Name,
+				Text:      h.Text,
+				Snippet:   h.Snippet,
+			})
+		}
+		return out, nil
+	})
+
+	// peopleStats is the cross-meeting view of who the user actually talks
+	// to. One query over meeting_speakers grouped by voice -- the reason
+	// speakers are their own rows rather than a column on turns.
+	w.Bind("peopleStats", func() ([]personJSON, error) {
+		people, err := meetings.People()
+		if err != nil {
+			return nil, err
+		}
+		out := make([]personJSON, 0, len(people))
+		for _, p := range people {
+			out = append(out, personJSON{
+				VoiceID:   p.VoiceID,
+				Name:      p.Name,
+				Meetings:  p.Meetings,
+				TalkSecs:  p.TalkSecs,
+				TurnCount: p.TurnCount,
+				LastSeen:  p.LastSeen.Format("2006-01-02"),
+			})
+		}
+		return out, nil
 	})
 
 	// setMeetingEntity files a meeting under a project by hand. Until now a

@@ -95,6 +95,37 @@ var schemaSteps = []string{
 	);
 	CREATE INDEX turns_by_meeting ON turns(meeting_ns, start_secs);
 	`,
+	// Step 2 -- full-text search across every meeting's turns.
+	//
+	// An external-content FTS5 table: the text lives in turns and is not
+	// copied here, so the index cannot disagree with the rows it indexes and
+	// the database does not carry two copies of every transcript. The
+	// triggers are the standard external-content set -- FTS5 needs the OLD
+	// text on delete and update, which is what the 'delete' command rows do.
+	`
+	CREATE VIRTUAL TABLE turns_fts USING fts5(
+		text,
+		content='turns',
+		content_rowid='id',
+		tokenize='unicode61 remove_diacritics 2'
+	);
+
+	CREATE TRIGGER turns_fts_insert AFTER INSERT ON turns BEGIN
+		INSERT INTO turns_fts(rowid, text) VALUES (new.id, new.text);
+	END;
+	CREATE TRIGGER turns_fts_delete AFTER DELETE ON turns BEGIN
+		INSERT INTO turns_fts(turns_fts, rowid, text) VALUES ('delete', old.id, old.text);
+	END;
+	CREATE TRIGGER turns_fts_update AFTER UPDATE ON turns BEGIN
+		INSERT INTO turns_fts(turns_fts, rowid, text) VALUES ('delete', old.id, old.text);
+		INSERT INTO turns_fts(rowid, text) VALUES (new.id, new.text);
+	END;
+
+	-- Meetings recorded before this step already have their turns: index
+	-- them once here rather than making every caller wonder whether search
+	-- covers the whole history or only what has been recorded since.
+	INSERT INTO turns_fts(rowid, text) SELECT id, text FROM turns;
+	`,
 }
 
 func (d *DB) migrateSchema() error {
