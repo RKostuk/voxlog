@@ -148,6 +148,9 @@ type historyEntryJSON struct {
 	TaskEntity   string `json:"task_entity,omitempty"`
 	TaskStatus   string `json:"task_status,omitempty"`
 	TaskReminder string `json:"task_reminder,omitempty"`
+	// AutoStarted marks a note always-on recorded on its own. Shown, because
+	// a line nobody dictated must not read like one that was.
+	AutoStarted bool `json:"auto_started,omitempty"`
 }
 
 // taskBySource maps a task's SourceKey to itself, so a history/meeting row
@@ -199,6 +202,7 @@ func groupByDay(entries []history.Entry, tasks map[string]task.Task) []dayGroupJ
 			Audio:            audio,
 			HasAudio:         audio != "",
 			ID:               id,
+			AutoStarted:      e.AutoStarted,
 		}
 		if t, ok := tasks[id]; ok {
 			row.TaskID = t.ID

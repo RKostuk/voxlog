@@ -60,14 +60,10 @@ type meeting struct {
 	sysRunning bool
 	stopTicker chan struct{}
 
-	// autoStarted marks a recording always-on listening began by itself. It
-	// travels into history.Meeting so retention can tell a guess apart from
-	// a deliberate recording.
-	autoStarted bool
 	// lastVoiced is when either side last carried something loud enough to
-	// be speech. Always-on watches it to decide a recording has ended --
-	// the microphone is busy recording, so the VAD gate cannot answer that
-	// question while a meeting is running. Guarded by mu.
+	// be speech. Kept for the same reason a session keeps it, and read by
+	// nothing else today: a meeting the user started ends when they say so.
+	// Guarded by mu.
 	lastVoiced time.Time
 }
 
@@ -78,14 +74,11 @@ func meetingPaths(dir string, at time.Time) (mic, system string) {
 }
 
 // startMeeting begins recording a call. a.mu must be held.
-func (a *app) startMeeting() { a.startMeetingWith(nil, false) }
-
-// startMeetingWith records a call. preroll is audio captured before the
-// recording began -- always-on listening hands over the seconds it was
-// holding when it decided somebody was talking, so a recording that starts
-// on the first word does not start after it. autoStarted says the app
-// decided this, not the user.
-func (a *app) startMeetingWith(preroll []float32, autoStarted bool) {
+// startMeeting records a call the user asked for. Always-on's own
+// recordings do not come through here -- it owns the microphone and writes
+// its own session (see alwayson.go), because what it is recording is not
+// known to be a meeting until somebody else speaks.
+func (a *app) startMeeting() {
 	// The backlog gives the machine back before the first sample is recorded,
 	// not after the call: an old meeting being re-read must never be why this
 	// one decodes slowly.
@@ -114,23 +107,12 @@ func (a *app) startMeetingWith(preroll []float32, autoStarted bool) {
 	}
 
 	m := &meeting{
-		start:       at,
-		spec:        spec,
-		language:    cfg.Language,
-		micWAV:      micWAV,
-		micPath:     micPath,
-		autoStarted: autoStarted,
-		lastVoiced:  at,
-	}
-
-	// The pre-roll goes in before the live stream does, so it lands at the
-	// front of the file where it belongs. The recording's start instant is
-	// still now: a couple of seconds of skew on a timeline nobody compares
-	// against a clock is not worth backdating the meeting's identity for.
-	if len(preroll) > 0 {
-		if err := micWAV.Write(preroll); err != nil {
-			log.Printf("meeting: writing the pre-roll: %v", err)
-		}
+		start:      at,
+		spec:       spec,
+		language:   cfg.Language,
+		micWAV:     micWAV,
+		micPath:    micPath,
+		lastVoiced: at,
 	}
 
 	rec, err := audio.NewRecorder(cfg.InputDevice, cfg.MicGain)
@@ -269,7 +251,6 @@ func (a *app) stopMeeting() {
 		RecordingSeconds: seconds,
 		AudioPath:        m.micPath,
 		SystemAudioPath:  sysPath,
-		AutoStarted:      m.autoStarted,
 	}
 	if err := a.meetings.Append(rec); err != nil {
 		log.Printf("meeting: history append: %v", err)
@@ -402,13 +383,29 @@ func (a *app) discardMeetingAudioIfDisabled(m history.Meeting) {
 // toggleMeeting is what the meeting key does.
 func (a *app) toggleMeeting() {
 	a.mu.Lock()
-	defer a.mu.Unlock()
+	running := a.meeting != nil
+	a.mu.Unlock()
 
-	if a.meeting == nil {
-		a.startMeeting()
+	if running {
+		a.mu.Lock()
+		defer a.mu.Unlock()
+		a.stopMeeting()
 		return
 	}
-	a.stopMeeting()
+
+	// A session always-on opened is closed and filed first, outside the
+	// lock: the user pressing the key means "record this deliberately", and
+	// two recordings of the same room would be two of everything.
+	a.closeSession()
+
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.meeting != nil {
+		// Raced with another press; the second one is the stop.
+		a.stopMeeting()
+		return
+	}
+	a.startMeeting()
 }
 
 // meetingElapsed is how long the meeting being recorded has been running,
@@ -455,6 +452,12 @@ func (a *app) toggleMeetingMute() bool {
 // stopMeetingIfRunning backs the tray menu item, which must do nothing at all
 // when there is no meeting.
 func (a *app) stopMeetingIfRunning() {
+	// Always-on's own recording is a recording too: the Stop button, the
+	// menu item and the Overview banner all mean "stop what is being
+	// recorded", and the user should not have to know which of the two
+	// mechanisms opened the file.
+	a.closeSession()
+
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	if a.meeting != nil {

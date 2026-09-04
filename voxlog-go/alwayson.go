@@ -11,57 +11,65 @@ import (
 	"voxlog-go/internal/audio"
 	"voxlog-go/internal/diarize"
 	"voxlog-go/internal/history"
+	"voxlog-go/internal/settings"
+	"voxlog-go/internal/systemaudio"
 	"voxlog-go/internal/ui"
 	"voxlog-go/internal/vad"
 )
 
-// Always-on listening: Voxlog watches the microphone and starts recording by
-// itself when somebody is actually talking.
+// Always-on listening.
 //
-// The user asked for a gate, not a dictaphone. Recording the whole day and
-// sorting it out afterwards would cost gigabytes of keyboard noise, hours of
-// decode time and a permanent recording light, so nothing reaches a file
-// until two checks agree that a stretch of audio is speech:
+// The microphone is open for as long as the mode is on, but nothing reaches
+// the disk until somebody is actually talking. What is held instead is a
+// rolling buffer in memory -- a minute of it, four megabytes -- so a
+// recording that starts on the second word still contains the first.
 //
-//  1. silero-vad (internal/vad) says the stretch is speech at all, and lasted
-//     long enough to be a sentence rather than a cough.
-//  2. a second look at the same samples: loud enough to be somebody in the
-//     room, and -- when the voice model is on disk -- a voice embedding the
-//     extractor is willing to produce at all. Music and a fan clear the first
-//     check surprisingly often; they do not clear this one.
+// Two questions are answered live, not afterwards:
 //
-// Once both agree, the ordinary meeting recorder takes over: same files, same
-// history, same transcription queue. The only differences are that nobody
-// pressed a key (history.Meeting.AutoStarted) and that the recording ends by
-// itself once the room has been quiet for long enough.
+//   - Is this speech? silero-vad says where speech starts and ends
+//     (internal/vad), and a second look at the same samples -- loud enough,
+//     and a voice the embedding extractor will accept -- throws out the
+//     typing, the fan and most of the music.
+//
+//   - Is this a note or a conversation? Every reply the gate emits is
+//     fingerprinted and folded into the session's running speakers. A second
+//     voice that says enough turns the recording into a meeting, on the spot,
+//     in the same file. So a couple of remarks to yourself are two notes in
+//     History, and the conversation that starts right after them is a meeting
+//     -- without anything being decided in advance, and without an LLM.
+//
+// The verdict is what routes the recording when it ends: History for a note
+// (never pasted anywhere -- nobody asked for it), Meetings for a
+// conversation, with the diarization and turns that pane needs.
 
 const (
-	// prerollSeconds is how much audio the listener keeps behind it. A
-	// recording that begins the moment speech is confirmed begins a second
-	// or two into the first sentence, and the first sentence is usually the
-	// one that says what the conversation is about.
-	prerollSeconds = 12
+	// prerollSeconds is how much audio is kept behind the gate. A recording
+	// that begins the moment speech is confirmed begins a second into the
+	// first sentence, and the first sentence is usually the one that says
+	// what this is about.
+	prerollSeconds = 60
 	// listenPollInterval is how often the supervisor re-reads the settings,
-	// checks the frontmost app, and asks a running auto-recording whether the
-	// room has gone quiet. Nothing here is urgent to the second.
+	// checks the frontmost app, and asks an open session whether the room
+	// has gone quiet. Nothing here is urgent to the second.
 	listenPollInterval = 2 * time.Second
-	// minAutoRecordingSeconds is the shortest auto-started recording worth
-	// keeping. Below this it is a passing remark that already ended before
-	// the recorder was even open.
-	minAutoRecordingSeconds = 8
-	// autoSpeechLevel is the second stage's loudness floor, on the same
-	// scale as audio.Level. Well above the threshold that counts as "voiced"
-	// for a call already in progress: this one decides whether to start
+	// autoSpeechLevel is the second stage's loudness floor, on the same scale
+	// as audio.Level. Well above the "voiced" threshold used inside a
+	// recording already in progress: this one decides whether to start
 	// recording at all, and a false start is worse than a missed one.
 	autoSpeechLevel = 0.08
-	// autoSweepInterval is how often the retention pass over auto-started
-	// recordings runs. Hourly: the window it enforces is measured in hours,
-	// and the pass reads every meeting row.
+	// minAutoRecordingSeconds is the shortest session worth keeping. Below
+	// this it is a passing noise that cleared the gate.
+	minAutoRecordingSeconds = 3
+	// maxSessionHours caps a single recording, however lively the room. A
+	// file that never ends is one nobody can play, transcribe or delete.
+	maxSessionHours = 2
+	// autoSweepInterval is how often retention runs over auto recordings.
+	// Hourly: the window it enforces is measured in hours.
 	autoSweepInterval = time.Hour
 )
 
-// alwaysOn is the listening half of the app. It owns the microphone whenever
-// nothing else does, and gives it up for as long as a recording runs.
+// alwaysOn is the listening half of the app: it owns the microphone, the
+// gate, and whatever session is currently open.
 type alwaysOn struct {
 	mu sync.Mutex
 	// paused is the user's own off switch, from the menu. Separate from the
@@ -69,30 +77,47 @@ type alwaysOn struct {
 	paused bool
 	// listening is whether the microphone is currently open for the gate.
 	listening bool
-	// autoRunning marks a recording this listener started, so it only ever
-	// stops its own -- a meeting the user started by hand is theirs to end.
-	autoRunning bool
 
 	recorder *audio.Recorder
 	gate     *vad.Gate
-	// preroll is the rolling tail of what has been heard, handed to the
-	// recorder when one starts. Guarded by mu; written from the audio
-	// callback, read by the goroutine that starts the recording.
-	preroll []float32
+	// farGate is the same gate over the system-audio tap, so the far end of
+	// a call is judged as speech rather than as sound.
+	farGate *vad.Gate
+	// tapRunning is whether this listener started the system-audio tap.
+	tapRunning bool
+
+	// preroll and farPreroll are the rolling tails of what has been heard.
+	// Written from the audio callbacks, drained when a session opens.
+	preroll    []float32
+	farPreroll []float32
+
+	// sess is the recording in progress, or nil. Owned here rather than on
+	// app.meeting: a session may still turn out to be a note, and it is
+	// always-on that feeds it audio.
+	sess *session
+	// sessKind is what the session was last seen to be, so the supervisor
+	// can pick the right silence threshold without taking the session's lock
+	// on every tick.
+	sessKind string
+
+	// pendingSpeech is raised by the microphone callback when the gate
+	// confirms speech and there is no session yet. The callback must not
+	// open files or devices: it runs on the audio thread.
+	pendingSpeech bool
+	// pendingFarEnd is the same for the far end, and it opens a session that
+	// is a conversation from its first sample -- the other side of a call is
+	// by definition a second party.
+	pendingFarEnd bool
+
 	// fetching guards the one-at-a-time download of the VAD model.
 	fetching bool
-	// sweptAt is when retention last ran over auto-started recordings.
+	// sweptAt is when retention last ran over auto recordings.
 	sweptAt time.Time
-	// pending is set by the audio callback when the gate confirms speech,
-	// and consumed by the supervisor. The callback must not start a
-	// recording itself: it runs on the audio thread, and opening files and
-	// devices there is exactly what stutters a capture.
-	pending bool
 }
 
 // startAlwaysOn runs the listening supervisor for the life of the app. It is
-// always running; whether it actually opens the microphone depends on the
-// setting, the pause switch, and what else is recording.
+// always running; whether it opens the microphone depends on the setting,
+// the pause switch, the frontmost app, and what else is recording.
 func (a *app) startAlwaysOn() {
 	go func() {
 		for {
@@ -102,27 +127,27 @@ func (a *app) startAlwaysOn() {
 	}()
 }
 
-// tickAlwaysOn is one pass of the supervisor: decide whether the gate should
-// be listening right now, act on anything it heard, and end an auto-started
-// recording that has gone quiet.
+// tickAlwaysOn is one pass of the supervisor.
 func (a *app) tickAlwaysOn() {
 	defer func() {
-		// The supervisor is the one goroutine in the app that must never die:
-		// it is what would otherwise leave the microphone open forever.
+		// The supervisor is the one goroutine that must never die: it is what
+		// would otherwise leave the microphone open forever.
 		if r := recover(); r != nil {
 			log.Printf("PANIC in always-on listening: %v", r)
+			a.closeSession()
 			a.stopListening()
 		}
 	}()
 
 	cfg := a.store.Get()
 	if !cfg.AlwaysOn || a.listen.isPaused() {
+		a.closeSession()
 		a.stopListening()
 		return
 	}
 
 	// Retention runs from here rather than on its own timer: this is the one
-	// goroutine that already wakes up regularly and knows always-on is on.
+	// goroutine that already wakes regularly and knows always-on is on.
 	if time.Since(a.listen.lastSweep()) > autoSweepInterval {
 		a.listen.noteSweep()
 		go a.sweepAutoRecordings()
@@ -132,36 +157,48 @@ func (a *app) tickAlwaysOn() {
 	// gate with, and recording everything is the design this is not -- so
 	// fetch it once, in the background, and listen from the next tick.
 	if !asr.IsDownloaded(a.modelsDir, vad.Spec) {
+		a.closeSession()
 		a.stopListening()
 		a.fetchVADModel()
 		return
 	}
 
-	a.stopAutoRecordingIfQuiet(cfg.AlwaysOnSplitMinutes)
-
-	// While anything is recording -- an auto recording, a meeting the user
-	// started, a dictation -- the microphone belongs to that, and the gate
-	// has nothing to listen to and nothing to decide.
-	if a.recordingInProgress() {
+	// A dictation or a meeting the user started by hand owns the microphone
+	// and the subject; always-on steps aside entirely.
+	if a.userRecordingInProgress() {
+		a.closeSession()
 		a.stopListening()
 		return
 	}
 
 	if excluded(ui.FrontmostAppName(), cfg.AlwaysOnExcludedApps) {
+		a.closeSession()
 		a.stopListening()
 		return
 	}
 
-	a.startListening()
+	a.startListening(cfg)
+	a.syncTap(cfg)
 
-	if a.listen.takePending() {
-		a.beginAutoRecording()
+	if a.listen.takePendingFarEnd() {
+		a.openSession(cfg, true)
+	} else if a.listen.takePendingSpeech() {
+		a.openSession(cfg, false)
 	}
+
+	a.closeSessionIfDone(cfg)
+}
+
+// userRecordingInProgress is a recording the user started themselves, as
+// opposed to the session always-on may have open.
+func (a *app) userRecordingInProgress() bool {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.meeting != nil || a.dictation != nil
 }
 
 // excluded reports whether the frontmost app is on the user's list. Matched
-// case-insensitively on the app's own name, which is what the list is
-// written in.
+// case-insensitively on the app's own name, which is what the list holds.
 func excluded(app string, list []string) bool {
 	if app == "" {
 		return false
@@ -174,23 +211,25 @@ func excluded(app string, list []string) bool {
 	return false
 }
 
-// startListening opens the microphone for the gate, if it is not already
-// open. Idempotent: the supervisor calls it on every tick.
-func (a *app) startListening() {
+// startListening opens the microphone for the gate. Idempotent: the
+// supervisor calls it on every tick.
+//
+// The microphone is opened once and stays open across a session: the session
+// is written from this same stream. Stopping one recorder to start another
+// would drop the moment the recording is about to be about.
+func (a *app) startListening(cfg settings.Settings) {
 	a.listen.mu.Lock()
-	if a.listen.listening {
-		a.listen.mu.Unlock()
+	already := a.listen.listening
+	a.listen.mu.Unlock()
+	if already {
 		return
 	}
-	a.listen.mu.Unlock()
 
 	gate, err := vad.New(asr.ModelDir(a.modelsDir, vad.Spec), vad.DefaultConfig())
 	if err != nil {
 		log.Printf("always-on: %v", err)
 		return
 	}
-
-	cfg := a.store.Get()
 	rec, err := audio.NewRecorder(cfg.InputDevice, cfg.MicGain)
 	if err != nil {
 		log.Printf("always-on: microphone: %v", err)
@@ -198,11 +237,10 @@ func (a *app) startListening() {
 		return
 	}
 
-	// StartUnbuffered: nothing here is kept except the rolling pre-roll. The
-	// whole point of the gate is that most of what it hears is thrown away.
-	if err := rec.StartUnbuffered(func(chunk []float32) {
-		a.listen.onChunk(chunk, a.confirmSpeech)
-	}); err != nil {
+	// StartUnbuffered: nothing is kept except the rolling pre-roll and
+	// whatever a session is writing. Most of what this hears is thrown away,
+	// which is the point.
+	if err := rec.StartUnbuffered(a.onListenChunk); err != nil {
 		log.Printf("always-on: microphone: %v", err)
 		rec.Close()
 		gate.Close()
@@ -216,16 +254,18 @@ func (a *app) startListening() {
 	log.Print("always-on: listening")
 }
 
-// stopListening closes the microphone and forgets what the gate heard.
-// Idempotent, and safe to call from the supervisor on every tick.
+// stopListening closes the microphone and the tap, and forgets what the gate
+// heard. Idempotent.
 func (a *app) stopListening() {
 	a.listen.mu.Lock()
 	rec, gate := a.listen.recorder, a.listen.gate
-	wasListening := a.listen.listening
+	was := a.listen.listening
 	a.listen.recorder, a.listen.gate, a.listen.listening = nil, nil, false
-	a.listen.preroll = nil
-	a.listen.pending = false
+	a.listen.preroll, a.listen.farPreroll = nil, nil
+	a.listen.pendingSpeech, a.listen.pendingFarEnd = false, false
 	a.listen.mu.Unlock()
+
+	a.stopTap()
 
 	if rec != nil {
 		rec.Stop()
@@ -234,140 +274,461 @@ func (a *app) stopListening() {
 	if gate != nil {
 		gate.Close()
 	}
-	if wasListening {
+	if was {
 		a.tray.setListening(false)
 		log.Print("always-on: stopped listening")
 	}
 }
 
-// onChunk runs on the audio thread. It keeps the pre-roll rolling, pushes
-// the chunk through the gate, and raises the pending flag when a stretch of
-// speech clears both checks. It never touches files or devices: the
-// supervisor does that, one tick later.
-func (l *alwaysOn) onChunk(chunk []float32, confirm func(vad.Segment) bool) {
+// onListenChunk runs on the audio thread. It feeds the session if one is
+// open, keeps the pre-roll rolling if one is not, and pushes everything
+// through the gate. It never touches files or devices.
+func (a *app) onListenChunk(chunk []float32) {
+	l := &a.listen
+
 	l.mu.Lock()
-	gate := l.gate
+	gate, sess := l.gate, l.sess
 	if gate == nil {
 		l.mu.Unlock()
 		return
 	}
-
-	l.preroll = append(l.preroll, chunk...)
-	if max := prerollSeconds * audio.SampleRate; len(l.preroll) > max {
-		// Copy rather than reslice: reslicing keeps the whole backing array
-		// alive, which is the leak this loop would otherwise run all day.
-		trimmed := make([]float32, max)
-		copy(trimmed, l.preroll[len(l.preroll)-max:])
-		l.preroll = trimmed
+	if sess == nil {
+		l.preroll = appendBounded(l.preroll, chunk, prerollSeconds*audio.SampleRate)
 	}
 	segments := gate.Feed(chunk)
 	l.mu.Unlock()
 
+	if sess != nil {
+		sess.writeMic(chunk, audio.Level(chunk) >= systemVoicedThreshold)
+	}
+
 	for _, seg := range segments {
-		if confirm(seg) {
+		embed, ok := a.confirmSpeech(seg)
+		if !ok {
+			continue
+		}
+		if sess == nil {
 			l.mu.Lock()
-			l.pending = true
+			l.pendingSpeech = true
 			l.mu.Unlock()
 			return
+		}
+		// Live speaker counting: this is what turns a note into a meeting
+		// the moment a second person has said enough (see session.noteVoice).
+		if sess.noteVoice(embed, seg.Seconds()) {
+			log.Print("always-on: a second voice -- this is a conversation")
+			a.noteSessionKind(sessionMeeting)
 		}
 	}
 }
 
-// confirmSpeech is the second stage. The VAD has already said this stretch
-// is speech; this asks whether it is somebody in the room.
-func (a *app) confirmSpeech(seg vad.Segment) bool {
+// onFarEndChunk is the same for the system-audio tap: the far end of a call.
+func (a *app) onFarEndChunk(chunk []float32) {
+	l := &a.listen
+
+	l.mu.Lock()
+	gate, sess := l.farGate, l.sess
+	if sess == nil {
+		l.farPreroll = appendBounded(l.farPreroll, chunk, prerollSeconds*audio.SampleRate)
+	}
+	var segments []vad.Segment
+	if gate != nil {
+		segments = gate.Feed(chunk)
+	}
+	l.mu.Unlock()
+
+	if sess != nil {
+		sess.writeSystem(chunk, audio.Level(chunk))
+	}
+
+	for _, seg := range segments {
+		if seg.Seconds() < minVoicedSeconds || audio.Level(seg.Samples) < autoSpeechLevel {
+			continue
+		}
+		if sess == nil {
+			// Somebody is talking on the other end while the user says
+			// nothing: a call they are listening to. Worth recording, and a
+			// conversation by definition.
+			l.mu.Lock()
+			l.pendingFarEnd = true
+			l.mu.Unlock()
+			return
+		}
+		if sess.noteFarEnd(seg.Seconds()) {
+			log.Print("always-on: the far end is talking -- this is a conversation")
+			a.noteSessionKind(sessionMeeting)
+		}
+	}
+}
+
+// appendBounded appends chunk to buf and keeps only the last max samples.
+// The tail is copied rather than resliced: reslicing keeps the whole backing
+// array alive, which is the leak a buffer fed all day would otherwise be.
+func appendBounded(buf, chunk []float32, max int) []float32 {
+	buf = append(buf, chunk...)
+	if len(buf) <= max {
+		return buf
+	}
+	trimmed := make([]float32, max)
+	copy(trimmed, buf[len(buf)-max:])
+	return trimmed
+}
+
+// confirmSpeech is the second stage, and it returns the fingerprint it
+// computed so the caller does not pay for it twice. The VAD has already said
+// this stretch is speech; this asks whether it is somebody in the room.
+func (a *app) confirmSpeech(seg vad.Segment) ([]float32, bool) {
 	if seg.Seconds() < minVoicedSeconds {
-		return false
+		return nil, false
 	}
 	if audio.Level(seg.Samples) < autoSpeechLevel {
-		return false
+		return nil, false
 	}
 
 	// The voice extractor is the strongest filter available, and it is
 	// already on disk whenever diarization is set up. Where it is not, the
-	// two checks above stand on their own rather than blocking the feature
-	// on a download the user never asked for.
+	// two checks above stand alone rather than blocking the feature on a
+	// download the user never asked for -- and the session then has no way
+	// to count speakers, so only the far end can make it a conversation.
 	if !asr.IsDownloaded(a.modelsDir, diarize.Spec) {
-		return true
+		return nil, true
 	}
 	e := a.embedders.get(a.modelsDir)
 	if e == nil {
-		return true
+		return nil, true
 	}
-	return len(e.Compute(seg.Samples)) > 0
+	embed := e.Compute(seg.Samples)
+	if len(embed) == 0 {
+		return nil, false
+	}
+	return embed, true
 }
 
-// beginAutoRecording hands the microphone from the gate to the recorder,
-// carrying the pre-roll across so the recording starts on the first word
-// rather than after it.
-func (a *app) beginAutoRecording() {
-	a.listen.mu.Lock()
-	preroll := a.listen.preroll
-	a.listen.preroll = nil
-	a.listen.mu.Unlock()
-
-	// The device has one capture client here, not two: the gate's recorder
-	// is closed before the meeting's is opened, and the pre-roll is what
-	// covers the gap.
-	a.stopListening()
-
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	if a.meeting != nil || a.dictation != nil {
+// openSession starts recording. asMeeting is set when the far end opened it,
+// where there is nothing to decide: the other side of a call is a second
+// party.
+func (a *app) openSession(cfg settings.Settings, asMeeting bool) {
+	spec, ok := a.model(cfg)
+	if !ok {
 		return
 	}
-	a.startMeetingWith(preroll, true)
-	if a.meeting == nil {
+	if err := os.MkdirAll(a.sessionDir(), 0o755); err != nil {
+		log.Printf("always-on: %v", err)
 		return
 	}
+
+	sess, err := newSession(a.sessionDir(), time.Now(), spec, cfg.Language, true)
+	if err != nil {
+		log.Printf("always-on: %v", err)
+		return
+	}
+	if asMeeting {
+		sess.promote()
+	}
+
 	a.listen.mu.Lock()
-	a.listen.autoRunning = true
+	preroll, farPreroll := a.listen.preroll, a.listen.farPreroll
+	a.listen.preroll, a.listen.farPreroll = nil, nil
 	a.listen.mu.Unlock()
-	notifyPane("Recording — Voxlog heard a conversation.", "meetings")
+
+	// The pre-roll is written BEFORE the session is published, not after:
+	// the moment the audio callback can see it, live chunks start arriving,
+	// and a pre-roll written afterwards would land behind the audio it comes
+	// before.
+	if len(preroll) > 0 {
+		sess.writeMic(preroll, false)
+	}
+
+	a.listen.mu.Lock()
+	a.listen.sess = sess
+	a.listen.sessKind = sess.currentKind()
+	a.listen.mu.Unlock()
+
+	// The tap may already be running (AlwaysOnTapAlways) or may need
+	// starting for this recording; either way the far-end file belongs to
+	// the session.
+	a.attachSessionSystemAudio(cfg, sess, farPreroll)
+
+	a.tray.startedMeeting(sess.start)
+	if a.onMeetingState != nil {
+		a.onMeetingState(true)
+	}
+	log.Printf("always-on: recording to %s", sess.micPath)
+	go a.models.warm(spec, asr.ModelDir(a.modelsDir, spec), cfg.Language)
 }
 
-// stopAutoRecordingIfQuiet ends an auto-started recording once the room has
-// been quiet for splitMinutes. This is what turns a day of listening into
-// separate meetings instead of one file that never ends.
-//
-// Only recordings this listener started: a meeting the user began by hand
-// ends when they say it does, however long the silence.
-func (a *app) stopAutoRecordingIfQuiet(splitMinutes float64) {
+// attachSessionSystemAudio gives the session somewhere to put the far end,
+// starting the tap first if it is not already running.
+func (a *app) attachSessionSystemAudio(cfg settings.Settings, sess *session, farPreroll []float32) {
+	if cfg.AlwaysOnSystemAudio != settings.AlwaysOnTapAlways {
+		a.startTap()
+	}
 	a.listen.mu.Lock()
-	auto := a.listen.autoRunning
+	running := a.listen.tapRunning
 	a.listen.mu.Unlock()
-	if !auto {
+	if !running {
 		return
 	}
-	if splitMinutes <= 0 {
-		splitMinutes = 5
-	}
 
-	a.mu.Lock()
-	m := a.meeting
-	if m == nil {
-		// The user stopped it themselves, or it never started.
-		a.mu.Unlock()
-		a.listen.mu.Lock()
-		a.listen.autoRunning = false
+	w, err := audio.NewWAVWriter(sess.sysPath)
+	if err != nil {
+		// Not fatal: a conversation recorded from the microphone alone is
+		// still a conversation.
+		log.Printf("always-on: system audio: %v", err)
+		return
+	}
+	sess.attachSystem(w, sess.sysPath, true)
+	if len(farPreroll) > 0 {
+		sess.writeSystem(farPreroll, 0)
+	}
+}
+
+// syncTap opens or closes the system-audio tap to match the setting. In
+// AlwaysOnTapAlways it runs for as long as listening does, which is what
+// catches a call where the other side speaks first; otherwise it only runs
+// while a recording does.
+func (a *app) syncTap(cfg settings.Settings) {
+	a.listen.mu.Lock()
+	running, hasSession := a.listen.tapRunning, a.listen.sess != nil
+	a.listen.mu.Unlock()
+
+	wantAlways := cfg.AlwaysOnSystemAudio == settings.AlwaysOnTapAlways
+	switch {
+	case wantAlways && !running:
+		a.startTap()
+	case !wantAlways && running && !hasSession:
+		a.stopTap()
+	}
+}
+
+// startTap opens the system-audio tap and its own voice-activity gate.
+func (a *app) startTap() {
+	a.listen.mu.Lock()
+	if a.listen.tapRunning {
 		a.listen.mu.Unlock()
 		return
 	}
-	m.mu.Lock()
-	quietFor := time.Since(m.lastVoiced)
-	m.mu.Unlock()
+	a.listen.mu.Unlock()
 
-	if quietFor < time.Duration(splitMinutes*float64(time.Minute)) {
-		a.mu.Unlock()
+	gate, err := vad.New(asr.ModelDir(a.modelsDir, vad.Spec), vad.DefaultConfig())
+	if err != nil {
+		log.Printf("always-on: system audio gate: %v", err)
 		return
 	}
-	log.Printf("always-on: %v of quiet, ending the recording", quietFor.Round(time.Second))
-	a.stopMeeting()
-	a.mu.Unlock()
-
+	if err := systemaudio.Start(a.onFarEndChunk); err != nil {
+		// Expected on a machine without the permission; the microphone side
+		// carries on alone.
+		log.Printf("always-on: system audio: %v", err)
+		gate.Close()
+		return
+	}
 	a.listen.mu.Lock()
-	a.listen.autoRunning = false
+	a.listen.farGate, a.listen.tapRunning = gate, true
 	a.listen.mu.Unlock()
+}
+
+func (a *app) stopTap() {
+	a.listen.mu.Lock()
+	gate, running := a.listen.farGate, a.listen.tapRunning
+	a.listen.farGate, a.listen.tapRunning = nil, false
+	a.listen.farPreroll = nil
+	a.listen.mu.Unlock()
+	if !running {
+		return
+	}
+	systemaudio.Stop()
+	if gate != nil {
+		gate.Close()
+	}
+}
+
+// noteSessionKind records an escalation for the supervisor, which reads the
+// kind on every tick to pick the right silence threshold.
+func (a *app) noteSessionKind(kind string) {
+	a.listen.mu.Lock()
+	a.listen.sessKind = kind
+	a.listen.mu.Unlock()
+}
+
+// closeSessionIfDone ends the recording once the room has been quiet for
+// long enough -- a shorter pause for a note, which is one thought, than for
+// a conversation, which has pauses in it.
+func (a *app) closeSessionIfDone(cfg settings.Settings) {
+	a.listen.mu.Lock()
+	sess, kind := a.listen.sess, a.listen.sessKind
+	a.listen.mu.Unlock()
+	if sess == nil {
+		return
+	}
+
+	gap := time.Duration(noteGapSeconds(cfg) * float64(time.Second))
+	if kind == sessionMeeting {
+		gap = time.Duration(splitMinutes(cfg) * float64(time.Minute))
+	}
+	if sess.quietFor() < gap && time.Since(sess.start) < maxSessionHours*time.Hour {
+		return
+	}
+	a.closeSession()
+}
+
+func noteGapSeconds(cfg settings.Settings) float64 {
+	if cfg.AlwaysOnNoteGapSeconds > 0 {
+		return cfg.AlwaysOnNoteGapSeconds
+	}
+	return 60
+}
+
+func splitMinutes(cfg settings.Settings) float64 {
+	if cfg.AlwaysOnSplitMinutes > 0 {
+		return cfg.AlwaysOnSplitMinutes
+	}
+	return 5
+}
+
+// closeSession ends the recording in progress and routes it by what it
+// turned out to be. Safe to call with nothing open.
+func (a *app) closeSession() {
+	a.listen.mu.Lock()
+	sess := a.listen.sess
+	a.listen.sess, a.listen.sessKind = nil, ""
+	a.listen.mu.Unlock()
+	if sess == nil {
+		return
+	}
+
+	cfg := a.store.Get()
+	if cfg.AlwaysOnSystemAudio != settings.AlwaysOnTapAlways {
+		a.stopTap()
+	}
+
+	micPath, sysPath, sysVoiced := sess.closeFiles()
+	seconds := time.Since(sess.start).Seconds()
+	kind := sess.currentKind()
+
+	a.tray.stoppedMeeting()
+	if a.onMeetingState != nil {
+		a.onMeetingState(false)
+	}
+	log.Printf("always-on: %s of %.0fs ended (%.1fs of far-end audio)", kind, seconds, sysVoiced)
+
+	// Too short to be anything: delete rather than file. A three-second file
+	// in History is noise about noise.
+	if seconds < minAutoRecordingSeconds {
+		removeQuietly(micPath, sysPath)
+		return
+	}
+
+	// The far-end file counts as a second party only when something actually
+	// came out of it -- otherwise it is silence, and decoding it buys a
+	// second pass and a heading over nothing.
+	if sysVoiced < minVoicedSeconds {
+		removeQuietly(sysPath)
+		sysPath = ""
+	}
+
+	if kind == sessionMeeting {
+		a.fileAutoMeeting(sess, micPath, sysPath, seconds)
+		return
+	}
+	a.fileAutoNote(sess, micPath, sysPath, seconds)
+}
+
+// fileAutoMeeting hands the recording to the ordinary meeting path: same
+// history row, same transcription queue, same turns and speaker identity.
+func (a *app) fileAutoMeeting(sess *session, micPath, sysPath string, seconds float64) {
+	rec := history.Meeting{
+		Start:            sess.start,
+		RecordingSeconds: seconds,
+		AudioPath:        micPath,
+		SystemAudioPath:  sysPath,
+		AutoStarted:      true,
+	}
+	if err := a.meetings.Append(rec); err != nil {
+		log.Printf("always-on: history append: %v", err)
+		return
+	}
+	go a.sweepRecordings()
+	ui.RefreshMainWindowIfOpen(a.hist, a.meetings, a.tasks)
+	a.transcribeMeetingEntry(rec, sess.spec, sess.language)
+}
+
+// fileAutoNote transcribes a one-voice recording and files it in History,
+// beside dictations.
+//
+// It is emphatically NOT emitted: output.Emit pastes into whatever app is
+// frontmost, and pasting a sentence the user muttered to themselves into the
+// document they are writing is the worst thing this feature could do.
+func (a *app) fileAutoNote(sess *session, micPath, sysPath string, seconds float64) {
+	// The far end has no business in a note. If the tap caught anything at
+	// all, this was misjudged as a note and the meeting path would have
+	// taken it, so the file is only ever silence here.
+	removeQuietly(sysPath)
+
+	a.queue.submit("Note, "+sess.start.Format("15:04"), "", seconds, func(yield func()) {
+		started := time.Now()
+		text := a.transcribeWholeFile(sess.spec, sess.language, micPath, yield)
+		if text == "" {
+			log.Printf("always-on: nothing transcribed from %s", micPath)
+			removeQuietly(micPath)
+			return
+		}
+		ts := time.Now()
+		if err := a.hist.Append(history.Entry{
+			Timestamp:        ts,
+			DurationSeconds:  time.Since(started).Seconds(),
+			Text:             text,
+			RecordingSeconds: seconds,
+			AudioPath:        micPath,
+			AutoStarted:      true,
+		}); err != nil {
+			log.Printf("always-on: history append: %v", err)
+			return
+		}
+		ui.RefreshMainWindowIfOpen(a.hist, a.meetings, a.tasks)
+		notifyPane("Noted something you said.", "history")
+		go a.classifyForTasks(history.KindDictation, ts.Format(time.RFC3339Nano), text)
+	})
+}
+
+// transcribeWholeFile decodes a recording block by block into one string.
+// No diarization: a note is one voice by definition -- that is what made it
+// a note.
+func (a *app) transcribeWholeFile(spec asr.ModelSpec, language, path string, yield func()) string {
+	var parts []string
+	err := audio.ReadBlocks(path, func(block []float32) error {
+		if text := a.transcribeBlock(spec, language, block, nil, false); text != "" {
+			parts = append(parts, text)
+		}
+		yield()
+		return nil
+	})
+	if err != nil {
+		log.Printf("always-on: reading %s: %v", path, err)
+	}
+	return strings.TrimSpace(strings.Join(parts, " "))
+}
+
+func removeQuietly(paths ...string) {
+	for _, path := range paths {
+		if path == "" {
+			continue
+		}
+		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+			log.Printf("always-on: removing %s: %v", path, err)
+		}
+	}
+}
+
+// sessionPathsInUse is what a retention sweep must not delete: the files the
+// open session is still writing to.
+func (a *app) sessionPathsInUse() (string, string) {
+	a.listen.mu.Lock()
+	sess := a.listen.sess
+	a.listen.mu.Unlock()
+	if sess == nil {
+		return "", ""
+	}
+	return sess.paths()
 }
 
 // fetchVADModel downloads silero-vad once, in the background. Same shape as
@@ -397,6 +758,48 @@ func (a *app) fetchVADModel() {
 	}()
 }
 
+// sweepAutoRecordings deletes auto recordings that never produced a
+// transcript and are older than the retention window.
+//
+// Retention stops being optional once the app listens all day. A recording
+// the gate opened and the transcript never justified is a guess that did not
+// pay off: the audio goes, the row stays (it is one line, and it is the only
+// evidence the machine was listening at that hour). Anything with a
+// transcript, and anything the user started by hand, is untouched.
+func (a *app) sweepAutoRecordings() {
+	cfg := a.store.Get()
+	if !cfg.AlwaysOn || cfg.AlwaysOnRetentionHours <= 0 {
+		return
+	}
+	cutoff := time.Now().Add(-time.Duration(cfg.AlwaysOnRetentionHours * float64(time.Hour)))
+	inUse := a.recordingsInUse()
+
+	meetings, err := a.meetings.All()
+	if err != nil {
+		log.Printf("always-on sweep: %v", err)
+		return
+	}
+	for _, m := range meetings {
+		if !m.AutoStarted || m.Text != "" || m.Start.After(cutoff) {
+			continue
+		}
+		if inUse[m.AudioPath] || inUse[m.SystemAudioPath] {
+			continue
+		}
+		if m.AudioPath == "" && m.SystemAudioPath == "" {
+			continue
+		}
+		removeQuietly(m.AudioPath, m.SystemAudioPath)
+		if err := a.meetings.Update(m.Start, func(e *history.Meeting) {
+			e.AudioPath, e.SystemAudioPath = "", ""
+		}); err != nil {
+			log.Printf("always-on sweep: clearing the audio path: %v", err)
+		}
+		log.Printf("always-on sweep: dropped the audio of %s, never transcribed",
+			m.Start.Format(time.RFC3339))
+	}
+}
+
 // Pause and its state are read by the menu item and by the supervisor.
 func (l *alwaysOn) isPaused() bool {
 	l.mu.Lock()
@@ -422,65 +825,27 @@ func (l *alwaysOn) noteSweep() {
 	l.mu.Unlock()
 }
 
-// takePending reads and clears the flag the audio thread raises.
-func (l *alwaysOn) takePending() bool {
+// takePendingSpeech and takePendingFarEnd read and clear the flags the audio
+// threads raise. Read once: seeing the same flag twice would open two
+// recordings for one stretch of speech.
+func (l *alwaysOn) takePendingSpeech() bool {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	if !l.pending {
+	if !l.pendingSpeech {
 		return false
 	}
-	l.pending = false
+	l.pendingSpeech = false
 	return true
 }
 
-// sweepAutoRecordings deletes auto-started recordings that never produced a
-// transcript and are older than the retention window.
-//
-// Retention stops being optional once the app listens all day. A recording
-// the gate opened and the transcript never justified is a guess that did not
-// pay off: the audio goes, the history row stays (it is one line, and it is
-// the only evidence the machine was listening at that hour). Anything with a
-// transcript, and anything the user started by hand, is untouched.
-func (a *app) sweepAutoRecordings() {
-	cfg := a.store.Get()
-	if !cfg.AlwaysOn || cfg.AlwaysOnRetentionHours <= 0 {
-		return
+func (l *alwaysOn) takePendingFarEnd() bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if !l.pendingFarEnd {
+		return false
 	}
-	cutoff := time.Now().Add(-time.Duration(cfg.AlwaysOnRetentionHours * float64(time.Hour)))
-
-	all, err := a.meetings.All()
-	if err != nil {
-		log.Printf("always-on sweep: %v", err)
-		return
-	}
-	inUse := a.recordingsInUse()
-
-	for _, m := range all {
-		if !m.AutoStarted || m.Text != "" || m.Start.After(cutoff) {
-			continue
-		}
-		if m.AudioPath == "" && m.SystemAudioPath == "" {
-			continue
-		}
-		if inUse[m.AudioPath] || inUse[m.SystemAudioPath] {
-			continue
-		}
-		for _, path := range []string{m.AudioPath, m.SystemAudioPath} {
-			if path == "" {
-				continue
-			}
-			if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
-				log.Printf("always-on sweep: removing %s: %v", path, err)
-			}
-		}
-		if err := a.meetings.Update(m.Start, func(e *history.Meeting) {
-			e.AudioPath, e.SystemAudioPath = "", ""
-		}); err != nil {
-			log.Printf("always-on sweep: clearing the audio path: %v", err)
-		}
-		log.Printf("always-on sweep: dropped the audio of %s, never transcribed",
-			m.Start.Format(time.RFC3339))
-	}
+	l.pendingFarEnd = false
+	return true
 }
 
 // toggleListenPause is what the menu item does: "not right now", without
@@ -489,6 +854,7 @@ func (a *app) toggleListenPause() bool {
 	paused := !a.listen.isPaused()
 	a.listen.setPaused(paused)
 	if paused {
+		a.closeSession()
 		a.stopListening()
 	}
 	return paused

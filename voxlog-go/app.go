@@ -244,14 +244,23 @@ func (a *app) recordingsInUse() map[string]bool {
 	a.mu.Unlock()
 
 	inUse := map[string]bool{}
-	if m == nil {
-		return inUse
+	if m != nil {
+		if m.micPath != "" {
+			inUse[m.micPath] = true
+		}
+		if m.sysPath != "" {
+			inUse[m.sysPath] = true
+		}
 	}
-	if m.micPath != "" {
-		inUse[m.micPath] = true
-	}
-	if m.sysPath != "" {
-		inUse[m.sysPath] = true
+	// Always-on's own recording counts too: it is being written to right
+	// now, and it is the file a listening machine produces most of.
+	if mic, sys := a.sessionPathsInUse(); mic != "" || sys != "" {
+		if mic != "" {
+			inUse[mic] = true
+		}
+		if sys != "" {
+			inUse[sys] = true
+		}
 	}
 	return inUse
 }

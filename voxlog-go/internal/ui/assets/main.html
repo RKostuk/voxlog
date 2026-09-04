@@ -695,7 +695,11 @@
         '<span class="pill" title="Transcription time">' + e.duration_seconds.toFixed(1) + 's</span>' +
         '<div class="body">' +
           body +
-          '<div class="meta"><span>' + e.time + '</span></div>' +
+          '<div class="meta"><span>' + e.time + '</span>' +
+            // Always-on wrote this one; nobody pressed a key for it, and the
+            // row should not pretend otherwise.
+            (e.auto_started ? '<span class="tag">Heard automatically</span>' : '') +
+          '</div>' +
           hint.html +
         '</div>' +
         '<div class="acts">' +

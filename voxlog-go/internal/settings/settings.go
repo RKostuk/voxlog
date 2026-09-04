@@ -102,10 +102,26 @@ type Settings struct {
 	// voice-activity model plus a second check (see internal/vad and
 	// alwayson.go), so keyboard noise, music and a fan never open a file.
 	AlwaysOn bool `json:"always_on"`
-	// AlwaysOnSplitMinutes is how long a recording has to go quiet before
+	// AlwaysOnSplitMinutes is how long a conversation has to go quiet before
 	// always-on ends it and waits for the next one. This is what turns a day
 	// of listening into separate meetings rather than one twelve-hour file.
 	AlwaysOnSplitMinutes float64 `json:"always_on_split_minutes"`
+	// AlwaysOnNoteGapSeconds is the same idea for a recording that is still
+	// one person talking to themselves. A note is one thought, so it ends on
+	// a far shorter pause than a conversation does -- otherwise two remarks
+	// half a minute apart become one recording, and the second one is filed
+	// under the first one's subject.
+	AlwaysOnNoteGapSeconds float64 `json:"always_on_note_gap_seconds"`
+	// AlwaysOnSystemAudio decides when the system-audio tap is opened while
+	// always-on is listening: AlwaysOnTapSession (with a recording, the
+	// default) or AlwaysOnTapAlways.
+	//
+	// The trade-off is real and belongs to the user. The tap is
+	// ScreenCaptureKit, so holding it open lights the screen-recording
+	// indicator for as long as listening is on -- but it is also the only
+	// way to notice a call where the other side speaks first and the user
+	// says nothing for two minutes.
+	AlwaysOnSystemAudio string `json:"always_on_system_audio"`
 	// AlwaysOnRetentionHours is how long an auto-started recording that
 	// never produced a transcript is kept. Retention stops being optional
 	// once the app is listening all day: the failed guesses are the bulk of
@@ -177,6 +193,18 @@ type Settings struct {
 	EntityDictionarySeeded bool `json:"entity_dictionary_seeded"`
 }
 
+// When always-on opens the system-audio tap.
+const (
+	// AlwaysOnTapSession opens the tap when a recording starts and closes it
+	// when the recording ends. The screen-recording indicator is then only
+	// lit while something is actually being recorded.
+	AlwaysOnTapSession = "session"
+	// AlwaysOnTapAlways keeps the tap open for as long as listening is on,
+	// so a call is noticed from the other side's first word rather than from
+	// the user's. Costs a permanently lit screen-recording indicator.
+	AlwaysOnTapAlways = "always"
+)
+
 // Dictation activation modes.
 const (
 	ActivationToggle = "toggle"
@@ -230,6 +258,8 @@ func DefaultSettings() Settings {
 		MeetingKeyID:           "",
 		AlwaysOn:               false,
 		AlwaysOnSplitMinutes:   5,
+		AlwaysOnNoteGapSeconds: 60,
+		AlwaysOnSystemAudio:    AlwaysOnTapSession,
 		AlwaysOnRetentionHours: 24,
 		TasksKeyID:             "",
 		TasksDrawerPlacement:   "top_centre",

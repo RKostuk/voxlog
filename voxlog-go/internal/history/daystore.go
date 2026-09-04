@@ -36,6 +36,12 @@ type Entry struct {
 	// back when a meeting's audio lived in this same store.
 	AudioPath       string `json:"audio_path,omitempty"`
 	SystemAudioPath string `json:"system_audio_path,omitempty"`
+	// AutoStarted marks a note always-on listening recorded on its own --
+	// one voice, no second party, nobody pressed a key. It is what retention
+	// reads (an auto note with no transcript is a guess that did not pay
+	// off) and what the list shows, so a line nobody dictated is never
+	// mistaken for one that was.
+	AutoStarted bool `json:"auto_started,omitempty"`
 }
 
 type Store struct {

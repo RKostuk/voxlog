@@ -412,7 +412,17 @@
           <input type="checkbox" class="switch" id="always_on">
         </div>
         <div class="item always-on-only">
-          <div class="title">End it after silence of</div>
+          <div class="title">End a note after silence of
+            <div class="subtext">A note is one thought &middot; two remarks further apart than this become two notes</div>
+          </div>
+          <select id="always_on_note_gap_seconds">
+            <option value="20">20 seconds</option>
+            <option value="60">1 minute</option>
+            <option value="120">2 minutes</option>
+          </select>
+        </div>
+        <div class="item always-on-only">
+          <div class="title">End a conversation after silence of</div>
           <select id="always_on_split_minutes">
             <option value="2">2 minutes</option>
             <option value="5">5 minutes</option>
@@ -429,6 +439,16 @@
             <option value="24">24 hours</option>
             <option value="72">3 days</option>
             <option value="0">Never delete</option>
+          </select>
+        </div>
+        <div class="item always-on-only">
+          <div class="title">Listen to system audio
+            <div class="subtext">Only &ldquo;always&rdquo; catches a call where the other side speaks first and you say
+              nothing &mdash; but it keeps the screen-recording indicator lit for as long as listening is on</div>
+          </div>
+          <select id="always_on_system_audio">
+            <option value="session">Only while recording</option>
+            <option value="always">Always, while listening</option>
           </select>
         </div>
         <div class="item stacked always-on-only">
@@ -1207,6 +1227,8 @@
         task_hub_enabled: document.getElementById('task_hub_enabled').checked,
         always_on: document.getElementById('always_on').checked,
         always_on_split_minutes: parseFloat(document.getElementById('always_on_split_minutes').value),
+        always_on_note_gap_seconds: parseFloat(document.getElementById('always_on_note_gap_seconds').value),
+        always_on_system_audio: document.getElementById('always_on_system_audio').value,
         always_on_retention_hours: parseFloat(document.getElementById('always_on_retention_hours').value),
         always_on_excluded_apps: excludedApps,
         entity_dictionary: entityDict,
@@ -1572,6 +1594,8 @@
       document.getElementById('task_hub_enabled').checked = !!settings.task_hub_enabled;
       document.getElementById('always_on').checked = !!settings.always_on;
       document.getElementById('always_on_split_minutes').value = String(settings.always_on_split_minutes || 5);
+      document.getElementById('always_on_note_gap_seconds').value = String(settings.always_on_note_gap_seconds || 60);
+      document.getElementById('always_on_system_audio').value = settings.always_on_system_audio || 'session';
       document.getElementById('always_on_retention_hours').value = String(
         settings.always_on_retention_hours === 0 ? 0 : (settings.always_on_retention_hours || 24));
       excludedApps = (settings.always_on_excluded_apps || []).slice();
