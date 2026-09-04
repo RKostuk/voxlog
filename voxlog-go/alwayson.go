@@ -43,11 +43,11 @@ import (
 // conversation, with the diarization and turns that pane needs.
 
 const (
-	// prerollSeconds is how much audio is kept behind the gate. A recording
-	// that begins the moment speech is confirmed begins a second into the
-	// first sentence, and the first sentence is usually the one that says
-	// what this is about.
-	prerollSeconds = 60
+	// prerollSeconds is how much audio is kept behind the gate. It only has
+	// to cover the gate's own delay now that a recording opens on live
+	// speech rather than on a finished sentence, so it is a fraction of what
+	// it was -- and a fraction of the memory, since it rolls all day.
+	prerollSeconds = 15
 	// listenPollInterval is how often the supervisor re-reads the settings,
 	// checks the frontmost app, and asks an open session whether the room
 	// has gone quiet. Nothing here is urgent to the second.
@@ -60,6 +60,12 @@ const (
 	// minAutoRecordingSeconds is the shortest session worth keeping. Below
 	// this it is a passing noise that cleared the gate.
 	minAutoRecordingSeconds = 3
+	// provisionalGrace is how long a recording that nothing has confirmed
+	// yet is allowed to run. A session opens the moment the gate hears a
+	// voice, so the menu bar can say "recording" while the first sentence is
+	// still being said; if the second stage never agrees, this is how long
+	// it takes for that guess to be thrown away.
+	provisionalGrace = 12 * time.Second
 	// maxSessionHours caps a single recording, however lively the room. A
 	// file that never ends is one nobody can play, transcribe or delete.
 	maxSessionHours = 2
@@ -129,15 +135,6 @@ type alwaysOn struct {
 	// can pick the right silence threshold without taking the session's lock
 	// on every tick.
 	sessKind string
-
-	// pendingSpeech is raised by the microphone callback when the gate
-	// confirms speech and there is no session yet. The callback must not
-	// open files or devices: it runs on the audio thread.
-	pendingSpeech bool
-	// pendingFarEnd is the same for the far end, and it opens a session that
-	// is a conversation from its first sample -- the other side of a call is
-	// by definition a second party.
-	pendingFarEnd bool
 
 	// fetching guards the one-at-a-time download of the VAD model.
 	fetching bool
@@ -209,13 +206,9 @@ func (a *app) tickAlwaysOn() {
 
 	a.startListening(cfg)
 	a.syncTap(cfg)
-
-	if a.listen.takePendingFarEnd() {
-		a.openSession(cfg, true)
-	} else if a.listen.takePendingSpeech() {
-		a.openSession(cfg, false)
-	}
-
+	// Recordings are opened by the worker, the instant it hears a voice --
+	// waiting for this tick put up to two seconds between speaking and the
+	// menu bar saying so. The supervisor only ever ends them.
 	a.closeSessionIfDone(cfg)
 }
 
@@ -324,10 +317,25 @@ func (a *app) listenWorker(gate *vad.Gate, work <-chan listenMsg, done chan<- st
 				farGate = nil
 			}
 		case msgMic:
-			a.handleMicSegments(gate.Feed(msg.samples))
+			segments := gate.Feed(msg.samples)
+			// Opening on live speech, not on a finished sentence: silero
+			// only emits a segment once the pause after it is long enough,
+			// so waiting for one meant nothing on screen until the speaker
+			// stopped talking -- twenty seconds of "is this thing on?" for
+			// twenty seconds of speech.
+			if gate.Speaking() {
+				a.openSessionIfIdle(false)
+			}
+			a.handleMicSegments(segments)
 		case msgFar:
 			if farGate != nil {
-				a.handleFarSegments(farGate.Feed(msg.samples))
+				segments := farGate.Feed(msg.samples)
+				if farGate.Speaking() {
+					// The other side of a call is a second party by
+					// definition, so this opens straight as a conversation.
+					a.openSessionIfIdle(true)
+				}
+				a.handleFarSegments(segments)
 			}
 		}
 	}
@@ -341,14 +349,10 @@ func (a *app) handleMicSegments(segments []vad.Segment) {
 		if !ok {
 			continue
 		}
-		a.listen.mu.Lock()
-		sess := a.listen.sess
+		sess := a.openSessionIfIdle(false)
 		if sess == nil {
-			a.listen.pendingSpeech = true
-			a.listen.mu.Unlock()
 			return
 		}
-		a.listen.mu.Unlock()
 
 		// Live speaker counting: this is what turns a note into a meeting
 		// the moment a second person has said enough (see session.noteVoice),
@@ -366,17 +370,13 @@ func (a *app) handleFarSegments(segments []vad.Segment) {
 		if seg.Seconds() < minVoicedSeconds || audio.Level(seg.Samples) < autoSpeechLevel {
 			continue
 		}
-		a.listen.mu.Lock()
-		sess := a.listen.sess
+		// Somebody talking on the other end while the user says nothing is a
+		// call they are listening to: worth recording, and a conversation by
+		// definition.
+		sess := a.openSessionIfIdle(true)
 		if sess == nil {
-			// Somebody is talking on the other end while the user says
-			// nothing: a call they are listening to. Worth recording, and a
-			// conversation by definition.
-			a.listen.pendingFarEnd = true
-			a.listen.mu.Unlock()
 			return
 		}
-		a.listen.mu.Unlock()
 
 		if sess.noteFarEnd(seg.Seconds()) {
 			log.Print("always-on: the far end is talking -- this is a conversation")
@@ -399,7 +399,6 @@ func (a *app) stopListening() {
 	a.listen.recorder, a.listen.work, a.listen.workerDone = nil, nil, nil
 	a.listen.listening = false
 	a.listen.preroll, a.listen.farPreroll = nil, nil
-	a.listen.pendingSpeech, a.listen.pendingFarEnd = false, false
 	a.listen.mu.Unlock()
 
 	if rec != nil {
@@ -522,23 +521,43 @@ func (a *app) confirmSpeech(seg vad.Segment) ([]float32, bool) {
 	return embed, true
 }
 
-// openSession starts recording. asMeeting is set when the far end opened it,
+// openSessionIfIdle starts recording unless something already is, and hands
+// back the session either way. asMeeting is set when the far end opened it,
 // where there is nothing to decide: the other side of a call is a second
 // party.
-func (a *app) openSession(cfg settings.Settings, asMeeting bool) {
+//
+// Only the worker goroutine calls this, so "is one already open" needs no
+// guard beyond the read below -- there is no second opener to race with.
+func (a *app) openSessionIfIdle(asMeeting bool) *session {
+	a.listen.mu.Lock()
+	sess := a.listen.sess
+	listening := a.listen.listening
+	a.listen.mu.Unlock()
+	if sess != nil {
+		if asMeeting {
+			sess.promote()
+			a.noteSessionKind(sessionMeeting)
+		}
+		return sess
+	}
+	if !listening || a.userRecordingInProgress() {
+		return nil
+	}
+
+	cfg := a.store.Get()
 	spec, ok := a.model(cfg)
 	if !ok {
-		return
+		return nil
 	}
 	if err := os.MkdirAll(a.sessionDir(), 0o755); err != nil {
 		log.Printf("always-on: %v", err)
-		return
+		return nil
 	}
 
 	sess, err := newSession(a.sessionDir(), time.Now(), spec, cfg.Language, true)
 	if err != nil {
 		log.Printf("always-on: %v", err)
-		return
+		return nil
 	}
 	if asMeeting {
 		sess.promote()
@@ -567,12 +586,17 @@ func (a *app) openSession(cfg settings.Settings, asMeeting bool) {
 	// the session.
 	a.attachSessionSystemAudio(cfg, sess, farPreroll)
 
+	// The clock in the menu bar has to move, or "recording" reads as stuck.
+	sess.stopTicker = make(chan struct{})
+	go a.tickMeetingClock(sess.stopTicker)
+
 	a.tray.startedMeeting(sess.start)
 	if a.onMeetingState != nil {
 		a.onMeetingState(true)
 	}
 	log.Printf("always-on: recording to %s", sess.micPath)
 	go a.models.warm(spec, asr.ModelDir(a.modelsDir, spec), cfg.Language)
+	return sess
 }
 
 // attachSessionSystemAudio gives the session somewhere to put the far end,
@@ -735,6 +759,12 @@ func (a *app) closeSessionIfDone(cfg settings.Settings) {
 	if kind == sessionMeeting {
 		gap = time.Duration(splitMinutes(cfg) * float64(time.Minute))
 	}
+	// A recording nothing has confirmed yet is a guess made on the gate's
+	// first impression. It gets seconds to be justified, not the minute a
+	// real note is given to finish a thought.
+	if !sess.isConfirmed() {
+		gap = provisionalGrace
+	}
 	if sess.quietFor() < gap && time.Since(sess.start) < maxSessionHours*time.Hour {
 		return
 	}
@@ -771,15 +801,32 @@ func (a *app) closeSession() {
 		a.stopTap()
 	}
 
+	if sess.stopTicker != nil {
+		close(sess.stopTicker)
+	}
+
 	micPath, sysPath, sysVoiced := sess.closeFiles()
 	seconds := time.Since(sess.start).Seconds()
 	kind := sess.currentKind()
+	confirmed := sess.isConfirmed()
 
 	a.tray.stoppedMeeting()
 	if a.onMeetingState != nil {
 		a.onMeetingState(false)
 	}
 	log.Printf("always-on: %s of %.0fs ended (%.1fs of far-end audio)", kind, seconds, sysVoiced)
+
+	// Nothing ever passed the second stage, so the gate's first impression
+	// was wrong: a door, a cough, a phrase from a video. Deleted whole --
+	// no row, no audio, no trace. This is the price of opening on live
+	// speech, and it is the right way round: a recording that turns out to
+	// be nothing costs a few seconds of disk, while waiting to be sure cost
+	// the user twenty seconds of wondering whether anything was happening.
+	if !confirmed {
+		log.Printf("always-on: %.0fs never confirmed as speech, discarded", seconds)
+		removeQuietly(micPath, sysPath)
+		return
+	}
 
 	// Too short to be anything: delete rather than file. A three-second file
 	// in History is noise about noise.
@@ -1019,29 +1066,6 @@ func (l *alwaysOn) noteSweep() {
 	l.mu.Lock()
 	l.sweptAt = time.Now()
 	l.mu.Unlock()
-}
-
-// takePendingSpeech and takePendingFarEnd read and clear the flags the audio
-// threads raise. Read once: seeing the same flag twice would open two
-// recordings for one stretch of speech.
-func (l *alwaysOn) takePendingSpeech() bool {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	if !l.pendingSpeech {
-		return false
-	}
-	l.pendingSpeech = false
-	return true
-}
-
-func (l *alwaysOn) takePendingFarEnd() bool {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	if !l.pendingFarEnd {
-		return false
-	}
-	l.pendingFarEnd = false
-	return true
 }
 
 // toggleListenPause is what the menu item does: "not right now", without

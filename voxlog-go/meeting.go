@@ -23,9 +23,13 @@ import (
 const meetingsDirName = "Recordings"
 
 // trayTickInterval is how often the elapsed time in the menu bar is redrawn.
-// Five seconds: the number is there to say "still recording", not to be a
-// stopwatch, and each tick is an objc_msgSend on the main thread.
-const trayTickInterval = 5 * time.Second
+//
+// One second, because a clock that moves is the difference between "it is
+// recording" and "it might be stuck": at five seconds the number sat still
+// long enough to read as frozen, which is exactly the doubt this indicator
+// exists to remove. The cost is one SetTitle per second while a recording
+// runs, and none at all when nothing is.
+const trayTickInterval = time.Second
 
 // meeting is a call being recorded, from the key that started it to the key
 // that stops it.

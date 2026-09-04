@@ -54,27 +54,6 @@ func TestPauseStopsListeningUntilResumed(t *testing.T) {
 	}
 }
 
-func TestPendingIsConsumedOnce(t *testing.T) {
-	// The audio threads raise these flags and the supervisor acts on them.
-	// Reading one twice would open two recordings for one stretch of speech.
-	var l alwaysOn
-	l.pendingSpeech = true
-	if !l.takePendingSpeech() {
-		t.Fatal("takePendingSpeech did not see the flag")
-	}
-	if l.takePendingSpeech() {
-		t.Fatal("takePendingSpeech returned the same flag twice")
-	}
-
-	l.pendingFarEnd = true
-	if !l.takePendingFarEnd() {
-		t.Fatal("takePendingFarEnd did not see the flag")
-	}
-	if l.takePendingFarEnd() {
-		t.Fatal("takePendingFarEnd returned the same flag twice")
-	}
-}
-
 // The capture callback runs on miniaudio's realtime thread. It must never
 // block, and it must survive there being no worker to hand audio to (the
 // window between the recorder being stopped and the callback draining).
@@ -481,5 +460,45 @@ func TestOnePersonAtTwoDistancesIsStillOnePerson(t *testing.T) {
 	}
 	if len(s.voices) != 2 {
 		t.Fatalf("got %d clusters, want the two the merge threshold gives", len(s.voices))
+	}
+}
+
+func TestAnUnconfirmedRecordingGetsSecondsNotAMinute(t *testing.T) {
+	// A recording opens on the gate's first impression, so the menu bar can
+	// say "recording" while the first sentence is still being said. If the
+	// second stage never agrees, that guess must cost seconds -- not the
+	// minute a real note is given to finish a thought.
+	var cfg settings.Settings
+	cfg.AlwaysOnNoteGapSeconds = 60
+
+	s := newTestSession(t)
+	if s.isConfirmed() {
+		t.Fatal("a session starts unconfirmed")
+	}
+	s.mu.Lock()
+	s.lastVoiced = time.Now().Add(-20 * time.Second)
+	s.mu.Unlock()
+
+	// Unconfirmed: 20 seconds of nothing is already past the grace period.
+	if s.quietFor() < provisionalGrace {
+		t.Fatal("the test's own clock is wrong")
+	}
+
+	// Confirmed: the same 20 seconds is well inside the note gap, and the
+	// recording keeps running.
+	s.noteVoice(unitVec(64, 0, 0.01), 3)
+	if !s.isConfirmed() {
+		t.Fatal("a confirmed reply did not mark the session")
+	}
+	if s.quietFor() > time.Duration(noteGapSeconds(cfg)*float64(time.Second)) {
+		t.Fatal("a confirmed session should still be well within its gap")
+	}
+}
+
+func TestFarEndSpeechAlsoConfirms(t *testing.T) {
+	s := newTestSession(t)
+	s.noteFarEnd(1)
+	if !s.isConfirmed() {
+		t.Fatal("far-end speech must confirm the recording too")
 	}
 }

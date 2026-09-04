@@ -80,6 +80,14 @@ type session struct {
 	sysVoiced  float64
 	farEndSecs float64
 	lastVoiced time.Time
+	// confirmed is set the first time a reply passes the second stage. A
+	// session is opened the moment the gate hears a voice, before anything
+	// has been checked, so that the menu bar can say "recording" while the
+	// first sentence is still being said -- and a session that never gets a
+	// confirmation is thrown away whole, file and all.
+	confirmed bool
+	// stopTicker ends the goroutine that keeps the menu bar clock moving.
+	stopTicker chan struct{}
 
 	// voices are the distinct speakers heard so far, as running centroids.
 	// This is the live version of what the diarizer does after the fact --
@@ -168,6 +176,7 @@ func (s *session) noteVoice(embed []float32, seconds float64) bool {
 	defer s.mu.Unlock()
 
 	s.lastVoiced = time.Now()
+	s.confirmed = true
 	if len(embed) == 0 {
 		return false
 	}
@@ -233,6 +242,7 @@ func (s *session) noteFarEnd(seconds float64) bool {
 	defer s.mu.Unlock()
 	s.farEndSecs += seconds
 	s.lastVoiced = time.Now()
+	s.confirmed = true
 	if s.kind == sessionMeeting || s.farEndSecs < farEndEscalateSeconds {
 		return false
 	}
@@ -246,6 +256,14 @@ func (s *session) promote() {
 	s.mu.Lock()
 	s.kind = sessionMeeting
 	s.mu.Unlock()
+}
+
+// isConfirmed reports whether anything in this recording has passed the
+// second stage yet.
+func (s *session) isConfirmed() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.confirmed
 }
 
 func (s *session) currentKind() string {
