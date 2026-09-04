@@ -31,11 +31,26 @@ const (
 
 const (
 	// escalateSegments and escalateSeconds are what a second voice has to
-	// clear before a note becomes a conversation. One stray reply is a cough,
-	// a passer-by, or a phrase from a video; two replies and three seconds of
-	// them is somebody talking.
-	escalateSegments = 2
-	escalateSeconds  = 3.0
+	// clear before a note becomes a conversation.
+	//
+	// Deliberately steep, because the two mistakes are not symmetrical. A
+	// conversation mistaken for a note is filed a minute later than it might
+	// have been and shows up in History instead of Meetings. A note mistaken
+	// for a conversation sits in an open file waiting for the five-minute
+	// conversation gap, which from the outside looks exactly like the
+	// feature not working -- which is what happened the first time this ran:
+	// one person talking to themselves escalated after 27 seconds, with the
+	// far end at digital silence.
+	escalateSegments = 3
+	escalateSeconds  = 8.0
+	// distinctVoice is how unlike the first speaker a cluster has to be
+	// before it counts as a second person. Stricter than
+	// voiceid.MergeThreshold (0.55), which answers a different question --
+	// "are these two stretches the same person" inside a transcript, where
+	// splitting one person in two is the worse failure. Here the cost is
+	// reversed, so a voice only opens a conversation when it is plainly not
+	// the one already talking.
+	distinctVoice = 0.45
 	// farEndEscalateSeconds is the same bar for the other side of a call.
 	// Higher than a single reply because music with vocals clears the
 	// voice-activity gate too, and a false conversation records the room for
@@ -181,19 +196,30 @@ func (s *session) noteVoice(embed []float32, seconds float64) bool {
 }
 
 // escalateLocked flips the session to a conversation if any voice other than
-// the first has said enough to be a real second person. Callers hold mu.
+// the first has said enough, and sounds different enough, to be a real second
+// person. Callers hold mu.
 func (s *session) escalateLocked() bool {
 	if s.kind == sessionMeeting || len(s.voices) < 2 {
 		return false
 	}
 	// The first voice is whoever started talking -- usually the user. Every
-	// other one is a candidate second party; one of them clearing the bar is
-	// enough.
+	// other one is a candidate second party, and has to clear three bars:
+	// enough replies, enough seconds, and enough distance from the first
+	// voice. The third is what keeps one person recorded at two distances
+	// from the microphone from becoming two people.
+	first := s.voices[0].centroid
 	for _, v := range s.voices[1:] {
-		if v.segments >= escalateSegments && v.secs >= escalateSeconds {
-			s.kind = sessionMeeting
-			return true
+		if v.segments < escalateSegments || v.secs < escalateSeconds {
+			continue
 		}
+		sim := voiceid.Cosine(first, v.centroid)
+		if sim >= distinctVoice {
+			continue
+		}
+		s.kind = sessionMeeting
+		log.Printf("always-on: second voice after %.0fs over %d replies, %.2f similar to the first -- this is a conversation",
+			v.secs, v.segments, sim)
+		return true
 	}
 	return false
 }

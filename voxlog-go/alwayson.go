@@ -353,8 +353,8 @@ func (a *app) handleMicSegments(segments []vad.Segment) {
 		// Live speaker counting: this is what turns a note into a meeting
 		// the moment a second person has said enough (see session.noteVoice),
 		// and the only thing that keeps the silence timer alive.
+		// The reason is logged by escalateLocked, which has the numbers.
 		if sess.noteVoice(embed, seg.Seconds()) {
-			log.Print("always-on: a second voice -- this is a conversation")
 			a.noteSessionKind(sessionMeeting)
 		}
 	}

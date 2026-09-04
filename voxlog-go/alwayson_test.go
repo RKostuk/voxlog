@@ -236,16 +236,19 @@ func TestASecondVoiceMakesItAConversation(t *testing.T) {
 	me, them := unitVec(64, 0, 0.01), unitVec(64, 7, 0.01)
 
 	s.noteVoice(me, 5)
-	// One reply from someone else is not a conversation: a passer-by, a
-	// phrase from a video, a cough that fingerprinted oddly.
+	// A couple of replies from someone else is not a conversation: a
+	// passer-by, a phrase from a video, a cough that fingerprinted oddly.
 	if s.noteVoice(them, 1) {
 		t.Fatal("a single short reply escalated")
 	}
-	if s.currentKind() != sessionNote {
-		t.Fatal("kind changed on one reply")
+	if s.noteVoice(them, 2) {
+		t.Fatal("three seconds over two replies escalated")
 	}
-	// Two replies and enough seconds of them is somebody talking.
-	if !s.noteVoice(them, 3) {
+	if s.currentKind() != sessionNote {
+		t.Fatal("kind changed before the bar was cleared")
+	}
+	// Three replies and eight seconds of them is somebody talking.
+	if !s.noteVoice(them, 6) {
 		t.Fatal("a second voice that cleared the bar did not escalate")
 	}
 	if s.currentKind() != sessionMeeting {
@@ -259,7 +262,8 @@ func TestEscalationIsOneWay(t *testing.T) {
 	s := newTestSession(t)
 	me, them := unitVec(64, 0, 0.01), unitVec(64, 7, 0.01)
 	s.noteVoice(me, 5)
-	s.noteVoice(them, 2)
+	s.noteVoice(them, 3)
+	s.noteVoice(them, 3)
 	s.noteVoice(them, 3)
 	for i := 0; i < 5; i++ {
 		s.noteVoice(me, 4)
@@ -450,5 +454,32 @@ func TestOrphanSweepStillAdoptsAnUnknownRecording(t *testing.T) {
 	}
 	if len(all) != 1 {
 		t.Fatalf("got %d meetings, want the orphan adopted", len(all))
+	}
+}
+
+func TestOnePersonAtTwoDistancesIsStillOnePerson(t *testing.T) {
+	// The failure that made the feature look broken: one person talking to
+	// themselves escalated to a conversation, and the note then waited for
+	// the five-minute conversation gap instead of the one-minute note gap.
+	// A cluster far enough from the first to stand on its own (below
+	// voiceid.MergeThreshold) can still be plainly the same voice.
+	s := newTestSession(t)
+	me := unitVec(64, 0, 0)
+	// Cosine 0.5 to me: its own cluster, but nothing like a second person.
+	nearlyMe := make([]float32, 64)
+	nearlyMe[0], nearlyMe[1] = 0.5, 0.866
+	nearlyMe = voiceid.Normalize(nearlyMe)
+
+	s.noteVoice(me, 10)
+	for i := 0; i < 6; i++ {
+		if s.noteVoice(nearlyMe, 5) {
+			t.Fatal("the same voice at a different distance opened a conversation")
+		}
+	}
+	if s.currentKind() != sessionNote {
+		t.Fatalf("kind = %q, want it to still be a note", s.currentKind())
+	}
+	if len(s.voices) != 2 {
+		t.Fatalf("got %d clusters, want the two the merge threshold gives", len(s.voices))
 	}
 }
