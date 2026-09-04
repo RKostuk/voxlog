@@ -12,11 +12,36 @@ BIN := voxlog-go
 # brand-new app and silently dropped every permission the user had granted.
 # Falls back to ad-hoc if the certificate isn't present on this machine.
 #
+# SIGN_NAME is looked for by name rather than "whichever identity is first",
+# so a Developer ID or an employer's certificate appearing in the keychain
+# later cannot silently start signing this app -- and, more to the point,
+# cannot change the signature and drop every permission again.
+#
+# Create it once (no Apple account needed, no admin rights):
+#
+#   openssl req -x509 -newkey rsa:2048 -sha256 -days 3650 -nodes \
+#     -keyout dev.key -out dev.crt -subj "/CN=Voxlog Dev" \
+#     -addext "basicConstraints=critical,CA:false" \
+#     -addext "keyUsage=critical,digitalSignature" \
+#     -addext "extendedKeyUsage=critical,codeSigning"
+#   openssl pkcs12 -export -out dev.p12 -inkey dev.key -in dev.crt \
+#     -name "Voxlog Dev" -passout pass:voxlog \
+#     -keypbe PBE-SHA1-3DES -certpbe PBE-SHA1-3DES -macalg sha1
+#   security import dev.p12 -k ~/Library/Keychains/login.keychain-db \
+#     -P voxlog -T /usr/bin/codesign
+#   security add-trusted-cert -r trustRoot -p codeSign \
+#     -k ~/Library/Keychains/login.keychain-db dev.crt
+#
+# The -legacy PBE flags matter: macOS's `security` cannot read a PKCS#12 file
+# written with OpenSSL 3's modern defaults, and fails with "MAC verification
+# failed (wrong password?)", which is not what is wrong.
+#
 # The fallback has to test the RESULT, not the exit status: the pipeline ends
 # in `tr`, which succeeds even when there is no identity to print, so an
 # `|| echo -` here never fired and the build died on `codesign --sign ""`.
+SIGN_NAME ?= Voxlog Dev
 SIGN_ID ?= $(shell id=$$(security find-identity -v -p codesigning 2>/dev/null | \
-             grep -o '"[^"]*"' | head -1 | tr -d '"'); \
+             grep -o '"$(SIGN_NAME)"' | head -1 | tr -d '"'); \
              if [ -n "$$id" ]; then echo "$$id"; else echo -; fi)
 
 # sherpa-onnx ships prebuilt dylibs inside its Go module, and the linker
