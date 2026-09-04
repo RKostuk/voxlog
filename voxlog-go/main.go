@@ -652,20 +652,34 @@ func modelForSettings(cfg settings.Settings) (asr.ModelSpec, bool) {
 	return asr.ModelSpec{}, false
 }
 
-// bindingsFor reads the three hotkeys out of the settings, refusing a meeting
-// key that collides with one of the other two. A binding that means two things
+// toggleTasksDrawer opens or closes the quick-tasks drawer, reading the
+// placement from settings each time rather than at startup: unlike the
+// hotkey itself, where the drawer opens can change without a restart.
+func toggleTasksDrawer(store *settings.Store, tasks *task.Store) {
+	ui.SetDrawerPlacement(store.Get().TasksDrawerPlacement)
+	ui.ToggleTasksDrawer(tasks)
+}
+
+// bindingsFor reads the four hotkeys out of the settings, refusing a meeting
+// or tasks key that collides with one already taken. A binding that means two things
 // would simply do the second one, with nothing on screen saying why -- the
 // Settings window rejects the collision when it is set, and this covers a
 // settings file edited by hand.
-func bindingsFor(cfg settings.Settings) (dictate, hist, meeting hotkey.Binding) {
+func bindingsFor(cfg settings.Settings) (dictate, hist, meeting, tasks hotkey.Binding) {
 	dictate = hotkey.ParseBinding(cfg.DictateKeyID)
 	hist = hotkey.ParseBinding(cfg.HistoryKeyID)
 	meeting = hotkey.ParseBinding(cfg.MeetingKeyID)
+	tasks = hotkey.ParseBinding(cfg.TasksKeyID)
 	if !meeting.IsZero() && (meeting.String() == dictate.String() || meeting.String() == hist.String()) {
 		log.Printf("meeting key %s is already bound elsewhere; ignoring it", meeting.Label())
 		meeting = hotkey.Binding{}
 	}
-	return dictate, hist, meeting
+	if !tasks.IsZero() && (tasks.String() == dictate.String() || tasks.String() == hist.String() ||
+		(!meeting.IsZero() && tasks.String() == meeting.String())) {
+		log.Printf("tasks key %s is already bound elsewhere; ignoring it", tasks.Label())
+		tasks = hotkey.Binding{}
+	}
+	return dictate, hist, meeting, tasks
 }
 
 // muteMicLabel is the mute item's two faces. It says what the click will do,
@@ -800,6 +814,7 @@ func onReady(store *settings.Store, histStore *history.Store, meetStore *history
 	mOverview := systray.AddMenuItem("Overview", "Open Voxlog")
 	mHistory := systray.AddMenuItem("History", "Open history")
 	mMeetings := systray.AddMenuItem("Meetings", "Open meetings")
+	mTasksDrawer := systray.AddMenuItem("Quick tasks", "Open the tasks drawer")
 	systray.AddSeparator()
 	mSettings := systray.AddMenuItem("Settings", "Open settings")
 	systray.AddSeparator()
@@ -956,8 +971,16 @@ func onReady(store *settings.Store, histStore *history.Store, meetStore *history
 		notify("Voxlog needs Accessibility permission for hotkeys to work. Grant it in System Settings, then restart Voxlog.")
 	}
 
-	dictateKey, historyKey, meetingKey := bindingsFor(cfg)
-	listener := hotkey.NewListener(dictateKey, historyKey, meetingKey, hotkey.Callbacks{
+	// The drawer opens where the settings say, refreshes the main window
+	// after an edit made in it, and hands "Open ↗" back to the full Tasks
+	// pane. All three need things package ui cannot reach on its own.
+	ui.SetMainRefresher(func() { ui.RefreshMainWindowIfOpen(histStore, meetStore, a.tasks) })
+	ui.SetDrawerOpenMainHandler(func() {
+		ui.ShowMainWindow("tasks", histStore, meetStore, a.tasks, store, knownModels, modelsDir, recordingsDir)
+	})
+
+	dictateKey, historyKey, meetingKey, tasksKey := bindingsFor(cfg)
+	listener := hotkey.NewListener(dictateKey, historyKey, meetingKey, tasksKey, hotkey.Callbacks{
 		// Every hotkey callback is invoked synchronously from the CGEventTap's
 		// C callback on the OS event-tap thread, so each one hops onto its own
 		// goroutine immediately: anything slow there risks macOS disabling the
@@ -968,6 +991,7 @@ func onReady(store *settings.Store, histStore *history.Store, meetStore *history
 		DictateUp:   func() { go a.guarded(a.releaseDictate) },
 		Meeting:     func() { go a.guarded(a.toggleMeeting) },
 		History:     func() { go showHistory(histStore, meetStore, a.tasks, store, knownModels, modelsDir, recordingsDir) },
+		Tasks:       func() { go toggleTasksDrawer(store, a.tasks) },
 		// Escape is a global event tap: it fires on every Escape key-down in
 		// every app, not just when Voxlog's window is up. Only hide the
 		// window when Voxlog is frontmost, or pressing Escape in some other
@@ -1034,6 +1058,10 @@ func onReady(store *settings.Store, histStore *history.Store, meetStore *history
 				go ui.ShowMainWindow("history", histStore, meetStore, a.tasks, store, knownModels, modelsDir, recordingsDir)
 			case <-mMeetings.ClickedCh:
 				go ui.ShowMainWindow("meetings", histStore, meetStore, a.tasks, store, knownModels, modelsDir, recordingsDir)
+			case <-mTasksDrawer.ClickedCh:
+				// Same entry point as the tasks hotkey, so a menu open and a
+				// key open cannot drift apart.
+				go toggleTasksDrawer(store, a.tasks)
 			case <-mStartMeeting.ClickedCh:
 				// The same entry point the meeting hotkey uses, so a menu
 				// start and a key start cannot drift apart -- and so the

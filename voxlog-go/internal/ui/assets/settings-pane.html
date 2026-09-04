@@ -289,6 +289,35 @@
     </div>
 
     <div class="group">
+      <div class="group-title">Quick tasks drawer</div>
+      <div class="card">
+        <div class="item">
+          <div class="title">Open the drawer
+            <div class="subtext">A small always-on-top window: what is still open, grouped by project, and one line to add to it</div>
+          </div>
+          <span class="mono-field" id="tasks_key_label"></span>
+          <button type="button" class="capture-btn" data-target="tasks_key">Set&hellip;</button>
+        </div>
+        <div class="item stacked" id="tasks-drawer-position-row">
+          <div class="title">Where it opens
+            <div class="subtext">The drawer stays put while it is up -- it is a window you type into, so it never follows the cursor.</div>
+          </div>
+          <div class="place-wrap" id="drawer-place-wrap">
+            <div class="place-map" id="drawer-place-map">
+              <button type="button" class="place-spot" data-pos="top_left" title="Top left"></button>
+              <button type="button" class="place-spot" data-pos="top_centre" title="Top centre"></button>
+              <button type="button" class="place-spot" data-pos="top_right" title="Top right"></button>
+              <button type="button" class="place-spot" data-pos="bottom_left" title="Bottom left"></button>
+              <button type="button" class="place-spot" data-pos="bottom_centre" title="Bottom centre"></button>
+              <button type="button" class="place-spot" data-pos="bottom_right" title="Bottom right"></button>
+            </div>
+          </div>
+          <input type="hidden" id="tasks_drawer_placement" value="top_centre">
+        </div>
+      </div>
+    </div>
+
+    <div class="group">
       <div class="group-title">Not a task</div>
       <div class="card">
         <div class="item stacked">
@@ -502,7 +531,7 @@
     var entityDictSeeded = false;
     // Raw KeyID strings ("vk:54"); the form shows human labels for these
     // but always saves the raw ids.
-    var keys = { dictate_key: '', history_key: '', meeting_key: '' };
+    var keys = { dictate_key: '', history_key: '', meeting_key: '', tasks_key: '' };
 
     function currentModel() {
       var el = document.querySelector('input[name=model]:checked');
@@ -762,7 +791,7 @@
 
     // --- hotkey capture -------------------------------------------------
     var capturingBtn = null;
-    var KEY_NAMES = { dictate_key: 'Dictate', history_key: 'History', meeting_key: 'Meeting' };
+    var KEY_NAMES = { dictate_key: 'Dictate', history_key: 'History', meeting_key: 'Meeting', tasks_key: 'Quick tasks' };
 
     function showKeyLabel(field) {
       window.keyLabel(keys[field] || '').then(function (label) {
@@ -1058,6 +1087,8 @@
         dictate_key: keys.dictate_key,
         history_key: keys.history_key,
         meeting_key: keys.meeting_key,
+        tasks_key: keys.tasks_key,
+        tasks_drawer_placement: document.getElementById('tasks_drawer_placement').value,
         dictate_activation: document.getElementById('dictate_activation').value,
         meeting_transcribe: document.getElementById('meeting_transcribe').value,
         backfill_turns: document.getElementById('backfill_turns').value,
@@ -1257,6 +1288,24 @@
         });
     }
 
+    // The drawer's placement map is the indicator's, minus the cursor modes
+    // and the screen-edge strip: a window with a text field in it should not
+    // move while you reach for it, and it is too tall for the Dock strip.
+    function renderDrawerPlacement() {
+      var pos = document.getElementById('tasks_drawer_placement').value;
+      document.querySelectorAll('#drawer-place-map .place-spot').forEach(function (b) {
+        b.setAttribute('aria-pressed', String(b.dataset.pos === pos));
+      });
+    }
+
+    document.getElementById('drawer-place-wrap').addEventListener('click', function (e) {
+      var b = e.target.closest('[data-pos]');
+      if (!b) return;
+      document.getElementById('tasks_drawer_placement').value = b.dataset.pos;
+      renderDrawerPlacement();
+      save();
+    });
+
     document.querySelector('.place-wrap').addEventListener('click', function (e) {
       var b = e.target.closest('[data-pos]');
       if (!b) return;
@@ -1418,9 +1467,13 @@
       keys.dictate_key = settings.dictate_key || '';
       keys.history_key = settings.history_key || '';
       keys.meeting_key = settings.meeting_key || '';
+      keys.tasks_key = settings.tasks_key || '';
       showKeyLabel('dictate_key');
       showKeyLabel('history_key');
       showKeyLabel('meeting_key');
+      showKeyLabel('tasks_key');
+      document.getElementById('tasks_drawer_placement').value = settings.tasks_drawer_placement || 'top_centre';
+      renderDrawerPlacement();
       // Redraw once the labels exist: the preview shows the dictate shortcut,
       // and syncIndicatorStyle ran above, before showKeyLabel had filled it in.
       syncIndicatorStyle();

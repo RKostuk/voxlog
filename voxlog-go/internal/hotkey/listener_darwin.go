@@ -65,6 +65,8 @@ type Callbacks struct {
 
 	History func()
 	Meeting func()
+	// Tasks opens the quick-tasks drawer.
+	Tasks func()
 	// Escape fires on any Escape key-down, not a standalone tap: cancelling an
 	// in-progress recording should work even mid-chord, and unlike the other
 	// bindings it is fixed rather than user-configurable.
@@ -76,8 +78,8 @@ type Callbacks struct {
 	Hold func() bool
 }
 
-// Listener taps global key events and reports the configured dictate, history
-// and meeting bindings. A plain key is watched by tap detection (press and
+// Listener taps global key events and reports the configured dictate,
+// history, meeting and tasks bindings. A plain key is watched by tap detection (press and
 // release with nothing in between, which is what makes a bare right-Command
 // binding usable); a combination is matched against the modifiers held when
 // its key goes down.
@@ -85,10 +87,12 @@ type Listener struct {
 	dictateBinding Binding
 	historyBinding Binding
 	meetingBinding Binding
+	tasksBinding   Binding
 	// The tapDetector is nil for combinations and vice versa.
 	dictate *tapDetector
 	history *tapDetector
 	meeting *tapDetector
+	tasks   *tapDetector
 	cb      Callbacks
 
 	// dictateHeld tracks a push-to-talk key that is currently down, so the
@@ -107,11 +111,12 @@ type Listener struct {
 // escapeKeycode is Escape's macOS virtual keycode.
 const escapeKeycode = "53"
 
-func NewListener(dictateKey, historyKey, meetingKey Binding, cb Callbacks) *Listener {
+func NewListener(dictateKey, historyKey, meetingKey, tasksKey Binding, cb Callbacks) *Listener {
 	l := &Listener{
 		dictateBinding: dictateKey,
 		historyBinding: historyKey,
 		meetingBinding: meetingKey,
+		tasksBinding:   tasksKey,
 		cb:             cb,
 		ready:          make(chan struct{}),
 	}
@@ -123,6 +128,9 @@ func NewListener(dictateKey, historyKey, meetingKey Binding, cb Callbacks) *List
 	}
 	if !meetingKey.IsZero() && !meetingKey.HasMods() {
 		l.meeting = &tapDetector{target: meetingKey.Key, callback: cb.Meeting}
+	}
+	if !tasksKey.IsZero() && !tasksKey.HasMods() {
+		l.tasks = &tapDetector{target: tasksKey.Key, callback: cb.Tasks}
 	}
 	return l
 }
@@ -237,9 +245,12 @@ func (l *Listener) handleEvent(event C.CGEventRef, isPress bool) {
 		if l.meetingBinding.HasMods() && l.meetingBinding.Matches(kid, mods) && l.cb.Meeting != nil {
 			l.cb.Meeting()
 		}
+		if l.tasksBinding.HasMods() && l.tasksBinding.Matches(kid, mods) && l.cb.Tasks != nil {
+			l.cb.Tasks()
+		}
 	}
 
-	for _, d := range []*tapDetector{l.dictate, l.history, l.meeting} {
+	for _, d := range []*tapDetector{l.dictate, l.history, l.meeting, l.tasks} {
 		if d == nil || (d == l.dictate && l.holdMode()) {
 			continue
 		}

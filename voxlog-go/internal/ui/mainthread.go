@@ -271,6 +271,47 @@ static void makeOverlayPanelC(void *window) {
 	}
 }
 
+// makeDrawerPanelC restyles a window into the quick-tasks drawer: no visible
+// title bar, floating above normal windows, on every Space -- but, unlike
+// makeOverlayPanelC, still able to become key.
+//
+// That last part is why this is not just makeOverlayPanelC with
+// setIgnoresMouseEvents: NO. A borderless NSWindow returns NO from
+// canBecomeKeyWindow, so it can never hold the caret, and the drawer's whole
+// point is a one-line box you type a task into. Keeping the Titled bit and
+// hiding the title bar instead (FullSizeContentView + a transparent,
+// invisible title) gets a chromeless window that still takes keyboard input.
+static void makeDrawerPanelC(void *window) {
+	id win = (id)window;
+	// NSWindowStyleMaskTitled (1) | NSWindowStyleMaskFullSizeContentView (1<<15)
+	((void (*)(id, SEL, unsigned long))objc_msgSend)(
+		win, sel_registerName("setStyleMask:"), 1UL | (1UL << 15));
+	((void (*)(id, SEL, BOOL))objc_msgSend)(
+		win, sel_registerName("setTitlebarAppearsTransparent:"), (BOOL)1);
+	// NSWindowTitleHidden == 1
+	((void (*)(id, SEL, long))objc_msgSend)(
+		win, sel_registerName("setTitleVisibility:"), 1L);
+	((void (*)(id, SEL, BOOL))objc_msgSend)(
+		win, sel_registerName("setMovableByWindowBackground:"), (BOOL)1);
+	// NSFloatingWindowLevel == 3: the drawer is a companion to whatever the
+	// user is working in, not a window they switch to.
+	((void (*)(id, SEL, long))objc_msgSend)(
+		win, sel_registerName("setLevel:"), 3L);
+	// CanJoinAllSpaces (1<<0) | FullScreenAuxiliary (1<<8). No Transient
+	// here, unlike the overlay: a transient window is not allowed to become
+	// key either.
+	((void (*)(id, SEL, unsigned long))objc_msgSend)(
+		win, sel_registerName("setCollectionBehavior:"), (1UL << 0) | (1UL << 8));
+}
+
+// makeKeyAndOrderFrontC shows the window AND gives it keyboard focus -- the
+// opposite of orderFrontRegardlessC below, and what the drawer needs so the
+// "add a task" box can be typed into the moment it appears.
+static void makeKeyAndOrderFrontC(void *window) {
+	((void (*)(id, SEL, id))objc_msgSend)(
+		(id)window, sel_registerName("makeKeyAndOrderFront:"), nil);
+}
+
 // orderFrontRegardlessC shows the window without stealing focus from
 // whatever the user is typing into -- makeKeyAndOrderFront: would yank the
 // caret away mid-dictation, which is exactly the wrong behavior for a HUD.
@@ -500,6 +541,17 @@ func makeOverlayPanel(window unsafe.Pointer) {
 // orderFrontRegardless shows window without taking keyboard focus.
 func orderFrontRegardless(window unsafe.Pointer) {
 	C.orderFrontRegardlessC(window)
+}
+
+// makeDrawerPanel restyles window as a chromeless floating window that can
+// still hold the caret. See makeDrawerPanelC.
+func makeDrawerPanel(window unsafe.Pointer) {
+	C.makeDrawerPanelC(window)
+}
+
+// makeKeyAndOrderFront shows window and gives it keyboard focus.
+func makeKeyAndOrderFront(window unsafe.Pointer) {
+	C.makeKeyAndOrderFrontC(window)
 }
 
 // resizeWindow resizes window in place. See resizeWindowC.

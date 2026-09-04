@@ -742,6 +742,11 @@ func pasteEntryBack(text string) {
 // call ended: the list must stop saying "not transcribed", but stealing focus
 // from whatever the user moved on to would be worse than a stale row.
 func RefreshMainWindowIfOpen(store *history.Store, meetings *history.MeetingStore, tasks *task.Store) {
+	// The drawer shows the same tasks from the same store, so anything that
+	// refreshes the window refreshes it too -- otherwise a task classified
+	// while the drawer is open sits missing from it until it is reopened.
+	refreshDrawer()
+
 	winMu.Lock()
 	w := mainWin
 	winMu.Unlock()

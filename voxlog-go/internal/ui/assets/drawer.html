@@ -1,0 +1,274 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  /* The quick-tasks drawer: a small always-on-top window next to the notch.
+     It is not a second Tasks pane -- it shows what is still open, grouped by
+     project, and takes one line of new text. Anything more (notes, source,
+     reminders) is what the main window is for.
+
+     The window is chromeless but focusable (see makeDrawerPanelC), so this
+     page owns its own top bar: a title, and a close button that has to
+     exist because there is no system one. */
+  :root {
+    color-scheme: light dark;
+    --bg: rgba(246, 246, 248, 0.92);
+    --card: #fff;
+    --label: #1c1c1e;
+    --secondary: #636366;
+    --tertiary: #8e8e93;
+    --separator: rgba(60, 60, 67, 0.14);
+    --accent: #007aff;
+    --field: rgba(120, 120, 128, 0.1);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: rgba(28, 28, 30, 0.94);
+      --card: #2c2c2e;
+      --label: #f2f2f7;
+      --secondary: #aeaeb2;
+      --tertiary: #8e8e93;
+      --separator: rgba(84, 84, 88, 0.5);
+      --field: rgba(120, 120, 128, 0.24);
+    }
+  }
+  html, body { margin: 0; height: 100%; }
+  body {
+    font: 12.5px -apple-system, "SF Pro Text", system-ui, sans-serif;
+    color: var(--label);
+    background: var(--bg);
+    -webkit-backdrop-filter: blur(30px) saturate(180%);
+    backdrop-filter: blur(30px) saturate(180%);
+    display: flex; flex-direction: column;
+    overflow: hidden;
+    -webkit-font-smoothing: antialiased;
+  }
+  /* Drag handle: the window is movableByWindowBackground, and this strip is
+     the part of it that obviously means "grab here". */
+  .bar {
+    display: flex; align-items: center; gap: 8px;
+    padding: 8px 10px 6px;
+    border-bottom: 0.5px solid var(--separator);
+    flex: none;
+  }
+  .bar .title { font-weight: 590; letter-spacing: -0.01em; }
+  .bar .count { color: var(--tertiary); font-size: 11px; }
+  .bar .grow { flex: 1; }
+  .bar button {
+    font: inherit; font-size: 12px; line-height: 1;
+    border: none; background: none; color: var(--tertiary);
+    cursor: pointer; padding: 3px 5px; border-radius: 5px;
+  }
+  .bar button:hover { background: var(--field); color: var(--label); }
+
+  .chips { display: flex; flex-wrap: wrap; gap: 5px; padding: 7px 10px 0; flex: none; }
+  .chip {
+    font-size: 10.5px; padding: 2px 8px; border-radius: 999px;
+    background: var(--field); color: var(--secondary); cursor: pointer;
+    border: none; font-family: inherit;
+  }
+  .chip.on { background: var(--accent); color: #fff; }
+
+  .list { flex: 1; overflow-y: auto; padding: 8px 10px; }
+  .group-name {
+    display: flex; align-items: center; gap: 6px;
+    font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.04em;
+    color: var(--tertiary); margin: 8px 2px 4px;
+  }
+  .group-name:first-child { margin-top: 0; }
+  .dot { width: 7px; height: 7px; border-radius: 50%; flex: none; }
+  .card { background: var(--card); border-radius: 9px; overflow: hidden; box-shadow: 0 0 0 0.5px var(--separator); }
+  .row {
+    display: flex; align-items: flex-start; gap: 8px;
+    padding: 7px 9px; border-top: 0.5px solid var(--separator);
+  }
+  .row:first-child { border-top: none; }
+  .row .text { flex: 1; min-width: 0; line-height: 1.35; }
+  .row.done .text { color: var(--tertiary); text-decoration: line-through; }
+  /* Status is a click target, not a menu: the drawer is for moving a task
+     along in one gesture, and the full four-way picker lives in the main
+     window. */
+  .row .status {
+    flex: none; font-size: 10px; padding: 2px 7px; border-radius: 999px;
+    background: var(--field); color: var(--secondary);
+    border: none; font-family: inherit; cursor: pointer;
+  }
+  .row .status.in_progress { background: color-mix(in srgb, #ff9500 22%, transparent); color: #c26a00; }
+  .row .status.blocked { background: color-mix(in srgb, #ff3b30 20%, transparent); color: #c9271e; }
+  .row .status.done { background: color-mix(in srgb, #34c759 22%, transparent); color: #1c7c36; }
+
+  .empty { color: var(--tertiary); text-align: center; padding: 18px 0; }
+
+  /* The decode-queue line, shown only while something is transcribing. Kept
+     to one line: the drawer has no room to list a queue, and "something is
+     running" is the part that changes what the user does next. */
+  .decoding {
+    display: flex; align-items: center; gap: 7px;
+    padding: 6px 10px; flex: none;
+    border-bottom: 0.5px solid var(--separator);
+    font-size: 11px; color: var(--secondary);
+  }
+  .decoding .spin {
+    width: 10px; height: 10px; border-radius: 50%;
+    border: 2px solid color-mix(in srgb, var(--accent) 30%, transparent);
+    border-top-color: var(--accent);
+    animation: spin 0.9s linear infinite; flex: none;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  @media (prefers-reduced-motion: reduce) { .decoding .spin { animation: none; } }
+
+  .add { display: flex; gap: 6px; padding: 8px 10px; border-top: 0.5px solid var(--separator); flex: none; }
+  .add input {
+    flex: 1; font: inherit; color: var(--label);
+    background: var(--card); border: 0.5px solid var(--separator);
+    border-radius: 7px; padding: 5px 8px;
+  }
+  .add input:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+</style>
+</head>
+<body>
+  <div class="bar">
+    <span class="title">Tasks</span>
+    <span class="count" id="count"></span>
+    <span class="grow"></span>
+    <button type="button" id="open-main" title="Open the Tasks pane">Open ↗</button>
+    <button type="button" id="close" title="Close">&#10005;</button>
+  </div>
+  <div id="decoding"></div>
+  <div class="chips" id="chips"></div>
+  <div class="list" id="list"></div>
+  <div class="add">
+    <input type="text" id="new-task" placeholder="Add a task" autofocus>
+  </div>
+
+  <script>
+    // Go replaces window.voxlog.tasks and calls render() on every change, so
+    // this page never fetches anything on its own.
+    window.voxlog = window.voxlog || {};
+    var entityFilter = '';
+
+    function escapeHtml(s) {
+      return String(s).replace(/[&<>"']/g, function (c) {
+        return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+      });
+    }
+
+    // Same hash-to-hue as the main window's entityColor, so a project is the
+    // same colour in both places.
+    function entityColor(name) {
+      var h = 0;
+      for (var i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) % 360;
+      return 'hsl(' + h + ' 62% 52%)';
+    }
+
+    var STATUS_LABEL = { todo: 'To do', in_progress: 'Doing', blocked: 'Blocked', done: 'Done' };
+    // Clicking a status advances it. Done wraps back to To do, which is the
+    // only way to undo a misclick without a menu.
+    var NEXT_STATUS = { todo: 'in_progress', in_progress: 'done', blocked: 'todo', done: 'todo' };
+
+    function openTasks() {
+      return ((window.voxlog && window.voxlog.tasks) || []).filter(function (t) {
+        return t.status !== 'done';
+      });
+    }
+
+    function renderChips() {
+      var names = [];
+      openTasks().forEach(function (t) {
+        var n = t.entity || 'Unfiltered';
+        if (names.indexOf(n) === -1) names.push(n);
+      });
+      var root = document.getElementById('chips');
+      if (names.length < 2) { root.innerHTML = ''; return; }
+      root.innerHTML = ['<button type="button" class="chip' + (entityFilter ? '' : ' on') + '" data-entity="">All</button>']
+        .concat(names.map(function (n) {
+          return '<button type="button" class="chip' + (entityFilter === n ? ' on' : '') +
+            '" data-entity="' + escapeHtml(n) + '">' + escapeHtml(n) + '</button>';
+        })).join('');
+      root.querySelectorAll('.chip').forEach(function (b) {
+        b.addEventListener('click', function () {
+          entityFilter = b.dataset.entity;
+          render();
+        });
+      });
+    }
+
+    // Pushed by Go on every queue change (ui.PublishDecodeQueue), and set on
+    // the page whenever the drawer is refreshed.
+    function renderDecoding() {
+      var q = (window.voxlog && window.voxlog.decodeQueue) || [];
+      var root = document.getElementById('decoding');
+      if (!q.length) { root.innerHTML = ''; return; }
+      var running = q.filter(function (d) { return d.running; });
+      var what = running.length ? running[running.length - 1].label : q[0].label;
+      var waiting = q.length - running.length;
+      root.innerHTML = '<div class="decoding"><span class="spin"></span>' +
+        '<span>Transcribing ' + escapeHtml(what) +
+        (waiting ? ' · ' + waiting + ' waiting' : '') + '</span></div>';
+    }
+
+    window.voxlog.onDecodeQueue = function (list) {
+      window.voxlog.decodeQueue = list || [];
+      renderDecoding();
+    };
+
+    function render() {
+      renderDecoding();
+      renderChips();
+      var tasks = openTasks().filter(function (t) {
+        return !entityFilter || (t.entity || 'Unfiltered') === entityFilter;
+      });
+      document.getElementById('count').textContent = tasks.length ? tasks.length + ' open' : '';
+
+      var groups = [], byName = {};
+      tasks.forEach(function (t) {
+        var n = t.entity || 'Unfiltered';
+        if (!(n in byName)) { byName[n] = groups.length; groups.push({ name: n, rows: [] }); }
+        groups[byName[n]].rows.push(t);
+      });
+      groups.sort(function (a, b) { return (a.name === 'Unfiltered') - (b.name === 'Unfiltered'); });
+
+      var root = document.getElementById('list');
+      root.innerHTML = groups.length ? groups.map(function (g) {
+        return '<div class="group-name"><span class="dot" style="background:' + entityColor(g.name) + '"></span>' +
+            escapeHtml(g.name) + '</div>' +
+          '<div class="card">' + g.rows.map(function (t) {
+            return '<div class="row">' +
+              '<div class="text">' + escapeHtml(t.text) + '</div>' +
+              '<button type="button" class="status ' + t.status + '" data-id="' + escapeHtml(t.id) +
+                '" data-next="' + NEXT_STATUS[t.status] + '" title="Click to advance">' +
+                (STATUS_LABEL[t.status] || t.status) + '</button>' +
+            '</div>';
+          }).join('') + '</div>';
+      }).join('') : '<div class="empty">Nothing open' + (entityFilter ? ' in this project' : '') + '.</div>';
+
+      root.querySelectorAll('.status').forEach(function (b) {
+        b.addEventListener('click', function () {
+          b.disabled = true;
+          window.drawerSetStatus(b.dataset.id, b.dataset.next);
+        });
+      });
+    }
+
+    document.getElementById('close').addEventListener('click', function () { window.drawerClose(); });
+    document.getElementById('open-main').addEventListener('click', function () { window.drawerOpenMain(); });
+
+    var input = document.getElementById('new-task');
+    input.addEventListener('keydown', function (ev) {
+      if (ev.key === 'Escape') { ev.preventDefault(); window.drawerClose(); return; }
+      if (ev.key !== 'Enter') return;
+      ev.preventDefault();
+      var v = input.value.trim();
+      if (!v) return;
+      input.value = '';
+      // Filtered to one project: a task added while a chip is on belongs to
+      // that project, which is what the chip was saying all along.
+      window.drawerAddTask(v, entityFilter === 'Unfiltered' ? '' : entityFilter);
+    });
+
+    render();
+    input.focus();
+  </script>
+</body>
+</html>

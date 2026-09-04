@@ -107,6 +107,7 @@ func TestListenerDetectorsAreIndependent(t *testing.T) {
 		Binding{Key: dictateKey},
 		Binding{Key: KeyID{Kind: "vk", Value: "60"}},
 		Binding{},
+		Binding{},
 		Callbacks{
 			Dictate: func() { dictateFired++ },
 			History: func() { historyFired++ },

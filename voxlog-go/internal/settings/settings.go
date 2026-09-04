@@ -96,6 +96,15 @@ type Settings struct {
 	// the user binds a key, meetings do not exist and nothing about the app
 	// changes.
 	MeetingKeyID string `json:"meeting_key"`
+	// TasksKeyID opens the quick-tasks drawer -- the small always-on-top
+	// window listing what is still open, with a one-line box for adding to
+	// it. Empty by default, like the meeting key: an unbound drawer is a
+	// feature that costs nothing until it is asked for.
+	TasksKeyID string `json:"tasks_key"`
+	// TasksDrawerPlacement is where the drawer opens, using the same
+	// vocabulary as the recording indicator's placement (ui.DrawerPlacements
+	// is the accepted list). Defaults to the top centre, beside the notch.
+	TasksDrawerPlacement string `json:"tasks_drawer_placement"`
 	// DictateActivation is how the dictate key behaves: ActivationToggle
 	// (tap to start, tap to stop) or ActivationHold (recording lasts exactly
 	// as long as the key is held). Dictation only -- nobody holds a key for an
@@ -198,9 +207,11 @@ func DefaultSettings() Settings {
 		TranscriptsDir:      "",
 		// Unbound: a user who never wants meeting recording sees no change in
 		// behavior, and no key of theirs is quietly taken over.
-		MeetingKeyID:      "",
-		DictateActivation: ActivationToggle,
-		MeetingTranscribe: MeetingTranscribeStop,
+		MeetingKeyID:         "",
+		TasksKeyID:           "",
+		TasksDrawerPlacement: "top_centre",
+		DictateActivation:    ActivationToggle,
+		MeetingTranscribe:    MeetingTranscribeStop,
 		// Recordings accumulate on purpose now: a transcript is not a
 		// substitute for hearing what was actually said, and nothing deletes
 		// audio until the user turns on the cleanup settings in a later phase.

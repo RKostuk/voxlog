@@ -46,21 +46,30 @@ func PublishDecodeQueue(list []DecodeStatus) {
 	decodeQueueLast = list
 	decodeQueueMu.Unlock()
 
-	winMu.Lock()
-	w := mainWin
-	winMu.Unlock()
-	if w == nil || !windowUsable(w) {
-		return
-	}
 	payload, err := json.Marshal(list)
 	if err != nil {
 		return
 	}
-	w.Dispatch(func() {
-		w.Eval(fmt.Sprintf(
-			"window.voxlog = window.voxlog || {}; window.voxlog.decodeQueue = %s; window.voxlog.onDecodeQueue && window.voxlog.onDecodeQueue(window.voxlog.decodeQueue);",
-			payload))
-	})
+	js := fmt.Sprintf(
+		"window.voxlog = window.voxlog || {}; window.voxlog.decodeQueue = %s; window.voxlog.onDecodeQueue && window.voxlog.onDecodeQueue(window.voxlog.decodeQueue);",
+		payload)
+
+	winMu.Lock()
+	w := mainWin
+	winMu.Unlock()
+	if w != nil && windowUsable(w) {
+		w.Dispatch(func() { w.Eval(js) })
+	}
+
+	// The drawer carries the same banner: it is the window that is up while
+	// the user is working, which is exactly when "is that meeting decoding
+	// yet" gets asked.
+	drawerMu.Lock()
+	d := drawerWin
+	drawerMu.Unlock()
+	if d != nil && windowUsable(d) {
+		d.Dispatch(func() { d.Eval(js) })
+	}
 }
 
 // decodeQueueJSON is the snapshot for a page being built or refreshed.

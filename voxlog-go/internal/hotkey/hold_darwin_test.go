@@ -10,7 +10,7 @@ var (
 // holdListener builds a listener in hold mode and records the edges it reports.
 func holdListener(binding Binding) (*Listener, *[]string) {
 	var events []string
-	l := NewListener(binding, Binding{}, Binding{}, Callbacks{
+	l := NewListener(binding, Binding{}, Binding{}, Binding{}, Callbacks{
 		DictateDown: func() { events = append(events, "down") },
 		DictateUp:   func() { events = append(events, "up") },
 		Hold:        func() bool { return true },
@@ -120,7 +120,7 @@ func TestHoldUnboundKeyDoesNothing(t *testing.T) {
 func TestHoldModeIsAskedPerEvent(t *testing.T) {
 	// The setting has to apply to the very next press, without a restart.
 	hold := false
-	l := NewListener(Binding{Key: dictateKey}, Binding{}, Binding{}, Callbacks{
+	l := NewListener(Binding{Key: dictateKey}, Binding{}, Binding{}, Binding{}, Callbacks{
 		Hold: func() bool { return hold },
 	})
 	if l.holdMode() {
@@ -133,12 +133,12 @@ func TestHoldModeIsAskedPerEvent(t *testing.T) {
 }
 
 func TestMeetingTapDetectorOnlyExistsWhenBound(t *testing.T) {
-	l := NewListener(Binding{Key: dictateKey}, Binding{}, Binding{}, Callbacks{})
+	l := NewListener(Binding{Key: dictateKey}, Binding{}, Binding{}, Binding{}, Callbacks{})
 	if l.meeting != nil {
 		t.Fatal("an unbound meeting key still watches for taps")
 	}
 
-	l = NewListener(Binding{Key: dictateKey}, Binding{}, Binding{Key: dKey}, Callbacks{})
+	l = NewListener(Binding{Key: dictateKey}, Binding{}, Binding{Key: dKey}, Binding{}, Callbacks{})
 	if l.meeting == nil {
 		t.Fatal("a bound meeting key is not being watched")
 	}
