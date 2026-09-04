@@ -6,3 +6,5 @@ bin/
 voxlog.app
 .claude
 voxlog-go/third_party/
+/docs
+/research-codex

@@ -135,3 +135,37 @@ var errStop = errStopType{}
 type errStopType struct{}
 
 func (errStopType) Error() string { return "stop" }
+
+// A running sample count in the callback is what gives a meeting's turns
+// their absolute timestamps -- the offset of each block is simply how many
+// samples came before it. That only holds if the blocks are an exact ordered
+// partition of the file: not merely the right total (the test above), but the
+// right samples in the right order, with nothing repeated at a seam.
+func TestReadBlocksConcatenateBackIntoTheWholeFile(t *testing.T) {
+	// A ramp, so every sample is distinguishable from every other one and a
+	// duplicated or dropped seam cannot hide inside identical values.
+	total := BlockSamples*2 + SampleRate
+	want := make([]float32, total)
+	for i := range want {
+		want[i] = float32(i%10000) / 10000
+	}
+	path := writeWAV(t, want)
+
+	var got []float32
+	if err := ReadBlocks(path, func(b []float32) error {
+		got = append(got, b...)
+		return nil
+	}); err != nil {
+		t.Fatalf("ReadBlocks: %v", err)
+	}
+
+	if len(got) != len(want) {
+		t.Fatalf("read %d samples, want %d", len(got), len(want))
+	}
+	for i := range want {
+		// 16-bit round trip, so exact equality is not on offer.
+		if diff := got[i] - want[i]; diff > 1e-3 || diff < -1e-3 {
+			t.Fatalf("sample %d is %v, want %v -- blocks are not an ordered partition of the file", i, got[i], want[i])
+		}
+	}
+}

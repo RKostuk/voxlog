@@ -100,6 +100,8 @@ func (d *dictation) take() []float32 {
 // everything here is a few milliseconds of setup, and holding the lock across
 // it is what makes a second hotkey press wait rather than race.
 func (a *app) startDictation() {
+	a.stopBackfillLocked() // same reason as in startMeeting
+
 	cfg := a.store.Get()
 	spec, ok := a.model(cfg)
 	if !ok {

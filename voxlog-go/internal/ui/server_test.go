@@ -17,7 +17,7 @@ func testServer(t *testing.T) (*pageServer, string) {
 	if err := os.WriteFile(filepath.Join(dir, "take.wav"), []byte("0123456789"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	s, err := startPageServer(dir)
+	s, err := startPageServer(dir, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -159,5 +159,47 @@ func TestTwoServersGetDifferentPorts(t *testing.T) {
 	b, _ := testServer(t)
 	if a.PageURL() == b.PageURL() {
 		t.Fatalf("both servers claim %s", a.PageURL())
+	}
+}
+
+// A voice's stored sample is the one piece of audio that does not come from a
+// file, so it has its own route -- and the same token guard as everything
+// else on this server.
+func TestServesAVoiceClip(t *testing.T) {
+	want := []byte("RIFF....WAVEfake")
+	s, err := startPageServer(t.TempDir(), func(id int64) ([]byte, error) {
+		if id != 7 {
+			return nil, errNoSuchVoice
+		}
+		return want, nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+
+	resp, err := http.Get(s.VoiceURL() + "7")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("got %s, want 200", resp.Status)
+	}
+	if got, _ := io.ReadAll(resp.Body); string(got) != string(want) {
+		t.Fatalf("got %q, want %q", got, want)
+	}
+
+	// A voice with no sample, and a segment that is not an id at all, are
+	// both simply not there.
+	for _, path := range []string{"9", "not-a-number", ""} {
+		resp, err := http.Get(s.VoiceURL() + path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusNotFound {
+			t.Fatalf("%q: got %s, want 404", path, resp.Status)
+		}
 	}
 }

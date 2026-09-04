@@ -262,11 +262,34 @@ type meetingJSON struct {
 	TaskEntity   string `json:"task_entity,omitempty"`
 	TaskStatus   string `json:"task_status,omitempty"`
 	TaskReminder string `json:"task_reminder,omitempty"`
+	// Entity is the project the meeting was filed under by hand, which is
+	// what makes the project filter work for a meeting Task Hub found nothing
+	// in. TaskEntity above is still the fallback.
+	Entity string `json:"entity,omitempty"`
+	// Speakers is who spoke and for how long -- enough to draw the row's
+	// talk-time bar and its avatars. The replies themselves are NOT here: an
+	// hour-long call is thousands of them and this payload is rebuilt on
+	// every refresh, so they are fetched when a meeting is opened.
+	Speakers []speakerJSON `json:"speakers,omitempty"`
+	// HasTurns says whether opening this meeting will show replies with
+	// playable timings, or only the flat transcript of an older decode.
+	HasTurns bool `json:"has_turns"`
 }
 
 // meetingsJSON is the flat sibling of groupByDay: meetings are few enough per
 // day that grouping them lives entirely in JS (see renderMeetings), and a
 // flat list is what MeetingStore.All already hands back.
+// withSpeakers fills in who spoke in each meeting. Separate from meetingsJSON
+// so the shape of a row stays testable without a database behind it.
+func withSpeakers(rows []meetingJSON, ms []history.Meeting, speakers map[int64][]history.MeetingSpeaker) []meetingJSON {
+	for i := range rows {
+		if i < len(ms) {
+			rows[i].Speakers = speakersJSON(speakers[ms[i].Start.UnixNano()])
+		}
+	}
+	return rows
+}
+
 func meetingsJSON(ms []history.Meeting, tasks map[string]task.Task) []meetingJSON {
 	out := make([]meetingJSON, 0, len(ms))
 	for _, m := range ms {
@@ -283,6 +306,8 @@ func meetingsJSON(ms []history.Meeting, tasks map[string]task.Task) []meetingJSO
 			Audio:            audio,
 			SystemAudio:      recordingName(m.SystemAudioPath),
 			HasAudio:         audio != "",
+			Entity:           m.Entity,
+			HasTurns:         m.TurnsVersion > 0,
 		}
 		if t, ok := tasks[id]; ok {
 			row.TaskID = t.ID
@@ -541,7 +566,9 @@ func httpFetch(url string) (io.ReadCloser, int64, error) {
 func ShowMainWindow(pane string, store *history.Store, meetings *history.MeetingStore, tasks *task.Store, cfgStore *settings.Store, models []asr.ModelSpec, modelsBaseDir, recordingsDir string) {
 	winMu.Lock()
 	if pageSrv == nil {
-		srv, err := startPageServer(recordingsDir)
+		srv, err := startPageServer(recordingsDir, func(id int64) ([]byte, error) {
+			return voiceClipHandler(meetings, id)
+		})
 		if err != nil {
 			fn := notifyUser
 			winMu.Unlock()
@@ -585,7 +612,9 @@ func ShowMainWindow(pane string, store *history.Store, meetings *history.Meeting
 	// real OS main thread (see mainthread.go) -- a bare `go` here used to
 	// crash AppKit's "NSWindow should only be instantiated on the main
 	// thread!" assertion.
-	runOnMain(func() { runMainWindow(pane, store, meetings, tasks, cfgStore, models, modelsBaseDir, recordingsDir, srv) })
+	runOnMain(func() {
+		runMainWindow(pane, store, meetings, tasks, cfgStore, models, modelsBaseDir, recordingsDir, srv)
+	})
 }
 
 // windowUsable reports whether a webview handle still refers to a live,
@@ -725,7 +754,11 @@ func RefreshMainWindowIfOpen(store *history.Store, meetings *history.MeetingStor
 	if err != nil {
 		meetingList = nil
 	}
-	meetingsData, _ := json.Marshal(meetingsJSON(meetingList, bySource))
+	meetingSpeakers, err := meetings.SpeakersByMeeting()
+	if err != nil {
+		log.Printf("reading meeting speakers: %v", err)
+	}
+	meetingsData, _ := json.Marshal(withSpeakers(meetingsJSON(meetingList, bySource), meetingList, meetingSpeakers))
 	tasksData, _ := json.Marshal(tasksJSON(taskList))
 	// One more call over lists already in hand, not one more read of the
 	// disk -- entries and meetingList are already loaded above.
@@ -795,7 +828,11 @@ func pageData(store *history.Store, meetings *history.MeetingStore, tasks *task.
 	}
 	bySource := taskBySource(taskList)
 	daysData, _ = json.Marshal(groupByDay(entries, bySource))
-	meetingsData, _ = json.Marshal(meetingsJSON(meetingList, bySource))
+	meetingSpeakers, err := meetings.SpeakersByMeeting()
+	if err != nil {
+		log.Printf("reading meeting speakers: %v", err)
+	}
+	meetingsData, _ = json.Marshal(withSpeakers(meetingsJSON(meetingList, bySource), meetingList, meetingSpeakers))
 	overviewData, _ = json.Marshal(buildOverview(entries, meetingList, time.Now()))
 	tasksData, _ = json.Marshal(tasksJSON(taskList))
 	return
@@ -1202,6 +1239,10 @@ func runMainWindow(pane string, store *history.Store, meetings *history.MeetingS
 		return nil
 	})
 
+	// Everything the meeting screen and the Voices pane need -- opening one
+	// meeting, filing it under a project, and naming the voices in it.
+	bindMeetings(w, store, meetings, tasks)
+
 	// setTaskStatus backs the Tasks pane's status control -- cycling a task
 	// through To do/In progress/Blocked/Done. Marking a task Done cancels its
 	// reminder, if it still had one pending.
@@ -1314,8 +1355,8 @@ func runMainWindow(pane string, store *history.Store, meetings *history.MeetingS
 	// below), so window.voxlog is populated before the page's own script
 	// runs, whether the page was just built or is a reload.
 	w.Init(fmt.Sprintf(
-		"window.voxlog = window.voxlog || {}; window.voxlog.pane = %q; window.voxlog.days = %s; window.voxlog.meetings = %s; window.voxlog.overview = %s; window.voxlog.tasks = %s; window.voxlog.settings = %s; window.voxlog.models = %s; window.voxlog.llmModel = %s; window.voxlog.audioBase = %q;",
-		pane, daysData, meetingsData, overviewData, tasksData, settingsData, modelsData, llmData, srv.AudioURL(),
+		"window.voxlog = window.voxlog || {}; window.voxlog.pane = %q; window.voxlog.days = %s; window.voxlog.meetings = %s; window.voxlog.overview = %s; window.voxlog.tasks = %s; window.voxlog.settings = %s; window.voxlog.models = %s; window.voxlog.llmModel = %s; window.voxlog.audioBase = %q; window.voxlog.voiceBase = %q;",
+		pane, daysData, meetingsData, overviewData, tasksData, settingsData, modelsData, llmData, srv.AudioURL(), srv.VoiceURL(),
 	))
 
 	// Navigate, not SetHtml: the page is served over loopback (see

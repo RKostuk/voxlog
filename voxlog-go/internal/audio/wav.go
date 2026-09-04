@@ -226,3 +226,96 @@ func ReadWAV(path string) ([]float32, error) {
 	defer r.Close()
 	return r.Read(int(r.Samples()))
 }
+
+// Skip drops the next n samples without decoding them. Used to reach a
+// stretch in the middle of a long recording -- cutting a two-second sample of
+// somebody's voice out of an hour-long call, say -- without turning the whole
+// hour into float32s first.
+//
+// Discarding through the buffered reader rather than seeking the file keeps
+// this honest about the header: the data chunk does not begin at a fixed
+// offset (see OpenWAV), and the reader is the only thing that knows where it
+// did begin.
+func (r *WAVReader) Skip(n int64) error {
+	if n <= 0 {
+		return nil
+	}
+	if n > r.remaining {
+		n = r.remaining
+	}
+	if _, err := r.r.Discard(int(n * bytesPerSample)); err != nil {
+		return err
+	}
+	r.remaining -= n
+	return nil
+}
+
+// ReadRange returns the samples between two times in a recording, clamped to
+// what the file actually holds. An empty range comes back as nil rather than
+// as an error: audio can legitimately have been swept since the timing was
+// recorded.
+func ReadRange(path string, startSeconds, endSeconds float64) ([]float32, error) {
+	if endSeconds <= startSeconds {
+		return nil, nil
+	}
+	r, err := OpenWAV(path)
+	if err != nil {
+		return nil, err
+	}
+	defer r.Close()
+
+	if startSeconds > 0 {
+		if err := r.Skip(int64(startSeconds * SampleRate)); err != nil {
+			return nil, err
+		}
+	}
+	want := int((endSeconds - startSeconds) * SampleRate)
+	out := make([]float32, 0, want)
+	for len(out) < want {
+		block, err := r.Read(want - len(out))
+		if err != nil {
+			return nil, err
+		}
+		if block == nil {
+			break
+		}
+		out = append(out, block...)
+	}
+	if len(out) == 0 {
+		return nil, nil
+	}
+	return out, nil
+}
+
+// EncodeWAV returns samples as a complete WAV file in memory. For the one
+// case that is not a recording: a couple of seconds of somebody's voice, kept
+// in the database as a sample so the Voices pane can still play it after the
+// call it came from has been swept off disk.
+func EncodeWAV(samples []float32) []byte {
+	dataBytes := uint32(len(samples) * bytesPerSample)
+	out := make([]byte, wavHeaderSize+int(dataBytes))
+
+	copy(out[0:], "RIFF")
+	binary.LittleEndian.PutUint32(out[4:], 36+dataBytes)
+	copy(out[8:], "WAVE")
+	copy(out[12:], "fmt ")
+	binary.LittleEndian.PutUint32(out[16:], 16)
+	binary.LittleEndian.PutUint16(out[20:], 1)
+	binary.LittleEndian.PutUint16(out[22:], 1)
+	binary.LittleEndian.PutUint32(out[24:], SampleRate)
+	binary.LittleEndian.PutUint32(out[28:], SampleRate*bytesPerSample)
+	binary.LittleEndian.PutUint16(out[32:], bytesPerSample)
+	binary.LittleEndian.PutUint16(out[34:], 8*bytesPerSample)
+	copy(out[36:], "data")
+	binary.LittleEndian.PutUint32(out[40:], dataBytes)
+
+	for i, s := range samples {
+		if s > 1 {
+			s = 1
+		} else if s < -1 {
+			s = -1
+		}
+		binary.LittleEndian.PutUint16(out[wavHeaderSize+i*bytesPerSample:], uint16(int16(s*32767)))
+	}
+	return out
+}

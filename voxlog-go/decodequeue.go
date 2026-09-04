@@ -144,3 +144,12 @@ func (q *decodeQueue) yield(seconds float64) {
 		q.execute(job)
 	}
 }
+
+// outstanding is how many takes are queued or running. The background
+// backfill reads it to stay out of the way: it only starts re-reading an old
+// meeting when nothing the user is waiting for is in the queue.
+func (q *decodeQueue) outstanding() int {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	return q.inFlight
+}

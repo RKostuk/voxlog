@@ -1,0 +1,311 @@
+package ui
+
+import (
+	"errors"
+	"fmt"
+	"time"
+
+	webview "github.com/webview/webview_go"
+
+	"voxlog-go/internal/audio"
+	"voxlog-go/internal/history"
+	"voxlog-go/internal/task"
+)
+
+// What the meeting screen asks Go for once the user opens one meeting, plus
+// everything the Voices pane does.
+//
+// None of it rides along in the page payload: an hour-long call is thousands
+// of turns, and that payload is rebuilt on every refresh (see
+// RefreshMainWindowIfOpen). Speaker totals are cheap and do travel with the
+// list -- they draw the talk-time bar on every row -- but the replies
+// themselves are fetched when a meeting is actually opened.
+
+type turnJSON struct {
+	Seq     int     `json:"seq"`
+	Start   float64 `json:"start"`
+	End     float64 `json:"end"`
+	Channel int     `json:"channel"`
+	// LocalID is the speaker's number within this meeting; -1 is the user,
+	// -2 is "the two sides were mixed before the recognizer saw them".
+	LocalID int    `json:"speaker"`
+	Name    string `json:"name,omitempty"`
+	Text    string `json:"text"`
+}
+
+type speakerJSON struct {
+	// Row is the speaker's database id, and what naming a voice acts on.
+	Row       int64   `json:"row"`
+	LocalID   int     `json:"speaker"`
+	Name      string  `json:"name,omitempty"`
+	VoiceID   int64   `json:"voice_id,omitempty"`
+	TalkSecs  float64 `json:"talk_secs"`
+	TurnCount int     `json:"turn_count"`
+	// Identified says the speaker has a voice fingerprint, i.e. that naming
+	// them is possible at all. Without one the Voices pane can still show the
+	// speaker, but not recognise them anywhere else.
+	Identified bool `json:"identified"`
+}
+
+type voiceJSON struct {
+	ID      int64   `json:"id"`
+	Name    string  `json:"name"`
+	Secs    float64 `json:"secs"`
+	HasClip bool    `json:"has_clip"`
+}
+
+type candidateJSON struct {
+	Row       int64   `json:"row"`
+	Meeting   string  `json:"meeting"`
+	Day       string  `json:"day"`
+	Score     float64 `json:"score,omitempty"`
+	TalkSecs  float64 `json:"talk_secs"`
+	Text      string  `json:"text"`
+	Audio     string  `json:"audio"`
+	Start     float64 `json:"start"`
+	End       float64 `json:"end"`
+	Suggested string  `json:"suggested,omitempty"`
+	VoiceID   int64   `json:"suggested_voice_id,omitempty"`
+}
+
+func turnsJSON(turns []history.Turn) []turnJSON {
+	out := make([]turnJSON, 0, len(turns))
+	for _, t := range turns {
+		out = append(out, turnJSON{
+			Seq:     t.Seq,
+			Start:   t.StartSecs,
+			End:     t.EndSecs,
+			Channel: t.Channel,
+			LocalID: t.LocalID,
+			Name:    t.Name,
+			Text:    t.Text,
+		})
+	}
+	return out
+}
+
+func speakersJSON(speakers []history.MeetingSpeaker) []speakerJSON {
+	out := make([]speakerJSON, 0, len(speakers))
+	for _, sp := range speakers {
+		out = append(out, speakerJSON{
+			Row:        sp.ID,
+			LocalID:    sp.LocalID,
+			Name:       sp.Name,
+			VoiceID:    sp.VoiceID,
+			TalkSecs:   sp.TalkSecs,
+			TurnCount:  sp.TurnCount,
+			Identified: len(sp.Embed) > 0,
+		})
+	}
+	return out
+}
+
+func candidateJSONOf(c history.SpeakerCandidate) candidateJSON {
+	return candidateJSON{
+		Row:      c.SpeakerRow,
+		Meeting:  c.MeetingStart.Format(time.RFC3339Nano),
+		Day:      c.MeetingStart.Format("2006-01-02 15:04"),
+		Score:    float64(c.Score),
+		TalkSecs: c.TalkSecs,
+		Text:     c.Text,
+		Audio:    recordingName(c.AudioPath),
+		Start:    c.StartSecs,
+		End:      c.EndSecs,
+	}
+}
+
+// bindMeetings registers everything the meeting screen and the Voices pane
+// call. Split out of runMainWindow, which is long enough already.
+func bindMeetings(w webview.WebView, store *history.Store, meetings *history.MeetingStore, tasks *task.Store) {
+	// meetingDetail is what opening a meeting fetches: its replies, who spoke
+	// them, and how long each person talked.
+	w.Bind("meetingDetail", func(id string) (map[string]any, error) {
+		at, err := time.Parse(time.RFC3339Nano, id)
+		if err != nil {
+			return nil, err
+		}
+		turns, err := meetings.Turns(at)
+		if err != nil {
+			return nil, err
+		}
+		speakers, err := meetings.Speakers(at)
+		if err != nil {
+			return nil, err
+		}
+		return map[string]any{
+			"turns":    turnsJSON(turns),
+			"speakers": speakersJSON(speakers),
+		}, nil
+	})
+
+	// setMeetingEntity files a meeting under a project by hand. Until now a
+	// meeting only had a project if Task Hub happened to find a task in it,
+	// which left the project filter blind to most of them.
+	w.Bind("setMeetingEntity", func(id, entity string) error {
+		at, err := time.Parse(time.RFC3339Nano, id)
+		if err != nil {
+			return err
+		}
+		if err := meetings.SetEntity(at, entity); err != nil {
+			return err
+		}
+		RefreshMainWindowIfOpen(store, meetings, tasks)
+		return nil
+	})
+
+	w.Bind("voiceList", func() (map[string]any, error) {
+		voices, err := meetings.Voices()
+		if err != nil {
+			return nil, err
+		}
+		out := make([]voiceJSON, 0, len(voices))
+		for _, v := range voices {
+			out = append(out, voiceJSON{ID: v.ID, Name: v.Name, Secs: v.Secs, HasClip: v.HasClip})
+		}
+
+		// The queue is the speakers nobody has identified, the ones who
+		// talked most first: those are the people worth naming.
+		unnamed, err := meetings.UnnamedSpeakers(12)
+		if err != nil {
+			return nil, err
+		}
+		queue := make([]candidateJSON, 0, len(unnamed))
+		for _, c := range unnamed {
+			queue = append(queue, candidateJSONOf(c))
+		}
+		return map[string]any{"voices": out, "unnamed": queue}, nil
+	})
+
+	// similarUnnamed answers "who else sounds like this?" -- the question
+	// that turns naming a voice from a chore into one click.
+	w.Bind("similarUnnamed", func(row int64) ([]candidateJSON, error) {
+		sp, err := meetings.Speaker(row)
+		if err != nil {
+			return nil, err
+		}
+		similar, err := meetings.SimilarUnnamed(sp.Embed, 10)
+		if err != nil {
+			return nil, err
+		}
+		out := make([]candidateJSON, 0, len(similar))
+		for _, c := range similar {
+			if c.SpeakerRow == row {
+				continue // the speaker being named is not a suggestion
+			}
+			out = append(out, candidateJSONOf(c))
+		}
+		return out, nil
+	})
+
+	// nameSpeaker names one speaker, and optionally everyone the user
+	// confirmed sounds like them in the same breath.
+	w.Bind("nameSpeaker", func(row int64, name string, alsoRows []int64) error {
+		v, err := meetings.NameSpeaker(row, name)
+		if err != nil {
+			return err
+		}
+		for _, other := range alsoRows {
+			if err := meetings.LinkSpeaker(other, v.ID); err != nil {
+				return err
+			}
+		}
+		// A sample of the voice, kept in the database so the Voices pane can
+		// still play it after retention sweeps the recording it came from.
+		// Best effort: a voice with no sample is a smaller loss than a naming
+		// action that fails because a WAV has already been deleted.
+		if !v.HasClip {
+			if clip := clipFor(meetings, row); clip != nil {
+				if err := meetings.SetVoiceClip(v.ID, clip); err != nil {
+					return err
+				}
+			}
+		}
+		RefreshMainWindowIfOpen(store, meetings, tasks)
+		return nil
+	})
+
+	w.Bind("linkSpeaker", func(row, voiceID int64) error {
+		if err := meetings.LinkSpeaker(row, voiceID); err != nil {
+			return err
+		}
+		RefreshMainWindowIfOpen(store, meetings, tasks)
+		return nil
+	})
+
+	// unlinkSpeaker is "that was not them", and it has to reach the voice's
+	// fingerprint, not just the label -- otherwise the same wrong match keeps
+	// happening.
+	w.Bind("unlinkSpeaker", func(row int64) error {
+		if err := meetings.UnlinkSpeaker(row); err != nil {
+			return err
+		}
+		RefreshMainWindowIfOpen(store, meetings, tasks)
+		return nil
+	})
+
+	w.Bind("renameVoice", func(id int64, name string) error {
+		if err := meetings.RenameVoice(id, name); err != nil {
+			return err
+		}
+		RefreshMainWindowIfOpen(store, meetings, tasks)
+		return nil
+	})
+
+	// forgetVoice drops the name and leaves the fingerprints, so the voice
+	// can be recognised and named again; eraseVoice destroys them. Two
+	// bindings rather than a flag, because they are two different promises to
+	// the user and the UI must not be able to confuse them.
+	w.Bind("forgetVoice", func(id int64) error {
+		if err := meetings.ForgetVoice(id); err != nil {
+			return err
+		}
+		RefreshMainWindowIfOpen(store, meetings, tasks)
+		return nil
+	})
+
+	w.Bind("eraseVoice", func(id int64) error {
+		if err := meetings.EraseVoice(id); err != nil {
+			return err
+		}
+		RefreshMainWindowIfOpen(store, meetings, tasks)
+		return nil
+	})
+}
+
+// clipFor cuts a couple of seconds out of a speaker's longest reply. Returns
+// nil whenever the audio is no longer there, which is normal and not an
+// error: a meeting recorded a month ago may well have been swept.
+func clipFor(meetings *history.MeetingStore, row int64) []byte {
+	c, err := meetings.SpeakerClipSource(row)
+	if err != nil || c.AudioPath == "" {
+		return nil
+	}
+	end := c.StartSecs + voiceClipSeconds
+	if end > c.EndSecs {
+		end = c.EndSecs
+	}
+	samples, err := audio.ReadRange(c.AudioPath, c.StartSecs, end)
+	if err != nil || len(samples) == 0 {
+		return nil
+	}
+	return audio.EncodeWAV(samples)
+}
+
+// voiceClipSeconds is how much of a voice is kept as a sample: enough to
+// recognise somebody, small enough that a hundred of them are a few megabytes.
+const voiceClipSeconds = 2.5
+
+// errNoSuchVoice keeps the loopback server's 404 for a missing clip distinct
+// from an actual read failure.
+var errNoSuchVoice = errors.New("no such voice")
+
+func voiceClipHandler(meetings *history.MeetingStore, id int64) ([]byte, error) {
+	clip, err := meetings.VoiceClip(id)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %v", errNoSuchVoice, err)
+	}
+	if len(clip) == 0 {
+		return nil, errNoSuchVoice
+	}
+	return clip, nil
+}

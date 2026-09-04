@@ -31,6 +31,7 @@ type app struct {
 	overlay   *ui.Overlay
 	models    *transcriberCache
 	speakers  *diarizerCache
+	embedders *embedderCache
 	queue     *decodeQueue
 	tray      *tray
 
@@ -42,6 +43,9 @@ type app struct {
 	mu        sync.Mutex
 	dictation *dictation
 	meeting   *meeting
+	// backfillStop unwinds a running re-read of an old meeting. Closed when
+	// a recording starts, re-made when the next re-read asks for it.
+	backfillStop chan struct{}
 
 	// onMeetingState shows or hides the tray's "Stop meeting recording" item.
 	// A menu entry that does nothing most of the time is worse than no entry.
@@ -59,6 +63,7 @@ func newApp(store *settings.Store, hist *history.Store, meetings *history.Meetin
 		overlay:   overlay,
 		models:    &transcriberCache{},
 		speakers:  &diarizerCache{},
+		embedders: &embedderCache{},
 		tray:      &tray{},
 	}
 	a.queue = newDecodeQueue(a.tray.setDecoding)

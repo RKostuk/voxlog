@@ -181,3 +181,42 @@ func TestOpenWAVSkipsUnknownChunks(t *testing.T) {
 		t.Fatalf("got %v, want the two samples past the LIST chunk", got)
 	}
 }
+
+func TestReadRangeCutsOutTheMiddle(t *testing.T) {
+	samples := make([]float32, 5*SampleRate)
+	for i := range samples {
+		samples[i] = float32(i%1000) / 1000
+	}
+	path := filepath.Join(t.TempDir(), "take.wav")
+	w, err := NewWAVWriter(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Write(samples); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := ReadRange(path, 2, 4)
+	if err != nil {
+		t.Fatalf("ReadRange: %v", err)
+	}
+	if len(got) != 2*SampleRate {
+		t.Fatalf("got %d samples, want %d", len(got), 2*SampleRate)
+	}
+	want := samples[2*SampleRate]
+	if diff := got[0] - want; diff > 1e-3 || diff < -1e-3 {
+		t.Fatalf("range starts at %v, want %v -- the skip landed in the wrong place", got[0], want)
+	}
+
+	// Past the end of the recording, and backwards: both are things a stale
+	// turn timing can ask for, and neither is an error.
+	if got, err := ReadRange(path, 60, 62); err != nil || got != nil {
+		t.Fatalf("past the end: got %d samples, %v", len(got), err)
+	}
+	if got, err := ReadRange(path, 3, 1); err != nil || got != nil {
+		t.Fatalf("backwards: got %d samples, %v", len(got), err)
+	}
+}

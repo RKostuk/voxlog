@@ -122,6 +122,14 @@ type Settings struct {
 	// AudioMaxGB caps what the recordings folder may occupy, oldest first.
 	// Zero, the default, means no ceiling.
 	AudioMaxGB float64 `json:"audio_max_gb"`
+	// BackfillTurns is when meetings recorded before per-speaker replies
+	// existed get re-read for them: BackfillIdle (while nothing else is
+	// going on), BackfillStartup (as soon as the app has settled), or
+	// BackfillManual (only from a meeting's own Transcribe button).
+	//
+	// Idle by default. Re-reading hours of old audio is real CPU, and the
+	// machine belongs to the user, not to the backlog.
+	BackfillTurns string `json:"backfill_turns"`
 	// TaskHubEnabled turns on background LLM classification of finished
 	// transcripts (Settings > LLM model). Off by default: experimental,
 	// downloads a multi-gigabyte model, and the checkbox itself stays
@@ -197,8 +205,16 @@ func DefaultSettings() Settings {
 		// package does not need to import internal/history.
 		AudioRetention: "disabled",
 		AudioMaxGB:     0,
+		BackfillTurns:  BackfillIdle,
 	}
 }
+
+// When old meetings are re-read for their per-speaker replies.
+const (
+	BackfillIdle    = "idle"
+	BackfillStartup = "startup"
+	BackfillManual  = "manual"
+)
 
 func Path() string {
 	home, err := os.UserHomeDir()

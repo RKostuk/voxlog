@@ -186,7 +186,20 @@ func main() {
 	// Meetings live beside the day files rather than inside them: a few a
 	// day, each with two audio tracks and a length measured in hours, is not
 	// the shape a per-day list of dictated sentences is good at.
-	meetStore := history.NewMeetingStore(filepath.Join(histStore.Dir(), "Meetings"))
+	//
+	// Their records live in a database rather than in files, because a
+	// meeting now carries turns, speakers and voice fingerprints -- see
+	// internal/history/db.go. The database sits beside the settings, NOT in
+	// the transcripts directory: that one is user-settable and routinely
+	// points into iCloud or Dropbox, and SQLite over a syncing filesystem is
+	// a well-known way to lose a database. The recordings and the frozen JSON
+	// backup stay where the user's own backups already cover them.
+	meetingsDir := filepath.Join(histStore.Dir(), "Meetings")
+	meetDB, err := history.OpenDB(filepath.Join(mustUserConfigDir(), "Voxlog", "voxlog.db"))
+	if err != nil {
+		log.Fatalf("opening the meetings database: %v", err)
+	}
+	meetStore := history.NewMeetingStoreDB(meetingsDir, meetDB)
 	taskStore := task.NewStore("")
 	modelsDir := filepath.Join(mustUserConfigDir(), "Voxlog", "models")
 
@@ -397,6 +410,17 @@ const segmentPad = 0.25
 // negative id can never collide with a cluster id from the diarizer.
 const youSpeaker = -1
 
+// wordTail is how long the last word of a turn is assumed to run for, when
+// the recognizer reports where each word started but not where it ended.
+const wordTail = 0.4
+
+// A meeting is two recordings, not one: the microphone and the system audio
+// are separate files (see meeting.go), so every turn has to say which.
+const (
+	channelMic    = 0
+	channelSystem = 1
+)
+
 // turn is one stretch of one voice, from whichever channel it came in on.
 //
 // Exactly one of text and audio is set, which is the difference between the
@@ -404,10 +428,25 @@ const youSpeaker = -1
 // already decoded and were sorted into speakers afterwards (wordTurns), audio
 // means this stretch still has to be decoded on its own (channelTurns).
 type turn struct {
-	start   float32
+	start float32
+	// end is when the voice stopped, in the same clock as start. Storing a
+	// turn without it would make "play this reply" mean "play from here to
+	// the end of the call".
+	end     float32
 	speaker int
+	// channel says which of a meeting's two recordings this turn is in --
+	// they are separate files, so a reply cannot be played back without it.
+	channel int
 	text    string
 	audio   []float32
+	// block is which decoded block this turn came out of. Speaker numbers are
+	// only comparable within one block (see speakers.go), so the block has to
+	// travel with the turn until they have been linked.
+	block int
+	// embed is this turn's voice fingerprint, filled in only for the far end
+	// of a call, where telling speakers apart is the open question. Never
+	// persisted from here: it feeds the per-meeting clustering in voiceid.
+	embed []float32
 }
 
 // channelTurns cuts one channel into turns. The call side keeps the
@@ -432,7 +471,14 @@ func channelTurns(segments []diarize.Segment, samples []float32, speaker int, ke
 		if keepSpeakers {
 			id = s.Speaker
 		}
-		turns = append(turns, turn{start: s.Start, speaker: id, audio: slice})
+		// The padding is a decode trick -- it gives the recognizer a run-up --
+		// not a claim about when the voice started, so the turn keeps the
+		// segment's own bounds.
+		ch := channelMic
+		if keepSpeakers {
+			ch = channelSystem
+		}
+		turns = append(turns, turn{start: s.Start, end: s.End, speaker: id, channel: ch, audio: slice})
 	}
 	return turns
 }
@@ -482,11 +528,25 @@ func wordTurns(words []asr.Word, segments []diarize.Segment, speaker int, keepSp
 		if keepSpeakers && at >= 0 {
 			id = segments[at].Speaker
 		}
+		// A word carries a start and no length, so a turn's end is its last
+		// word plus a mouthful -- clamped to the segment the words came from,
+		// which is the only real evidence of when the voice stopped.
+		end := w.Start + wordTail
+		if at >= 0 && end > segments[at].End {
+			end = segments[at].End
+		}
+		ch := channelMic
+		if keepSpeakers {
+			ch = channelSystem
+		}
 		if n := len(turns); n > 0 && at == last && turns[n-1].speaker == id {
 			turns[n-1].text += " " + w.Text
+			if end > turns[n-1].end {
+				turns[n-1].end = end
+			}
 			continue
 		}
-		turns = append(turns, turn{start: w.Start, speaker: id, text: w.Text})
+		turns = append(turns, turn{start: w.Start, end: end, speaker: id, channel: ch, text: w.Text})
 		last = at
 	}
 	return turns
@@ -819,6 +879,17 @@ func onReady(store *settings.Store, histStore *history.Store, meetStore *history
 		log.Printf("moved %d meetings into their own store", n)
 	}
 
+	// And once more, on the first launch after those per-meeting files became
+	// database rows. Runs second because the step above may have just written
+	// new JSON files this one needs to see. The files themselves are left
+	// alone: they are a backup for one release, not an intermediate.
+	dbSentinel := filepath.Join(mustUserConfigDir(), "Voxlog", "migrated-sqlite")
+	if n, err := history.MigrateJSONMeetingsToDB(meetStore, meetStore.Dir(), dbSentinel); err != nil {
+		log.Printf("importing meetings into the database: %v", err)
+	} else if n > 0 {
+		log.Printf("imported %d meetings into the database", n)
+	}
+
 	// Apply the retention policy once at startup. Doing it here (rather than
 	// on a timer) is enough: it only ever deletes whole days that are already
 	// past the cutoff, and the app is relaunched often enough that stale files
@@ -841,6 +912,11 @@ func onReady(store *settings.Store, histStore *history.Store, meetStore *history
 	// enough for something that only ever catches up on what accumulated
 	// since the last launch.
 	a.sweepRecordings()
+
+	// Meetings recorded before per-speaker replies existed still have their
+	// audio, so the replies are recoverable -- see backfill.go. Idle by
+	// default, so this costs nothing until the machine is free.
+	a.startBackfill()
 
 	// Transcribing a past meeting is driven from the History window, which
 	// cannot reach into this package -- hand it the entry point instead.

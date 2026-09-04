@@ -31,6 +31,18 @@
   --wash-a: #ffd8c2;
   --wash-b: #c9c8ff;
   --wash-c: #b9e6ff;
+  /* Speaker colours. Fixed order, never cycled: a fifth voice draws in
+     --spk-x rather than reusing the first person's colour, because a colour
+     that means two different people is worse than one that means "unknown".
+     Chosen against a colour-vision-deficiency check rather than by eye --
+     these four stay distinguishable under protanopia and deuteranopia, which
+     hue wheels picked by hand generally do not. */
+  --spk-1: #0a5ed8;
+  --spk-2: #5aa0ff;
+  --spk-3: #e08a1a;
+  --spk-4: #c02d6a;
+  --spk-x: rgba(60, 60, 67, 0.45);
+  --silence: rgba(60, 60, 67, 0.14);
 }
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
@@ -51,6 +63,14 @@
     --wash-a: #3a2a4a;
     --wash-b: #24304f;
     --wash-c: #163a44;
+    /* Their own steps for the dark surface, not an inversion: the light
+       set's mid-blues disappear against #1e1e1e. */
+    --spk-1: #2b64c3;
+    --spk-2: #01a2c5;
+    --spk-3: #d77600;
+    --spk-4: #a3484b;
+    --spk-x: rgba(235, 235, 245, 0.45);
+    --silence: rgba(235, 235, 245, 0.16);
   }
 }
 :root[data-theme="dark"] {
@@ -71,6 +91,12 @@
   --wash-a: #3a2a4a;
   --wash-b: #24304f;
   --wash-c: #163a44;
+  --spk-1: #2b64c3;
+  --spk-2: #01a2c5;
+  --spk-3: #d77600;
+  --spk-4: #a3484b;
+  --spk-x: rgba(235, 235, 245, 0.45);
+  --silence: rgba(235, 235, 245, 0.16);
 }
 
 * { box-sizing: border-box; }

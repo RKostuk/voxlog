@@ -69,6 +69,11 @@ func meetingPaths(dir string, at time.Time) (mic, system string) {
 
 // startMeeting begins recording a call. a.mu must be held.
 func (a *app) startMeeting() {
+	// The backlog gives the machine back before the first sample is recorded,
+	// not after the call: an old meeting being re-read must never be why this
+	// one decodes slowly.
+	a.stopBackfillLocked()
+
 	cfg := a.store.Get()
 	spec, ok := a.model(cfg)
 	if !ok {
@@ -256,11 +261,36 @@ func (a *app) transcribeMeetingEntry(m history.Meeting, spec asr.ModelSpec, lang
 
 	a.queue.submit(m.RecordingSeconds, func(yield func()) {
 		started := time.Now()
-		text := a.transcribeFiles(spec, language, m.AudioPath, m.SystemAudioPath, separate, yield)
+		turns, err := a.transcribeFilesTurns(spec, language, m.AudioPath, m.SystemAudioPath, separate, yield, nil)
+		if err != nil {
+			log.Printf("meeting: transcription stopped: %v", err)
+			return
+		}
+		// One pass over the whole meeting, not one per block: this is what
+		// makes "Speaker 2" in the last minute the same person as in the
+		// first (see speakers.go).
+		linkSpeakers(turns)
+
+		text := renderTurns(turns, nil)
 		if text == "" {
 			log.Printf("meeting: nothing transcribed from %s", m.AudioPath)
 			notify("The meeting recording produced no transcript.")
 			return
+		}
+
+		// Turns before text. A crash between the two leaves a meeting whose
+		// replies are all there but whose one-string transcript is missing,
+		// which the window can still render; the other order would leave a
+		// transcript that claims a structure nothing has.
+		if err := a.meetings.ReplaceTurns(m.Start, meetingSpeakers(turns), historyTurns(turns), turnsSchemaVersion); err != nil {
+			log.Printf("meeting: saving turns: %v", err)
+		} else if unsure, err := a.meetings.IdentifySpeakers(m.Start); err != nil {
+			log.Printf("meeting: identifying speakers: %v", err)
+		} else if len(unsure) > 0 {
+			// Not a notification: a "does this sound like Ірина?" banner during
+			// the working day would be an interruption for something that can
+			// wait in the Voices pane until the user goes looking.
+			log.Printf("meeting: %d speaker(s) look familiar but not certainly so", len(unsure))
 		}
 
 		took := time.Since(started).Seconds()

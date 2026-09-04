@@ -88,3 +88,73 @@ func MigrateMeetings(days *Store, meetings *MeetingStore, sentinelPath string) (
 
 	return moved, nil
 }
+
+// MigrateJSONMeetingsToDB copies every per-meeting JSON record in meetingsDir
+// into the database, once. It is the second half of the same story
+// MigrateMeetings tells: that one moved meetings out of the day files into
+// their own files, this one moves those files into the database, which is the
+// only place that can hold a meeting's turns and speakers.
+//
+// The JSON files are deliberately LEFT ON DISK. They are a frozen backup for
+// one release: nothing reads them again after this runs, and if the database
+// ever has to be rebuilt, deleting the sentinel re-runs the import.
+//
+// Safe to re-run by hand for exactly that reason: the insert conflicts on
+// start_ns and only fills in a transcript where the row has none, which is
+// the same "keep the copy that has text" rule the file store used when two
+// files claimed one meeting.
+func MigrateJSONMeetingsToDB(meetings *MeetingStore, meetingsDir, sentinelPath string) (int, error) {
+	if _, err := os.Stat(sentinelPath); err == nil {
+		return 0, nil
+	}
+
+	db, err := meetings.open()
+	if err != nil {
+		return 0, err
+	}
+
+	files, err := filepath.Glob(filepath.Join(meetingsDir, "*.json"))
+	if err != nil {
+		return 0, err
+	}
+
+	moved := 0
+	for _, f := range files {
+		m, err := readMeetingFile(f)
+		if err != nil {
+			// One unreadable file must not block the import -- and with it
+			// the sentinel -- forever, the same call migrateMeetings makes.
+			log.Printf("history: migrate: skipping unreadable meeting file %s: %v", f, err)
+			continue
+		}
+		if m.Start.IsZero() {
+			log.Printf("history: migrate: skipping meeting file with no start time: %s", f)
+			continue
+		}
+
+		_, err = db.sql.Exec(`
+			INSERT INTO meetings
+				(start_ns, recording_secs, decode_secs, text, summary, audio_path, system_audio_path, entity)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+			ON CONFLICT(start_ns) DO UPDATE SET
+				text    = CASE WHEN meetings.text    = '' THEN excluded.text    ELSE meetings.text    END,
+				summary = CASE WHEN meetings.summary = '' THEN excluded.summary ELSE meetings.summary END`,
+			m.Start.UnixNano(), m.RecordingSeconds, m.DurationSeconds, m.Text,
+			m.Summary, m.AudioPath, m.SystemAudioPath, m.Entity)
+		if err != nil {
+			return moved, fmt.Errorf("history: migrate: importing %s: %w", f, err)
+		}
+		moved++
+	}
+
+	if err := os.MkdirAll(filepath.Dir(sentinelPath), 0o755); err != nil {
+		return moved, fmt.Errorf("history: migrate: creating directory for sentinel %s: %w", sentinelPath, err)
+	}
+	line := fmt.Sprintf("%s imported %d meeting(s) into the database; the JSON files beside them are a backup and are no longer read\n",
+		time.Now().Format(time.RFC3339), moved)
+	if err := os.WriteFile(sentinelPath, []byte(line), 0o644); err != nil {
+		return moved, fmt.Errorf("history: migrate: writing sentinel %s: %w", sentinelPath, err)
+	}
+
+	return moved, nil
+}

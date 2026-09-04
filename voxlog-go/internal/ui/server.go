@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -24,7 +25,7 @@ type pageServer struct {
 
 // startPageServer binds 127.0.0.1 on a kernel-assigned port and starts
 // serving. recordingsDir is the only directory audio may be read from.
-func startPageServer(recordingsDir string) (*pageServer, error) {
+func startPageServer(recordingsDir string, voiceClip func(int64) ([]byte, error)) (*pageServer, error) {
 	tokenBytes := make([]byte, 32)
 	if _, err := rand.Read(tokenBytes); err != nil {
 		return nil, fmt.Errorf("generate token: %w", err)
@@ -39,7 +40,7 @@ func startPageServer(recordingsDir string) (*pageServer, error) {
 	s := &pageServer{ln: ln, token: token}
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("/", s.handle(recordingsDir))
+	mux.HandleFunc("/", s.handle(recordingsDir, voiceClip))
 	// ReadHeaderTimeout: a loopback server still faces anything else on the
 	// machine that can reach 127.0.0.1, and the bare http.Serve default of
 	// no timeout at all leaves a slow-header connection open forever.
@@ -52,7 +53,7 @@ func startPageServer(recordingsDir string) (*pageServer, error) {
 // handle checks the token before anything else in the path is trusted: a
 // mismatched token must 404 exactly like a route that was never registered,
 // so a caller can't tell "wrong token" from "no such page" by status code.
-func (s *pageServer) handle(recordingsDir string) http.HandlerFunc {
+func (s *pageServer) handle(recordingsDir string, voiceClip func(int64) ([]byte, error)) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		rest, ok := splitToken(r.URL.Path, s.token)
 		if !ok {
@@ -69,6 +70,13 @@ func (s *pageServer) handle(recordingsDir string) http.HandlerFunc {
 			fmt.Fprint(w, buildMainPage())
 		case strings.HasPrefix(rest, "/audio/"):
 			serveAudio(w, r, recordingsDir, strings.TrimPrefix(rest, "/audio/"))
+		case strings.HasPrefix(rest, "/voice/"):
+			// A voice's stored sample, which is the one piece of audio that
+			// lives in the database rather than on disk -- so that naming
+			// somebody keeps working after retention sweeps the call it came
+			// from. No path is involved, so no traversal is possible: the
+			// segment is an id or it is nothing.
+			serveVoiceClip(w, r, voiceClip, strings.TrimPrefix(rest, "/voice/"))
 		default:
 			http.NotFound(w, r)
 		}
@@ -119,9 +127,32 @@ func serveAudio(w http.ResponseWriter, r *http.Request, recordingsDir, name stri
 	http.ServeContent(w, r, name, stat.ModTime(), f)
 }
 
+// serveVoiceClip writes one voice's stored sample. Small enough (a couple of
+// seconds of mono 16 kHz) that it is written whole rather than served with
+// ranges, unlike a meeting recording.
+func serveVoiceClip(w http.ResponseWriter, r *http.Request, voiceClip func(int64) ([]byte, error), idStr string) {
+	id, err := strconv.ParseInt(idStr, 10, 64)
+	if err != nil || voiceClip == nil {
+		http.NotFound(w, r)
+		return
+	}
+	clip, err := voiceClip(id)
+	if err != nil || len(clip) == 0 {
+		http.NotFound(w, r)
+		return
+	}
+	w.Header().Set("Content-Type", "audio/wav")
+	w.Write(clip)
+}
+
 // PageURL is the main window's address, token included.
 func (s *pageServer) PageURL() string {
 	return fmt.Sprintf("http://%s/%s/", s.ln.Addr().String(), s.token)
+}
+
+// VoiceURL is the prefix a voice's id is appended to.
+func (s *pageServer) VoiceURL() string {
+	return fmt.Sprintf("http://%s/%s/voice/", s.ln.Addr().String(), s.token)
 }
 
 // AudioURL is the prefix a recording's file name is appended to.
