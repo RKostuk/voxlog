@@ -768,13 +768,24 @@ func RefreshMainWindowIfOpen(store *history.Store, meetings *history.MeetingStor
 	}
 	meetingsData, _ := json.Marshal(withSpeakers(meetingsJSON(meetingList, bySource), meetingList, meetingSpeakers))
 	tasksData, _ := json.Marshal(tasksJSON(taskList))
+	// The rejected list travels with the tasks: Settings' "Not a task"
+	// section is redrawn by the same refresh that redraws the Tasks pane,
+	// which is what makes Remove/"Actually a task" take effect immediately.
+	rejected, err := tasks.LoadRejected()
+	if err != nil {
+		log.Printf("reading rejected tasks: %v", err)
+	}
+	if rejected == nil {
+		rejected = []string{}
+	}
+	rejectedData, _ := json.Marshal(rejected)
 	// One more call over lists already in hand, not one more read of the
 	// disk -- entries and meetingList are already loaded above.
 	overviewData, _ := json.Marshal(buildOverview(entries, meetingList, time.Now()))
 	w.Dispatch(func() {
 		w.Eval(fmt.Sprintf(
-			"window.voxlog = window.voxlog || {}; window.voxlog.days = %s; window.voxlog.meetings = %s; window.voxlog.overview = %s; window.voxlog.tasks = %s; typeof render === 'function' && render();",
-			daysData, meetingsData, overviewData, tasksData,
+			"window.voxlog = window.voxlog || {}; window.voxlog.days = %s; window.voxlog.meetings = %s; window.voxlog.overview = %s; window.voxlog.tasks = %s; window.voxlog.rejected = %s; window.voxlog.decodeQueue = %s; typeof render === 'function' && render(); typeof renderRejected === 'function' && renderRejected();",
+			daysData, meetingsData, overviewData, tasksData, rejectedData, decodeQueueJSON(),
 		))
 	})
 }
@@ -794,8 +805,8 @@ func refreshMainWindow(w webview.WebView, pane string, store *history.Store, mee
 		activateApp()
 		showWindow(w.Window())
 		w.Eval(fmt.Sprintf(
-			"window.voxlog = window.voxlog || {}; window.voxlog.days = %s; window.voxlog.meetings = %s; window.voxlog.overview = %s; window.voxlog.tasks = %s; window.voxlog.rejected = %s; window.voxlog.settings = %s; window.voxlog.models = %s; window.voxlog.llmModel = %s; typeof render === 'function' && render(); typeof fillForm === 'function' && fillForm(); typeof refreshPermissions === 'function' && refreshPermissions();",
-			daysData, meetingsData, overviewData, tasksData, rejectedData, settingsData, modelsData, llmData,
+			"window.voxlog = window.voxlog || {}; window.voxlog.days = %s; window.voxlog.meetings = %s; window.voxlog.overview = %s; window.voxlog.tasks = %s; window.voxlog.rejected = %s; window.voxlog.decodeQueue = %s; window.voxlog.settings = %s; window.voxlog.models = %s; window.voxlog.llmModel = %s; typeof render === 'function' && render(); typeof fillForm === 'function' && fillForm(); typeof refreshPermissions === 'function' && refreshPermissions();",
+			daysData, meetingsData, overviewData, tasksData, rejectedData, decodeQueueJSON(), settingsData, modelsData, llmData,
 		))
 		w.Eval(fmt.Sprintf("window.selectPane && window.selectPane(%q);", pane))
 	})
@@ -1439,8 +1450,8 @@ func runMainWindow(pane string, store *history.Store, meetings *history.MeetingS
 	// below), so window.voxlog is populated before the page's own script
 	// runs, whether the page was just built or is a reload.
 	w.Init(fmt.Sprintf(
-		"window.voxlog = window.voxlog || {}; window.voxlog.pane = %q; window.voxlog.days = %s; window.voxlog.meetings = %s; window.voxlog.overview = %s; window.voxlog.tasks = %s; window.voxlog.rejected = %s; window.voxlog.settings = %s; window.voxlog.models = %s; window.voxlog.llmModel = %s; window.voxlog.audioBase = %q; window.voxlog.voiceBase = %q;",
-		pane, daysData, meetingsData, overviewData, tasksData, rejectedData, settingsData, modelsData, llmData, srv.AudioURL(), srv.VoiceURL(),
+		"window.voxlog = window.voxlog || {}; window.voxlog.pane = %q; window.voxlog.days = %s; window.voxlog.meetings = %s; window.voxlog.overview = %s; window.voxlog.tasks = %s; window.voxlog.rejected = %s; window.voxlog.decodeQueue = %s; window.voxlog.settings = %s; window.voxlog.models = %s; window.voxlog.llmModel = %s; window.voxlog.audioBase = %q; window.voxlog.voiceBase = %q;",
+		pane, daysData, meetingsData, overviewData, tasksData, rejectedData, decodeQueueJSON(), settingsData, modelsData, llmData, srv.AudioURL(), srv.VoiceURL(),
 	))
 
 	// Navigate, not SetHtml: the page is served over loopback (see

@@ -135,7 +135,7 @@ func (a *app) backfillMeeting(m history.Meeting) time.Duration {
 	// shortest-first ordering lets any fresh dictation past it, and the yield
 	// between blocks lets one interrupt it mid-decode. No new priority
 	// mechanism is needed.
-	a.queue.submit(m.RecordingSeconds, func(yield func()) {
+	a.queue.submit("Backfill: meeting, "+m.Start.Format("Jan 2 15:04"), m.Start.Format(time.RFC3339Nano), m.RecordingSeconds, func(yield func()) {
 		defer close(done)
 
 		turns, err := a.transcribeFilesTurns(spec, language, m.AudioPath, m.SystemAudioPath, separate, yield, stop)

@@ -17,7 +17,7 @@ func TestASecondTakeIsNotHeldUpByTheFirstsTranscript(t *testing.T) {
 	// The first take's decode is still running...
 	firstDecoding := make(chan struct{})
 	releaseFirst := make(chan struct{})
-	q.submit(8, func(func()) {
+	q.submit("test", "", 8, func(func()) {
 		close(firstDecoding)
 		<-releaseFirst
 		if err := hist.Append(history.Entry{Timestamp: time.Now(), Text: "first"}); err != nil {
@@ -31,7 +31,7 @@ func TestASecondTakeIsNotHeldUpByTheFirstsTranscript(t *testing.T) {
 	// be dead for as long as the first decode lasts.
 	submitted := make(chan struct{})
 	go func() {
-		q.submit(5, func(func()) {
+		q.submit("test", "", 5, func(func()) {
 			if err := hist.Append(history.Entry{Timestamp: time.Now(), Text: "second"}); err != nil {
 				t.Errorf("append: %v", err)
 			}
@@ -68,8 +68,8 @@ func TestAFailedDecodeDoesNotStopTheOthers(t *testing.T) {
 	hist := history.NewStore(t.TempDir())
 	q := newDecodeQueue(nil)
 
-	q.submit(3, func(func()) { panic("model went missing") })
-	q.submit(4, func(func()) {
+	q.submit("test", "", 3, func(func()) { panic("model went missing") })
+	q.submit("test", "", 4, func(func()) {
 		if err := hist.Append(history.Entry{Timestamp: time.Now(), Text: "survivor"}); err != nil {
 			t.Errorf("append: %v", err)
 		}

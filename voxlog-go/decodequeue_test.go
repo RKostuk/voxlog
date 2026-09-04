@@ -23,7 +23,7 @@ func waitFor(t *testing.T, what string, cond func() bool) {
 func TestQueueRunsSubmittedJobs(t *testing.T) {
 	q := newDecodeQueue(nil)
 	done := make(chan struct{})
-	q.submit(3, func(func()) { close(done) })
+	q.submit("test", "", 3, func(func()) { close(done) })
 
 	select {
 	case <-done:
@@ -40,7 +40,7 @@ func TestQueueRunsOneJobAtATime(t *testing.T) {
 	concurrent, peak, finished := 0, 0, 0
 
 	for i := 0; i < 5; i++ {
-		q.submit(float64(i+1), func(func()) {
+		q.submit("test", "", float64(i+1), func(func()) {
 			mu.Lock()
 			concurrent++
 			if concurrent > peak {
@@ -70,7 +70,7 @@ func TestShortestQueuedTakeGoesFirst(t *testing.T) {
 
 	// Block the worker so everything else queues up behind one job.
 	release := make(chan struct{})
-	q.submit(1, func(func()) { <-release })
+	q.submit("test", "", 1, func(func()) { <-release })
 	waitFor(t, "the worker to pick up the blocker", func() bool {
 		q.mu.Lock()
 		defer q.mu.Unlock()
@@ -79,7 +79,7 @@ func TestShortestQueuedTakeGoesFirst(t *testing.T) {
 
 	for _, seconds := range []float64{3600, 12, 300} {
 		s := seconds
-		q.submit(s, func(func()) {
+		q.submit("test", "", s, func(func()) {
 			mu.Lock()
 			order = append(order, s)
 			mu.Unlock()
@@ -106,7 +106,7 @@ func TestLongJobYieldsToAShorterOne(t *testing.T) {
 	queued := make(chan struct{})
 	meetingDone := make(chan struct{})
 
-	q.submit(3600, func(yield func()) {
+	q.submit("test", "", 3600, func(yield func()) {
 		<-queued // the dictation is now waiting
 		for block := 0; block < 3; block++ {
 			mu.Lock()
@@ -122,7 +122,7 @@ func TestLongJobYieldsToAShorterOne(t *testing.T) {
 		return q.running == 3600
 	})
 
-	q.submit(10, func(func()) {
+	q.submit("test", "", 10, func(func()) {
 		mu.Lock()
 		events = append(events, "dictation")
 		mu.Unlock()
@@ -155,7 +155,7 @@ func TestYieldIgnoresJobsThatAreNotShorter(t *testing.T) {
 	queued := make(chan struct{})
 	first := make(chan struct{})
 
-	q.submit(600, func(yield func()) {
+	q.submit("test", "", 600, func(yield func()) {
 		<-queued
 		yield()
 		mu.Lock()
@@ -169,7 +169,7 @@ func TestYieldIgnoresJobsThatAreNotShorter(t *testing.T) {
 		return q.running == 600
 	})
 
-	q.submit(900, func(func()) {
+	q.submit("test", "", 900, func(func()) {
 		mu.Lock()
 		events = append(events, "second")
 		mu.Unlock()
@@ -191,34 +191,82 @@ func TestYieldIgnoresJobsThatAreNotShorter(t *testing.T) {
 }
 
 func TestQueueReportsHowMuchIsOutstanding(t *testing.T) {
-	// This is what the menu bar reads: it must reach zero, or the icon would
-	// claim Voxlog is decoding forever.
+	// This is what the menu bar reads (via len): it must reach zero, or the
+	// icon would claim Voxlog is decoding forever.
 	var mu sync.Mutex
-	var counts []int
-	q := newDecodeQueue(func(n int) {
+	var reports [][]decodeStatus
+	q := newDecodeQueue(func(list []decodeStatus) {
 		mu.Lock()
-		counts = append(counts, n)
+		reports = append(reports, list)
 		mu.Unlock()
 	})
 
-	q.submit(1, func(func()) {})
-	q.submit(2, func(func()) {})
+	q.submit("first", "", 1, func(func()) {})
+	q.submit("second", "", 2, func(func()) {})
 
 	waitFor(t, "the queue to report empty", func() bool {
 		mu.Lock()
 		defer mu.Unlock()
-		return len(counts) > 0 && counts[len(counts)-1] == 0
+		return len(reports) > 0 && len(reports[len(reports)-1]) == 0
 	})
+}
+
+func TestQueueReportsWhatIsDecoding(t *testing.T) {
+	// The main window draws these labels, so a queued take has to be
+	// identifiable as a specific recording, not just "one of two".
+	release := make(chan struct{})
+	seen := make(chan []decodeStatus, 32)
+	q := newDecodeQueue(func(list []decodeStatus) { seen <- list })
+
+	// The meeting has to be picked up before the dictation is submitted, or
+	// shortest-first would hand the worker the dictation instead -- which is
+	// correct behaviour, just not the arrangement under test here.
+	q.submit("Meeting, 09:00", "", 600, func(func()) { <-release })
+	waitFor(t, "the meeting to start decoding", func() bool {
+		select {
+		case list := <-seen:
+			return len(list) == 1 && list[0].Running
+		default:
+		}
+		return false
+	})
+	q.submit("Dictation, 14:32", "", 5, func(func()) {})
+
+	// The long one keeps decoding while the short one waits behind it: the
+	// job above offers no yield, so ordering cannot rescue it here.
+	var got []decodeStatus
+	waitFor(t, "both takes to be reported", func() bool {
+		select {
+		case list := <-seen:
+			if len(list) == 2 {
+				got = list
+				return true
+			}
+		default:
+		}
+		return false
+	})
+	close(release)
+
+	if got[0].Label != "Meeting, 09:00" || !got[0].Running {
+		t.Fatalf("first entry = %+v, want the meeting, running", got[0])
+	}
+	if got[1].Label != "Dictation, 14:32" || got[1].Running {
+		t.Fatalf("second entry = %+v, want the dictation, waiting", got[1])
+	}
+	if got[1].Seconds != 5 {
+		t.Fatalf("seconds = %v, want the recording length 5", got[1].Seconds)
+	}
 }
 
 func TestAPanickingDecodeDoesNotTakeTheQueueDown(t *testing.T) {
 	// sherpa-onnx aborts on a truncated model file. Losing one transcript is
 	// acceptable; losing the app mid-meeting is not.
 	q := newDecodeQueue(nil)
-	q.submit(1, func(func()) { panic("bad model") })
+	q.submit("test", "", 1, func(func()) { panic("bad model") })
 
 	done := make(chan struct{})
-	q.submit(2, func(func()) { close(done) })
+	q.submit("test", "", 2, func(func()) { close(done) })
 
 	select {
 	case <-done:

@@ -5,6 +5,7 @@ import (
 	"runtime/debug"
 	"sort"
 	"sync"
+	"time"
 )
 
 // decodeQueue runs transcriptions one at a time, off the hotkey path.
@@ -25,21 +26,48 @@ type decodeQueue struct {
 	// running is the length of the job the worker is inside, or 0 when idle.
 	// Compared against pending jobs to decide who preempts whom.
 	running float64
-	// onChange reports how many takes are queued or in flight, for the menu
-	// bar. Called without the lock held.
-	onChange func(int)
+	// onChange reports what is queued or in flight -- one entry per take,
+	// in the order they will be decoded. The menu bar only needs len(); the
+	// main window draws the labels. Called without the lock held.
+	onChange func([]decodeStatus)
 	inFlight int
+	// active is the stack of jobs currently being executed. It is a stack,
+	// not a single job, because yield runs a short take inside a long one:
+	// the last entry is the one actually decoding, the ones under it are
+	// paused mid-recording and will resume.
+	active []*decodeJob
+}
+
+// decodeStatus is one line of "what is Voxlog chewing on". Running marks the
+// take actually being decoded right now; a job paused by yield reports
+// Running false, same as one that has not started, because from the outside
+// there is no difference -- neither is producing a transcript yet.
+type decodeStatus struct {
+	Label string `json:"label"`
+	// Key identifies the row this take belongs to, so a list can mark it
+	// "Transcribing...". It is the meeting's start in RFC3339Nano -- the same
+	// id meetingsJSON gives the row. Empty for a dictation: its history entry
+	// does not exist until the decode finishes, so there is no row to mark.
+	Key     string  `json:"key"`
+	Seconds float64 `json:"seconds"`
+	Running bool    `json:"running"`
 }
 
 // decodeJob is one take's worth of work. run does the actual decoding and is
 // handed a yield to call between blocks; everything about models, diarization
 // and history lives in the closure, not here.
 type decodeJob struct {
-	seconds float64
-	run     func(yield func())
+	// label is what the UI calls this take ("Dictation, 14:32", "Meeting,
+	// 09:00"). Nothing here parses it; it exists so a queue entry can be
+	// matched to the row it came from by eye.
+	label    string
+	key      string
+	queuedAt time.Time
+	seconds  float64
+	run      func(yield func())
 }
 
-func newDecodeQueue(onChange func(int)) *decodeQueue {
+func newDecodeQueue(onChange func([]decodeStatus)) *decodeQueue {
 	q := &decodeQueue{wake: make(chan struct{}, 1), onChange: onChange}
 	go q.work()
 	return q
@@ -48,24 +76,52 @@ func newDecodeQueue(onChange func(int)) *decodeQueue {
 // submit queues a take. seconds is how long the recording is, which is what
 // the queue orders by -- not how long decoding will take, which nobody knows
 // until it is done, but a good enough proxy: decode time tracks length.
-func (q *decodeQueue) submit(seconds float64, run func(yield func())) {
+func (q *decodeQueue) submit(label, key string, seconds float64, run func(yield func())) {
 	q.mu.Lock()
-	q.pending = append(q.pending, &decodeJob{seconds: seconds, run: run})
+	q.pending = append(q.pending, &decodeJob{
+		label:    label,
+		key:      key,
+		queuedAt: time.Now(),
+		seconds:  seconds,
+		run:      run,
+	})
 	q.inFlight++
-	n := q.inFlight
+	statuses := q.statusesLocked()
 	q.mu.Unlock()
 
-	q.notify(n)
+	q.notify(statuses)
 	select {
 	case q.wake <- struct{}{}:
 	default: // already awake; it will find the job when it looks
 	}
 }
 
-func (q *decodeQueue) notify(n int) {
+func (q *decodeQueue) notify(statuses []decodeStatus) {
 	if q.onChange != nil {
-		q.onChange(n)
+		q.onChange(statuses)
 	}
+}
+
+// statusesLocked snapshots the queue for onChange. Running jobs first (the
+// innermost one is the one actually decoding), then everything pending in
+// the order take will pull it: shortest first. Callers hold q.mu.
+func (q *decodeQueue) statusesLocked() []decodeStatus {
+	out := make([]decodeStatus, 0, len(q.active)+len(q.pending))
+	for i, job := range q.active {
+		out = append(out, decodeStatus{
+			Label:   job.label,
+			Key:     job.key,
+			Seconds: job.seconds,
+			Running: i == len(q.active)-1,
+		})
+	}
+	rest := make([]*decodeJob, len(q.pending))
+	copy(rest, q.pending)
+	sort.SliceStable(rest, func(i, j int) bool { return rest[i].seconds < rest[j].seconds })
+	for _, job := range rest {
+		out = append(out, decodeStatus{Label: job.label, Key: job.key, Seconds: job.seconds})
+	}
+	return out
 }
 
 // work is the single decoding goroutine.
@@ -109,7 +165,10 @@ func (q *decodeQueue) execute(job *decodeJob) {
 	q.mu.Lock()
 	outer := q.running
 	q.running = job.seconds
+	q.active = append(q.active, job)
+	statuses := q.statusesLocked()
 	q.mu.Unlock()
+	q.notify(statuses)
 
 	defer func() {
 		if r := recover(); r != nil {
@@ -119,9 +178,15 @@ func (q *decodeQueue) execute(job *decodeJob) {
 		q.mu.Lock()
 		q.running = outer
 		q.inFlight--
-		n := q.inFlight
+		for i := len(q.active) - 1; i >= 0; i-- {
+			if q.active[i] == job {
+				q.active = append(q.active[:i], q.active[i+1:]...)
+				break
+			}
+		}
+		statuses := q.statusesLocked()
 		q.mu.Unlock()
-		q.notify(n)
+		q.notify(statuses)
 	}()
 
 	job.run(func() { q.yield(job.seconds) })

@@ -259,7 +259,7 @@ func (a *app) stopMeeting() {
 func (a *app) transcribeMeetingEntry(m history.Meeting, spec asr.ModelSpec, language string) {
 	separate := a.store.Get().SeparateSpeakers && m.SystemAudioPath != ""
 
-	a.queue.submit(m.RecordingSeconds, func(yield func()) {
+	a.queue.submit("Meeting, "+m.Start.Format("15:04"), m.Start.Format(time.RFC3339Nano), m.RecordingSeconds, func(yield func()) {
 		started := time.Now()
 		turns, err := a.transcribeFilesTurns(spec, language, m.AudioPath, m.SystemAudioPath, separate, yield, nil)
 		if err != nil {

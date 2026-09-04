@@ -288,6 +288,32 @@
     letter-spacing: -0.01em;
   }
 
+  /* The decode-queue banner is the live-meeting banner in a different key:
+     same glass card and left rule, accent instead of red, and a spinner
+     rather than a pulse -- recording is happening to you, decoding is
+     happening for you. */
+  .live.decoding {
+    background: linear-gradient(135deg, color-mix(in srgb, var(--accent) 14%, transparent), transparent), var(--card);
+    border-left-color: var(--accent);
+  }
+  .live.decoding .pulse {
+    border-radius: 50%;
+    background: none;
+    border: 2px solid color-mix(in srgb, var(--accent) 30%, transparent);
+    border-top-color: var(--accent);
+    width: 12px; height: 12px;
+    animation: decode-spin 0.9s linear infinite;
+  }
+  @keyframes decode-spin { to { transform: rotate(360deg); } }
+  @media (prefers-reduced-motion: reduce) { .live.decoding .pulse { animation: none; } }
+  .live .queued { font-size: 11px; color: var(--secondary); }
+  /* Transcribing is a live state, not the absence of one: distinct from
+     .tag.pending ("Not transcribed"), which is a row nobody has queued. */
+  .tag.transcribing {
+    color: var(--accent);
+    background: color-mix(in srgb, var(--accent) 15%, transparent);
+  }
+
   .tiles { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-top: 16px; }
   .tile {
     background: var(--card);
@@ -519,6 +545,7 @@
     <main class="content" id="shell-content">
       <div class="pane on" data-pane="overview">
         <div id="overview-live"></div>
+        <div class="decode-banner-slot" id="overview-decode"></div>
         <div class="group-title day">Today</div>
         <div class="tiles" id="overview-tiles"></div>
         <div class="group-title day">Last 14 days</div>
@@ -542,6 +569,7 @@
         <div id="voices-pane" hidden></div>
       </div>
       <div class="pane" data-pane="tasks">
+        <div class="decode-banner-slot" id="tasks-decode"></div>
         <div class="task-summary" id="task-summary"></div>
         <div class="pane-filters" id="task-filters"></div>
         <div id="task-groups"></div>
@@ -568,6 +596,7 @@
       renderTasks(document.getElementById('task-summary'), document.getElementById('task-filters'),
         document.getElementById('task-groups'), (window.voxlog && window.voxlog.tasks) || []);
       renderOverview();
+      renderDecodeBanners();
     }
 
     // Only one recording plays at a time -- two of them talking over each
@@ -752,7 +781,7 @@
       var entity = meetingEntity(e);
       var tags = entity ? '<span class="tag">' + escapeHtml(entity) + '</span>' : '';
       if (e.task_id) tags += '<span class="tag">Task found</span>';
-      if (!e.text) tags += '<span class="tag pending">Not transcribed</span>';
+      tags += decodeTagHTML(e);
 
       // Transcribe is the only button on a card: everything else you do to a
       // meeting, you do inside it.
@@ -1736,13 +1765,25 @@
     // meeting appears there as the same compact .entry row a dictation does
     // -- the full card belongs in the Meetings pane, where there is room for
     // it and somewhere to click through to.
+    // decodeTagHTML is the one place that decides between "in the queue" and
+    // "nobody has asked for it": a row is only "Not transcribed" once it is
+    // certain nothing is about to transcribe it.
+    function decodeTagHTML(e) {
+      var state = decodeKeys()[e.id];
+      if (state) {
+        return '<span class="tag transcribing">' +
+          (state === 'running' ? 'Transcribing…' : 'Queued') + '</span>';
+      }
+      return e.text ? '' : '<span class="tag pending">Not transcribed</span>';
+    }
+
     function meetingRecentRowHTML(e, gi, ei) {
       var body = e.summary || e.text || (e.has_audio ? 'Not transcribed yet' : 'No transcript');
       return '<div class="entry" data-day="' + gi + '" data-entry="' + ei + '">' +
         '<span class="pill" title="Length of the recording">' + duration(e.recording_seconds) + '</span>' +
         '<div class="body"><div class="text">' + escapeHtml(body) + '</div>' +
           '<div class="meta"><span>' + e.time + '</span><span>Meeting</span>' +
-            (!e.text ? '<span class="tag pending">Not transcribed</span>' : '') +
+            decodeTagHTML(e) +
           '</div></div>' +
       '</div>';
     }
@@ -1781,6 +1822,56 @@
       var m = Math.floor(total / 60), s = total % 60;
       return m + ':' + (s < 10 ? '0' : '') + s;
     }
+
+    // decodeQueue is what the app last told us is queued or decoding. The
+    // window is push-updated (window.voxlog.onDecodeQueue), and the same
+    // array is put on the page at build time, so a window opened mid-decode
+    // is not blank until the next job event.
+    function decodeQueue() {
+      return (window.voxlog && window.voxlog.decodeQueue) || [];
+    }
+
+    // decodeKeys is the set of row ids currently in the queue, so a list can
+    // ask "is this row being transcribed" without scanning the queue per row.
+    function decodeKeys() {
+      var out = {};
+      decodeQueue().forEach(function (d) {
+        if (d.key) out[d.key] = d.running ? 'running' : 'queued';
+      });
+      return out;
+    }
+
+    function renderDecodeBanners() {
+      var q = decodeQueue();
+      ['overview-decode', 'tasks-decode'].forEach(function (id) {
+        var el = document.getElementById(id);
+        if (!el) return;
+        if (!q.length) { el.innerHTML = ''; return; }
+        var running = q.filter(function (d) { return d.running; });
+        var waiting = q.length - running.length;
+        var what = running.length
+          ? escapeHtml(running[running.length - 1].label)
+          : escapeHtml(q[0].label);
+        el.innerHTML =
+          '<div class="live decoding"><span class="pulse"></span>' +
+            '<div><div class="what">Transcribing ' + what + '</div>' +
+              '<div class="sub">Recording and dictation keep working while this runs</div></div>' +
+            (waiting
+              ? '<div class="queued">' + waiting + ' waiting</div>'
+              : '') +
+          '</div>';
+      });
+    }
+
+    window.voxlog = window.voxlog || {};
+    // Pushed from Go on every job start, finish and submit. Redraw both
+    // lists too: their rows carry the "Transcribing..." tag, which is only
+    // correct for as long as the take is actually in the queue.
+    window.voxlog.onDecodeQueue = function (list) {
+      window.voxlog.decodeQueue = list || [];
+      renderDecodeBanners();
+      if (typeof render === 'function') render();
+    };
 
     function renderLiveBanner(status) {
       var el = document.getElementById('overview-live');

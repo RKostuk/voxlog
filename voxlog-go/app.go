@@ -66,7 +66,16 @@ func newApp(store *settings.Store, hist *history.Store, meetings *history.Meetin
 		embedders: &embedderCache{},
 		tray:      &tray{},
 	}
-	a.queue = newDecodeQueue(a.tray.setDecoding)
+	// One queue, two consumers: the menu bar only wants a count, the main
+	// window wants the labels so it can say which recording is decoding.
+	a.queue = newDecodeQueue(func(list []decodeStatus) {
+		a.tray.setDecoding(len(list))
+		out := make([]ui.DecodeStatus, 0, len(list))
+		for _, st := range list {
+			out = append(out, ui.DecodeStatus{Label: st.Label, Key: st.Key, Seconds: st.Seconds, Running: st.Running})
+		}
+		ui.PublishDecodeQueue(out)
+	})
 	return a
 }
 

@@ -387,7 +387,7 @@ func (a *app) stopDictation() {
 	}
 
 	a.finishRecording(cfg, true)
-	a.queue.submit(recordingSeconds, func(yield func()) {
+	a.queue.submit("Dictation, "+d.start.Format("15:04"), "", recordingSeconds, func(yield func()) {
 		start := time.Now()
 		var text string
 		switch {
