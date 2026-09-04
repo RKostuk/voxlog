@@ -19,6 +19,11 @@
       <path d="M3.4 7.2h17M3.4 16.8h17"/>
       <circle cx="9.2" cy="7.2" r="2.5"/><circle cx="15.2" cy="16.8" r="2.5"/>
     </g>
+    <g id="ic-listening">
+      <circle cx="12" cy="12" r="2.4"/>
+      <path d="M7.8 7.8a5.9 5.9 0 0 0 0 8.4M16.2 16.2a5.9 5.9 0 0 0 0-8.4"/>
+      <path d="M4.6 4.6a10.4 10.4 0 0 0 0 14.8M19.4 19.4a10.4 10.4 0 0 0 0-14.8"/>
+    </g>
     <g id="ic-llm">
       <path d="M12 3.5l2.1 4.4 4.8.6-3.5 3.3.9 4.8L12 14.3l-4.3 2.3.9-4.8-3.5-3.3 4.8-.6z"/>
     </g>
@@ -38,6 +43,9 @@
         </button>
         <button type="button" class="subnav-item" role="tab" data-subpane="meetings" aria-selected="false">
           <span class="glyph i-meetings"><svg viewBox="0 0 24 24"><use href="#ic-people"/></svg></span>Meetings
+        </button>
+        <button type="button" class="subnav-item" role="tab" data-subpane="listening" aria-selected="false">
+          <span class="glyph i-listening"><svg viewBox="0 0 24 24"><use href="#ic-listening"/></svg></span>Listening
         </button>
         <button type="button" class="subnav-item" role="tab" data-subpane="history" aria-selected="false">
           <span class="glyph i-history"><svg viewBox="0 0 24 24"><use href="#ic-clock"/></svg></span>History
@@ -399,15 +407,76 @@
           </div>
           <input type="checkbox" class="switch" id="keep_meeting_audio">
         </div>
+        <div class="item">
+          <div class="title">Keep dictation recordings
+            <div class="subtext">Lets a take be replayed or re-run against another model &middot; about 20 MB a day at twenty takes</div>
+          </div>
+          <input type="checkbox" class="switch" id="keep_dictation_audio">
+        </div>
+        <div class="item">
+          <div class="title">Include system audio in dictation too
+            <div class="subtext">A meeting always records it &middot; this adds it to plain dictation, when no meeting is running</div>
+          </div>
+          <input type="checkbox" class="switch" id="capture_system_audio">
+        </div>
+        <div class="item" id="separate-speakers-wrap">
+          <div class="title">Separate speakers
+            <div class="subtext">Label your microphone and the system audio apart, instead of mixing them</div>
+          </div>
+          <input type="checkbox" class="switch" id="separate_speakers">
+        </div>
+        <div class="item">
+          <div class="title">Delete audio older than</div>
+          <select id="audio_retention">
+            <option value="disabled">Never</option>
+            <option value="week">1 week</option>
+            <option value="two_weeks">2 weeks</option>
+            <option value="month">1 month</option>
+          </select>
+        </div>
+        <div class="item">
+          <div class="title">Keep audio under
+            <div class="subtext">Oldest recordings go first, once the folder passes this</div>
+          </div>
+          <select id="audio_max_gb">
+            <option value="0">No limit</option>
+            <option value="1">1 GB</option>
+            <option value="5">5 GB</option>
+            <option value="10">10 GB</option>
+            <option value="25">25 GB</option>
+          </select>
+        </div>
+        <div class="item">
+          <div class="title">Recordings folder
+            <div class="subtext">Both controls above are off by default, so nothing here is deleted unless one is turned on</div>
+          </div>
+          <span class="mono-field" id="recordings-size-display">&hellip;</span>
+          <button type="button" id="free-up-space-btn">Free up space</button>
+        </div>
+      </div>
+    </div>
+      </div>
+
+      <div class="subpane" data-subpane="listening">
+        <div class="subpane-title">Listening</div>
+    <!-- Always-on listening is its own subject, not a meeting setting: what
+         it produces is as often a note to yourself as a conversation, and it
+         is the one feature that can open the microphone without being asked.
+         Everything that governs it lives here, master switch included, so
+         there is exactly one place to look. -->
+    <div class="group">
+      <div class="group-title">Listen for speech</div>
+      <div class="card">
         <!-- Always-on is not "record everything": a voice-activity model
              decides whether anyone is actually talking, and only then does a
              recording start. The subtext says so, because a microphone that
              may open by itself is the one feature where the user has to know
              exactly what the rule is. -->
         <div class="item">
-          <div class="title">Start recording when I'm talking
-            <div class="subtext">Listens for speech and records a meeting on its own &middot; keyboard noise,
-              music and a fan do not start one &middot; downloads a small (~2 MB) voice-activity model</div>
+          <div class="title">Start recording when someone is talking
+            <div class="subtext">One voice becomes a note in History, a second voice makes it a meeting
+              &middot; keyboard noise, music and a fan start nothing &middot; downloads a small (~2 MB)
+              voice-activity model</div>
           </div>
           <input type="checkbox" class="switch" id="always_on">
         </div>
@@ -461,51 +530,17 @@
             <button type="button" id="excluded-app-add-btn">Add</button>
           </div>
         </div>
+      </div>
+    </div>
+
+    <div class="group">
+      <div class="card">
         <div class="item">
-          <div class="title">Keep dictation recordings
-            <div class="subtext">Lets a take be replayed or re-run against another model &middot; about 20 MB a day at twenty takes</div>
-          </div>
-          <input type="checkbox" class="switch" id="keep_dictation_audio">
-        </div>
-        <div class="item">
-          <div class="title">Include system audio in dictation too
-            <div class="subtext">A meeting always records it &middot; this adds it to plain dictation, when no meeting is running</div>
-          </div>
-          <input type="checkbox" class="switch" id="capture_system_audio">
-        </div>
-        <div class="item" id="separate-speakers-wrap">
-          <div class="title">Separate speakers
-            <div class="subtext">Label your microphone and the system audio apart, instead of mixing them</div>
-          </div>
-          <input type="checkbox" class="switch" id="separate_speakers">
-        </div>
-        <div class="item">
-          <div class="title">Delete audio older than</div>
-          <select id="audio_retention">
-            <option value="disabled">Never</option>
-            <option value="week">1 week</option>
-            <option value="two_weeks">2 weeks</option>
-            <option value="month">1 month</option>
-          </select>
-        </div>
-        <div class="item">
-          <div class="title">Keep audio under
-            <div class="subtext">Oldest recordings go first, once the folder passes this</div>
-          </div>
-          <select id="audio_max_gb">
-            <option value="0">No limit</option>
-            <option value="1">1 GB</option>
-            <option value="5">5 GB</option>
-            <option value="10">10 GB</option>
-            <option value="25">25 GB</option>
-          </select>
-        </div>
-        <div class="item">
-          <div class="title">Recordings folder
-            <div class="subtext">Both controls above are off by default, so nothing here is deleted unless one is turned on</div>
-          </div>
-          <span class="mono-field" id="recordings-size-display">&hellip;</span>
-          <button type="button" id="free-up-space-btn">Free up space</button>
+          <div class="subtext">While this is on, macOS keeps its microphone indicator lit -- the machine
+            really is listening. Voxlog holds about a minute of sound in memory and writes nothing to
+            disk until it is sure somebody is speaking; a recording that turns out to be one voice is
+            filed in History as a note, and one with a second voice in it becomes a meeting. Pause it
+            any time from the menu bar.</div>
         </div>
       </div>
     </div>
