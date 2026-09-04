@@ -1,0 +1,8 @@
+bin/
+*.app/
+*.zip
+.DS_Store
+.idea/
+voxlog.app
+.claude
+voxlog-go/third_party/

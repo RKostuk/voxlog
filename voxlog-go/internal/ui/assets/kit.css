@@ -1,0 +1,193 @@
+/* The macOS-kit palette and the handful of controls more than one page
+   uses -- currently Settings, with a second page on the way. Keeping them
+   here means neither page can drift from what the other looks like. */
+
+/* The viewer has three states, not two: an explicit choice stamps
+   data-theme on the root, and the default "system" setting stamps nothing.
+   Tokens are defined on bare :root, redefined under the media query guarded
+   against an explicit light choice, and redefined again for the stamp -- so
+   whichever of the three is in play resolves to a complete set. */
+:root {
+  --bg: #f2f2f7;
+  --card: rgba(255, 255, 255, 0.55);
+  --separator: rgba(60, 60, 67, 0.13);
+  --label: #1d1d1f;
+  --secondary: rgba(60, 60, 67, 0.6);
+  --tertiary: rgba(60, 60, 67, 0.3);
+  --accent: #007aff;
+  --field: rgba(118, 118, 128, 0.08);
+  --sidebar: rgba(255, 255, 255, 0.4);
+  --green: #34c759;
+  --yellow: #ffcc00;
+  --red: #ff3b30;
+  /* Liquid Glass surfaces: a translucent, blurred fill plus a specular rim
+     rather than a flat card colour. --glass-edge is the highlight along the
+     top of a raised surface; --glass-shadow is what lifts it off the page.
+     The three wash colours are the thing the glass has something to bend --
+     without a coloured field behind them, blur+translucency over a flat
+     --bg just looks like dirty grey. */
+  --glass-edge: rgba(255, 255, 255, 0.85);
+  --glass-shadow: rgba(20, 20, 40, 0.14);
+  --wash-a: #ffd8c2;
+  --wash-b: #c9c8ff;
+  --wash-c: #b9e6ff;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #1e1e1e;
+    --card: rgba(44, 44, 46, 0.5);
+    --separator: rgba(84, 84, 88, 0.4);
+    --label: #f5f5f7;
+    --secondary: rgba(235, 235, 245, 0.6);
+    --tertiary: rgba(235, 235, 245, 0.3);
+    --accent: #0a84ff;
+    --field: rgba(118, 118, 128, 0.24);
+    --sidebar: rgba(25, 25, 25, 0.55);
+    --green: #30d158;
+    --yellow: #ffd60a;
+    --red: #ff453a;
+    --glass-edge: rgba(255, 255, 255, 0.14);
+    --glass-shadow: rgba(0, 0, 0, 0.5);
+    --wash-a: #3a2a4a;
+    --wash-b: #24304f;
+    --wash-c: #163a44;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #1e1e1e;
+  --card: rgba(44, 44, 46, 0.5);
+  --separator: rgba(84, 84, 88, 0.4);
+  --label: #f5f5f7;
+  --secondary: rgba(235, 235, 245, 0.6);
+  --tertiary: rgba(235, 235, 245, 0.3);
+  --accent: #0a84ff;
+  --field: rgba(118, 118, 128, 0.24);
+  --sidebar: rgba(25, 25, 25, 0.55);
+  --green: #30d158;
+  --yellow: #ffd60a;
+  --red: #ff453a;
+  --glass-edge: rgba(255, 255, 255, 0.14);
+  --glass-shadow: rgba(0, 0, 0, 0.5);
+  --wash-a: #3a2a4a;
+  --wash-b: #24304f;
+  --wash-c: #163a44;
+}
+
+* { box-sizing: border-box; }
+html, body { height: 100%; }
+body {
+  margin: 0;
+  /* The ambient wash every glass surface blurs and tints itself with --
+     three soft colour pools over the flat --bg. Real Liquid Glass bends
+     whatever is actually behind it; a single-page app has no such backdrop
+     of its own, so this plays that part. */
+  background:
+    radial-gradient(58% 46% at 14% 8%, var(--wash-a) 0%, transparent 60%),
+    radial-gradient(52% 50% at 84% 18%, var(--wash-b) 0%, transparent 62%),
+    radial-gradient(60% 55% at 30% 96%, var(--wash-c) 0%, transparent 58%),
+    var(--bg);
+  background-attachment: fixed;
+  color: var(--label);
+  font: 13px/1.4 -apple-system, "SF Pro Text", system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+.card {
+  background: var(--card);
+  -webkit-backdrop-filter: blur(26px) saturate(180%);
+  backdrop-filter: blur(26px) saturate(180%);
+  border-radius: 10px;
+  overflow: hidden;
+  box-shadow: inset 0 1px 0 var(--glass-edge), inset 0 0 0 0.5px var(--separator), 0 8px 20px var(--glass-shadow);
+}
+
+/* One row inside a card: label left, control right, hairline below. */
+.item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 38px;
+  padding: 7px 12px;
+  border-top: 0.5px solid var(--separator);
+}
+.item:first-child { border-top: none; }
+.item > .title { flex: 1; min-width: 0; }
+.item.stacked { display: block; }
+.item.stacked > .title { margin-bottom: 6px; }
+.card, .item { min-width: 0; }
+
+.group-title {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--secondary);
+  margin: 0 0 6px 10px;
+}
+/* A group title can carry a small action (e.g. "Show files"); keep it
+   visually subordinate to the heading it sits next to. */
+.group-title button {
+  font-size: 10px;
+  font-weight: 500;
+  text-transform: none;
+  letter-spacing: 0;
+  padding: 1px 7px;
+  margin-left: 6px;
+  vertical-align: 1px;
+}
+
+/* macOS-style on/off switch. Styling the checkbox itself (rather than a
+   wrapper element) keeps every existing form listener and .checked read
+   working exactly as before. */
+input[type=checkbox].switch {
+  appearance: none;
+  -webkit-appearance: none;
+  flex: none;
+  width: 38px;
+  height: 22px;
+  margin: 0;
+  border-radius: 999px;
+  background: var(--tertiary);
+  position: relative;
+  cursor: pointer;
+  transition: background 0.18s ease;
+}
+input[type=checkbox].switch::after {
+  content: "";
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.25);
+  transition: transform 0.18s ease;
+}
+input[type=checkbox].switch:checked { background: var(--accent); }
+input[type=checkbox].switch:checked::after { transform: translateX(16px); }
+input[type=checkbox].switch:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* Colour-coded icon chip for a sidebar row. Lives here, not in
+   settings.css, because main.html's own shell sidebar uses it too --
+   splicing settings.css into the whole document is what let that work
+   before, which is exactly the coupling this file exists to avoid. */
+.glyph {
+  flex: none;
+  width: 22px;
+  height: 22px;
+  border-radius: 6.5px;
+  display: grid;
+  place-items: center;
+  background: var(--tint);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.28), 0 0.5px 1px rgba(0, 0, 0, 0.18);
+}
+.glyph svg {
+  width: 14px;
+  height: 14px;
+  stroke: #fff;
+  fill: none;
+  stroke-width: 1.9;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}

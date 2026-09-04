@@ -1,0 +1,1510 @@
+  <div id="settings-pane">
+  <svg width="0" height="0" style="position:absolute" aria-hidden="true"><defs>
+    <g id="ic-wave"><path d="M4 10v4M8 6.5v11M12 3.5v17M16 6.5v11M20 10v4"/></g>
+    <g id="ic-chip">
+      <rect x="6" y="6" width="12" height="12" rx="3"/>
+      <rect x="9.75" y="9.75" width="4.5" height="4.5" rx="1.2"/>
+      <path d="M9.5 3.2v2.6M14.5 3.2v2.6M9.5 18.2v2.6M14.5 18.2v2.6M3.2 9.5h2.6M3.2 14.5h2.6M18.2 9.5h2.6M18.2 14.5h2.6"/>
+    </g>
+    <g id="ic-mic">
+      <rect x="9" y="2.6" width="6" height="11" rx="3"/>
+      <path d="M5.4 11.2a6.6 6.6 0 0 0 13.2 0M12 17.8v3.6"/>
+    </g>
+    <g id="ic-people">
+      <circle cx="8.6" cy="8.4" r="3.1"/><circle cx="16.4" cy="9.6" r="2.4"/>
+      <path d="M2.9 19.4a5.7 5.7 0 0 1 11.4 0M15.6 14.6a5 5 0 0 1 5.5 4.8"/>
+    </g>
+    <g id="ic-clock"><circle cx="12" cy="12" r="8.6"/><path d="M12 6.9V12l3.5 2.1"/></g>
+    <g id="ic-sliders">
+      <path d="M3.4 7.2h17M3.4 16.8h17"/>
+      <circle cx="9.2" cy="7.2" r="2.5"/><circle cx="15.2" cy="16.8" r="2.5"/>
+    </g>
+    <g id="ic-llm">
+      <path d="M12 3.5l2.1 4.4 4.8.6-3.5 3.3.9 4.8L12 14.3l-4.3 2.3.9-4.8-3.5-3.3 4.8-.6z"/>
+    </g>
+  </defs></svg>
+    <nav class="subnav" id="settings-subnav" role="tablist" aria-label="Settings sections">
+        <button type="button" class="subnav-item" role="tab" data-subpane="dictation" aria-selected="true">
+          <span class="glyph i-dictation"><svg viewBox="0 0 24 24"><use href="#ic-wave"/></svg></span>Dictation
+        </button>
+        <button type="button" class="subnav-item" role="tab" data-subpane="model" aria-selected="false">
+          <span class="glyph i-model"><svg viewBox="0 0 24 24"><use href="#ic-chip"/></svg></span>Model
+        </button>
+        <button type="button" class="subnav-item" role="tab" data-subpane="llm" aria-selected="false">
+          <span class="glyph i-llm"><svg viewBox="0 0 24 24"><use href="#ic-llm"/></svg></span>LLM model
+        </button>
+        <button type="button" class="subnav-item" role="tab" data-subpane="audio" aria-selected="false">
+          <span class="glyph i-audio"><svg viewBox="0 0 24 24"><use href="#ic-mic"/></svg></span>Audio
+        </button>
+        <button type="button" class="subnav-item" role="tab" data-subpane="meetings" aria-selected="false">
+          <span class="glyph i-meetings"><svg viewBox="0 0 24 24"><use href="#ic-people"/></svg></span>Meetings
+        </button>
+        <button type="button" class="subnav-item" role="tab" data-subpane="history" aria-selected="false">
+          <span class="glyph i-history"><svg viewBox="0 0 24 24"><use href="#ic-clock"/></svg></span>History
+        </button>
+        <button type="button" class="subnav-item" role="tab" data-subpane="advanced" aria-selected="false">
+          <span class="glyph i-advanced"><svg viewBox="0 0 24 24"><use href="#ic-sliders"/></svg></span>Advanced
+        </button>
+    </nav>
+    <main class="subcontent" id="settings-subcontent">
+      <form id="form">
+      <div class="subpane on" data-subpane="dictation">
+        <div class="subpane-title">Dictation</div>
+    <div class="group">
+      <div class="group-title">Hotkeys</div>
+      <div class="card">
+        <div class="item">
+          <div class="title">Dictate
+            <div class="subtext">Press one key, or hold modifiers and press one</div>
+          </div>
+          <span class="mono-field" id="dictate_key_label"></span>
+          <button type="button" class="capture-btn" data-target="dictate_key">Set&hellip;</button>
+        </div>
+        <div class="item">
+          <div class="title">Dictate key behaviour
+            <div class="subtext">Hold suits short remarks; tap suits anything you need both hands for</div>
+          </div>
+          <select id="dictate_activation">
+            <option value="toggle">Tap to start, tap to stop</option>
+            <option value="hold">Hold the key while speaking</option>
+          </select>
+        </div>
+        <div class="item">
+          <div class="title">History</div>
+          <span class="mono-field" id="history_key_label"></span>
+          <button type="button" class="capture-btn" data-target="history_key">Set&hellip;</button>
+        </div>
+        <div class="item">
+          <div class="title">Escape cancels a recording
+            <div class="subtext">Off by default &middot; a stray Escape would throw the take away</div>
+          </div>
+          <input type="checkbox" class="switch" id="escape_cancels">
+        </div>
+      </div>
+    </div>
+
+    <div class="group">
+      <div class="group-title">After transcription</div>
+      <div class="card">
+        <div class="item">
+          <div class="title">Do with the text</div>
+          <select id="output_mode">
+            <option value="none">Nothing (history only)</option>
+            <option value="copy">Copy to clipboard</option>
+            <option value="paste">Paste into the focused app</option>
+            <option value="paste_copy">Paste and keep on clipboard</option>
+          </select>
+        </div>
+      </div>
+    </div>
+
+    <!-- Follows Hotkeys because that is the order it happens in: press the
+         key, the indicator appears. Deliberately not in Model settings, whose
+         rows are shown or hidden by what the selected model supports -- where
+         the capsule sits has nothing to do with the model. -->
+    <div class="group">
+      <div class="group-title">Recording indicator</div>
+      <!-- A live preview of the real component, on a mock screen with a
+           notch, because the whole point of these choices is what they look
+           like. A dropdown reading "Cuff" told you nothing until you had
+           dictated something and seen it. -->
+      <div class="preview-stage" id="indicator-preview-stage">
+        <div class="preview-menubar"><span>Pages</span><span>14:32</span></div>
+        <div class="preview-notch"></div>
+        <div class="preview-mount" id="indicator-preview"></div>
+      </div>
+
+      <div class="style-cards" id="style-cards"></div>
+      <!-- The picker is cards now; this keeps collect() reading one value
+           from one place, exactly as it did when it was a <select>. -->
+      <input type="hidden" id="indicator_style" value="capsule">
+      <div class="note" id="indicator_style_note" style="margin: 6px 0 10px 2px;"></div>
+
+      <div class="card">
+        <!-- Every style is the same markup with parts turned on and off, so
+             these are switches rather than five more styles. -->
+        <div class="item">
+          <div class="title">Sound bar</div>
+          <input type="checkbox" class="switch" id="indicator_wave">
+        </div>
+        <!-- How big the meter is, live in the preview above. Bounds match
+             ui.overlay's waveMin*/waveMax*, so a slider cannot ask for a
+             meter the window has no room for. -->
+        <div class="item stacked" id="indicator-wave-size-row">
+          <div class="title">Sound bar width <span class="note" id="indicator_wave_width_val"></span></div>
+          <input type="range" id="indicator_wave_width" min="40" max="280" step="2">
+          <div class="title" style="margin-top:8px;">Sound bar height <span class="note" id="indicator_wave_height_val"></span></div>
+          <input type="range" id="indicator_wave_height" min="8" max="40" step="1">
+        </div>
+        <div class="item">
+          <div class="title">Elapsed time</div>
+          <input type="checkbox" class="switch" id="indicator_timer">
+        </div>
+        <div class="item" id="indicator-mode-row">
+          <div class="title">Mode and shortcut</div>
+          <input type="checkbox" class="switch" id="indicator_mode_label">
+        </div>
+        <div class="item">
+          <div class="title">Stop button
+            <div class="subtext">The indicator starts accepting clicks, so it covers whatever is under it</div>
+          </div>
+          <input type="checkbox" class="switch" id="indicator_stop_button">
+        </div>
+        <div class="item">
+          <div class="title">Solid black
+            <div class="subtext">Off draws it on glass instead</div>
+          </div>
+          <input type="checkbox" class="switch" id="indicator_solid">
+        </div>
+        <div class="item">
+          <div class="title">Outline</div>
+          <input type="checkbox" class="switch" id="indicator_outline">
+        </div>
+        <!-- Position only still applies to the capsule: every other style
+             owns where it goes, because a cuff that is not against the notch
+             is not a cuff. -->
+        <!-- Placement is picked on a map of the screen rather than from a
+             list of names: "screen edge, bottom right" is a phrase you have
+             to decode, and a square in the right place is not. Choosing a
+             style moves this to wherever that style belongs, and you can
+             move it anywhere from there. -->
+        <div class="item stacked" id="overlay-position-row">
+          <div class="title">Position
+            <div class="subtext" id="overlay_position_note"></div>
+          </div>
+          <div class="place-wrap">
+            <div class="place-map" id="place-map">
+              <button type="button" class="place-spot" data-pos="top_left" title="Top left"></button>
+              <button type="button" class="place-spot" data-pos="top_centre" title="Top centre"></button>
+              <button type="button" class="place-spot" data-pos="top_right" title="Top right"></button>
+              <button type="button" class="place-spot" data-pos="bottom_left" title="Bottom left"></button>
+              <button type="button" class="place-spot" data-pos="bottom_centre" title="Bottom centre"></button>
+              <button type="button" class="place-spot" data-pos="bottom_right" title="Bottom right"></button>
+              <button type="button" class="place-spot wide" data-pos="screen_bottom_left" title="Screen edge, bottom left"></button>
+              <button type="button" class="place-spot wide" data-pos="screen_bottom_right" title="Screen edge, bottom right"></button>
+            </div>
+            <div class="place-follow">
+              <button type="button" class="place-chip" data-pos="cursor">Beside the cursor</button>
+              <button type="button" class="place-chip" data-pos="follow">Follows the cursor</button>
+            </div>
+          </div>
+          <input type="hidden" id="overlay_position" value="top_centre">
+        </div>
+        <div class="item">
+          <div class="title">Keep it up while transcribing
+            <div class="subtext">The menu bar icon shows this anyway</div>
+          </div>
+          <input type="checkbox" class="switch" id="show_transcribing_overlay">
+        </div>
+      </div>
+    </div>
+      </div>
+
+      <div class="subpane" data-subpane="model">
+        <div class="subpane-title">Model</div>
+    <div class="group">
+      <div class="group-title">Speech model
+        <button type="button" id="reveal-models" title="Show downloaded models in Finder">Show files</button>
+      </div>
+      <div class="card">
+        <div id="models"></div>
+      </div>
+    </div>
+
+    <div class="group">
+      <div class="group-title">Model settings <span id="model-caps"></span></div>
+      <div class="card">
+        <div class="item" id="language-wrap">
+          <div class="title">Language</div>
+          <select id="language">
+            <option value="auto">Auto-detect</option>
+            <option value="uk">Ukrainian</option>
+            <option value="en">English</option>
+          </select>
+        </div>
+        <div class="item" id="streaming-wrap">
+          <div class="title">Live streaming text
+            <div class="subtext">Show words as you speak them</div>
+          </div>
+          <input type="checkbox" class="switch" id="live_streaming_text">
+        </div>
+        <div class="item" id="model-settings-note-row">
+          <div class="note" id="model-settings-note"></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="group">
+      <div class="group-title">Compare models</div>
+      <div class="card">
+        <div class="item" id="model-test-row">
+          <div class="title">Record once, transcribe with each
+            <div class="subtext" id="model-test-note"></div>
+          </div>
+          <button type="button" id="model-test-btn">Record</button>
+        </div>
+        <div class="item stacked" id="model-test-results" style="display:none"></div>
+      </div>
+    </div>
+      </div>
+
+      <div class="subpane" data-subpane="llm">
+        <div class="subpane-title">LLM model</div>
+    <div class="group">
+      <div class="group-title">Task Hub <span class="badge" style="background:#ff9500">EXPERIMENTAL</span></div>
+      <div class="card">
+        <div class="item stacked">
+          <div class="title">Automatically detect tasks in your transcripts
+            <div class="subtext warn">Experimental. Downloads a ~4.5 GB model and runs it locally after each
+              dictation or meeting to look for actionable tasks -- this can use significant CPU and memory while
+              classifying. Stays off until the model below is downloaded.</div>
+          </div>
+          <input type="checkbox" class="switch" id="task_hub_enabled" disabled>
+        </div>
+        <div class="item">
+          <div class="title">Qwen3 4B (MLX, 8-bit)
+            <div class="subtext">~4.5 GB &middot; used only for Task Hub classification</div>
+          </div>
+          <div id="llm-model"></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="group">
+      <div class="group-title">Project dictionary</div>
+      <div class="card">
+        <div class="item stacked">
+          <div class="title">Projects
+            <div class="subtext">This is the whole list Task Hub is allowed to file tasks under -- it
+              cannot invent new ones. Anything that doesn't clearly match one of these lands in a
+              project called "Unfiltered" instead.</div>
+          </div>
+          <div id="entity-dict-list" class="entity-dict-list"></div>
+          <div class="entity-dict-add">
+            <input type="text" id="entity-dict-input" placeholder="Add a project or client name">
+            <button type="button" id="entity-dict-add-btn">Add</button>
+          </div>
+        </div>
+      </div>
+    </div>
+      </div>
+
+      <div class="subpane" data-subpane="audio">
+        <div class="subpane-title">Audio</div>
+    <div class="group">
+      <div class="card">
+        <div class="item">
+          <div class="title">Input device</div>
+          <select id="input_device"></select>
+        </div>
+        <div class="item stacked">
+          <div class="title">Sensitivity <span class="note" id="mic_volume_val"></span>
+            <div class="subtext" id="mic_volume_note"></div>
+          </div>
+          <input type="range" id="mic_volume" min="0" max="200" step="1">
+          <!-- The multiplier the slider resolves to above 100%. Not a control
+               of its own any more, just where buildPayload reads it from. -->
+          <input type="hidden" id="mic_gain" value="1">
+        </div>
+        <div class="item stacked">
+          <div class="title">Test the microphone</div>
+          <div style="display:flex; align-items:center; gap:10px;">
+            <div class="meter" id="mic-meter"></div>
+            <button type="button" id="mic-test-btn">Test</button>
+          </div>
+        </div>
+      </div>
+    </div>
+      </div>
+
+      <div class="subpane" data-subpane="meetings">
+        <div class="subpane-title">Meetings</div>
+    <!-- Meetings are their own feature, not a dictation with a longer timer:
+         a separate key, no paste, no overlay, and a recording that outlives
+         the app. The two audio-source toggles live here because a call is
+         what they are for -- they still apply to a plain dictation when no
+         meeting is running. -->
+    <div class="group">
+      <div class="card">
+        <div class="item">
+          <div class="title">Start and stop a meeting
+            <div class="subtext">Records the whole call &middot; goes to history only, never pasted</div>
+          </div>
+          <span class="mono-field" id="meeting_key_label"></span>
+          <button type="button" class="capture-btn" data-target="meeting_key">Set&hellip;</button>
+        </div>
+        <div class="item">
+          <div class="title">Transcribe the recording</div>
+          <select id="meeting_transcribe">
+            <option value="stop">When the meeting ends</option>
+            <option value="manual">Only when I ask, from History</option>
+          </select>
+        </div>
+        <div class="item">
+          <div class="title">Keep meeting recordings
+            <div class="subtext">About 115 MB per hour, beside the transcripts</div>
+          </div>
+          <input type="checkbox" class="switch" id="keep_meeting_audio">
+        </div>
+        <div class="item">
+          <div class="title">Keep dictation recordings
+            <div class="subtext">Lets a take be replayed or re-run against another model &middot; about 20 MB a day at twenty takes</div>
+          </div>
+          <input type="checkbox" class="switch" id="keep_dictation_audio">
+        </div>
+        <div class="item">
+          <div class="title">Include system audio in dictation too
+            <div class="subtext">A meeting always records it &middot; this adds it to plain dictation, when no meeting is running</div>
+          </div>
+          <input type="checkbox" class="switch" id="capture_system_audio">
+        </div>
+        <div class="item" id="separate-speakers-wrap">
+          <div class="title">Separate speakers
+            <div class="subtext">Label your microphone and the system audio apart, instead of mixing them</div>
+          </div>
+          <input type="checkbox" class="switch" id="separate_speakers">
+        </div>
+        <div class="item">
+          <div class="title">Delete audio older than</div>
+          <select id="audio_retention">
+            <option value="disabled">Never</option>
+            <option value="week">1 week</option>
+            <option value="two_weeks">2 weeks</option>
+            <option value="month">1 month</option>
+          </select>
+        </div>
+        <div class="item">
+          <div class="title">Keep audio under
+            <div class="subtext">Oldest recordings go first, once the folder passes this</div>
+          </div>
+          <select id="audio_max_gb">
+            <option value="0">No limit</option>
+            <option value="1">1 GB</option>
+            <option value="5">5 GB</option>
+            <option value="10">10 GB</option>
+            <option value="25">25 GB</option>
+          </select>
+        </div>
+        <div class="item">
+          <div class="title">Recordings folder
+            <div class="subtext">Both controls above are off by default, so nothing here is deleted unless one is turned on</div>
+          </div>
+          <span class="mono-field" id="recordings-size-display">&hellip;</span>
+          <button type="button" id="free-up-space-btn">Free up space</button>
+        </div>
+      </div>
+    </div>
+      </div>
+
+      <div class="subpane" data-subpane="history">
+        <div class="subpane-title">History</div>
+    <div class="group">
+      <div class="card">
+        <div class="item">
+          <div class="title">Confirming an entry
+            <div class="subtext">Clicking a row, or selecting it with the arrow keys and pressing Enter</div>
+          </div>
+          <select id="history_click_action">
+            <option value="none">Nothing</option>
+            <option value="copy">Copy to clipboard</option>
+            <option value="paste">Paste it back, closing the window</option>
+          </select>
+        </div>
+        <div class="item">
+          <div class="title">Delete transcripts older than</div>
+          <select id="history_retention">
+            <option value="disabled">Never</option>
+            <option value="week">1 week</option>
+            <option value="two_weeks">2 weeks</option>
+            <option value="month">1 month</option>
+          </select>
+        </div>
+        <div class="item stacked">
+          <div class="title">Store transcripts in
+            <div class="subtext">Takes effect after restarting Voxlog</div>
+          </div>
+          <div style="display:flex; align-items:center; gap:8px;">
+            <span class="mono-field" id="transcripts_dir_display"></span>
+            <button type="button" id="transcripts_dir_btn">Change&hellip;</button>
+            <button type="button" id="transcripts_dir_reset">Default</button>
+          </div>
+        </div>
+      </div>
+    </div>
+      </div>
+
+      <div class="subpane" data-subpane="advanced">
+        <div class="subpane-title">Advanced</div>
+    <div class="group" id="perm-fieldset">
+      <div class="card" id="perm-body">
+        <div class="item">
+          <div class="title">Accessibility
+            <div class="subtext">Required &middot; global hotkeys</div>
+          </div>
+          <span id="perm-accessibility-status" class="note"></span>
+          <button type="button" id="perm-accessibility-btn">Grant&hellip;</button>
+        </div>
+        <div class="item">
+          <div class="title">Microphone
+            <div class="subtext">Required &middot; recording dictation</div>
+          </div>
+          <span id="perm-microphone-status" class="note"></span>
+          <button type="button" id="perm-microphone-btn">Grant&hellip;</button>
+        </div>
+        <div class="item">
+          <div class="title">Screen Recording
+            <div class="subtext">Optional &middot; only for capturing system audio</div>
+          </div>
+          <span id="perm-screenrecording-status" class="note"></span>
+          <button type="button" id="perm-screenrecording-btn">Grant&hellip;</button>
+        </div>
+        <div class="item" id="restart-row">
+          <div class="title note">macOS only re-checks these when Voxlog starts</div>
+          <button type="button" id="restart-app" title="Relaunch so newly granted permissions take effect">Restart</button>
+        </div>
+      </div>
+    </div>
+      </div>
+        <span id="status"></span>
+      </form>
+    </main>
+
+
+  <script>
+    var settings = {};
+    var models = [];
+    var llmModel = { downloaded: false };
+    var entityDict = [];
+    // Raw KeyID strings ("vk:54"); the form shows human labels for these
+    // but always saves the raw ids.
+    var keys = { dictate_key: '', history_key: '', meeting_key: '' };
+
+    function currentModel() {
+      var el = document.querySelector('input[name=model]:checked');
+      return el ? el.value.split('|') : [settings.model_family, settings.model_variant];
+    }
+
+    function currentModelInfo() {
+      var sel = currentModel();
+      for (var i = 0; i < models.length; i++) {
+        if (models[i].family === sel[0] && models[i].variant === sel[1]) return models[i];
+      }
+      return null;
+    }
+
+    // The "Model settings" subsection only shows controls the selected
+    // engine actually honors -- language pinning and live partial text are
+    // Nemotron-only today, and a control the model ignores is worse than
+    // no control at all.
+    function renderCapabilities() {
+      var info = currentModelInfo();
+      var langOK = !!(info && info.supports_language);
+      var streamOK = !!(info && info.supports_streaming);
+
+      // Hide what this model cannot use, but never overwrite it. Forcing
+      // language to 'auto' and streaming off here meant that merely LOOKING
+      // at a model without language support threw away a chosen Ukrainian --
+      // switching back left 'auto' behind, with nothing to say it had been
+      // changed. The engines ignore settings they do not support anyway, so
+      // there is nothing to protect them from.
+      document.getElementById('language-wrap').style.display = langOK ? '' : 'none';
+      document.getElementById('streaming-wrap').style.display = streamOK ? '' : 'none';
+
+      var caps = [];
+      if (langOK) caps.push('language selection');
+      if (streamOK) caps.push('live streaming');
+      document.getElementById('model-caps').textContent =
+        caps.length ? '\u2014 ' + caps.join(', ') : '';
+      document.getElementById('model-settings-note').textContent =
+        caps.length ? '' : 'This model has no adjustable settings: it auto-detects the language and transcribes in one pass.';
+      document.getElementById('model-settings-note-row').style.display = caps.length ? 'none' : '';
+    }
+
+    function renderModels() {
+      var root = document.getElementById('models');
+      var html = '';
+      models.forEach(function (m, i) {
+        var value = m.family + '|' + m.variant;
+        var checked = (m.family === settings.model_family && m.variant === settings.model_variant) ? 'checked' : '';
+        // A model that is not on disk cannot be selected: choosing one used to
+        // "work", then every dictation failed with a notification about a
+        // missing model and no hint that the choice itself was the problem.
+        var lock = m.downloaded ? '' : ' disabled';
+        html += '<div class="item model-row"' + (m.downloaded ? '' : ' style="opacity:0.55"') + '>' +
+          '<label><input type="radio" name="model" value="' + value + '" ' + checked + lock + '>' +
+          '<span><span class="model-name">' + m.family + '</span> ' +
+          '<span class="note">' + m.variant + '</span>' +
+          (m.downloaded ? '<span class="badge">READY</span>' : '') +
+          (m.description ? '<div class="subtext">' + m.description + '</div>' : '') +
+          (m.downloaded ? '' : '<div class="subtext">Download it before it can be selected</div>') +
+          '</span></label>';
+        if (!m.downloaded) {
+          html += '<progress id="prog-' + m.family + '-' + m.variant + '" value="0" max="100" style="display:none"></progress>' +
+            '<button type="button" class="dl-btn" data-family="' + m.family + '" data-variant="' + m.variant + '">Download</button>';
+        }
+        html += '</div>';
+      });
+      root.innerHTML = html;
+
+      root.querySelectorAll('input[name=model]').forEach(function (r) {
+        r.addEventListener('change', function () {
+          renderCapabilities();
+          updateDownloadButtons();
+        });
+      });
+      root.querySelectorAll('.dl-btn').forEach(function (b) {
+        b.addEventListener('click', function () {
+          var family = b.dataset.family, variant = b.dataset.variant;
+          b.dataset.downloading = '1';
+          b.disabled = true;
+          var prog = document.getElementById('prog-' + family + '-' + variant);
+          prog.style.display = 'inline-block';
+          window.downloadModel(family, variant);
+        });
+      });
+      updateDownloadButtons();
+    }
+
+    // Every Download button stays live. Gating them on "is this model
+    // selected", as this used to, is unusable now that selecting an
+    // undownloaded model is exactly what is forbidden -- there would be no
+    // way to ever get the first byte of a second model.
+    function updateDownloadButtons() {
+      document.querySelectorAll('.dl-btn').forEach(function (b) {
+        b.disabled = b.dataset.downloading === '1';
+      });
+    }
+
+    // renderLLMModel mirrors renderModels' download-button/progress/READY
+    // shape (see above), scoped to its own ids so the two downloads' progress
+    // bars can never collide. The task_hub_enabled switch stays disabled
+    // until the model is actually on disk -- there is nothing for it to turn
+    // on otherwise.
+    function renderLLMModel() {
+      var root = document.getElementById('llm-model');
+      var enable = document.getElementById('task_hub_enabled');
+      if (llmModel.downloaded) {
+        root.innerHTML = '<span class="badge">READY</span>';
+        enable.disabled = false;
+      } else {
+        root.innerHTML =
+          '<span id="stage-llm" class="subtext"></span>' +
+          '<progress id="prog-llm" value="0" max="100" style="display:none"></progress>' +
+          '<button type="button" id="dl-llm-btn">Download</button>';
+        enable.disabled = true;
+        enable.checked = false;
+        document.getElementById('dl-llm-btn').addEventListener('click', function (ev) {
+          ev.target.disabled = true;
+          window.downloadLLMModel();
+        });
+      }
+    }
+
+    // renderEntityDict draws the dictionary as removable chips. escapeHtml is
+    // defined in main.html's own script, which runs before initSettingsPane
+    // ever calls into this file (see the fragment's bottom), so it's already
+    // a global by the time this runs.
+    function renderEntityDict() {
+      var root = document.getElementById('entity-dict-list');
+      root.innerHTML = entityDict.length
+        ? entityDict.map(function (name, i) {
+            return '<span class="entity-chip">' +
+              '<span class="entity-chip-text" data-index="' + i + '" title="Click to rename">' + escapeHtml(name) + '</span>' +
+              '<button type="button" class="entity-chip-remove" data-index="' + i + '" aria-label="Remove">&times;</button></span>';
+          }).join('')
+        : '<div class="subtext">No projects yet -- everything will land in "Unfiltered" until you add some.</div>';
+      root.querySelectorAll('.entity-chip-remove').forEach(function (btn) {
+        btn.addEventListener('click', function () {
+          entityDict.splice(parseInt(btn.dataset.index, 10), 1);
+          renderEntityDict();
+          save();
+        });
+      });
+      root.querySelectorAll('.entity-chip-text').forEach(function (span) {
+        span.addEventListener('click', function () { editEntityDictEntry(span); });
+      });
+    }
+
+    // editEntityDictEntry swaps one chip's label for a text input in place --
+    // renaming a misrecognized/duplicate name is the whole point of the
+    // dictionary, not just adding and removing entries.
+    function editEntityDictEntry(span) {
+      var i = parseInt(span.dataset.index, 10);
+      var input = document.createElement('input');
+      input.type = 'text';
+      input.className = 'entity-chip-edit';
+      input.value = entityDict[i];
+      span.replaceWith(input);
+      input.focus();
+      input.select();
+
+      var committed = false;
+      var commit = function () {
+        if (committed) return;
+        committed = true;
+        var v = input.value.trim();
+        if (v && v.toLowerCase() !== 'unfiltered') entityDict[i] = v;
+        renderEntityDict();
+        save();
+      };
+      input.addEventListener('blur', commit);
+      input.addEventListener('keydown', function (e) {
+        if (e.key === 'Enter') { e.preventDefault(); input.blur(); }
+        if (e.key === 'Escape') { e.preventDefault(); committed = true; renderEntityDict(); }
+      });
+    }
+
+    function addEntityDictEntry() {
+      var input = document.getElementById('entity-dict-input');
+      var v = input.value.trim();
+      input.value = '';
+      if (!v || v.toLowerCase() === 'unfiltered') return;
+      if (entityDict.some(function (e) { return e.toLowerCase() === v.toLowerCase(); })) return;
+      entityDict.push(v);
+      renderEntityDict();
+      save();
+    }
+    document.getElementById('entity-dict-add-btn').addEventListener('click', addEntityDictEntry);
+    document.getElementById('entity-dict-input').addEventListener('keydown', function (e) {
+      if (e.key === 'Enter') { e.preventDefault(); addEntityDictEntry(); }
+    });
+
+    window.voxlog = window.voxlog || {};
+    window.voxlog.onLLMStage = function (p) {
+      var stage = document.getElementById('stage-llm');
+      if (stage) stage.textContent = p.stage;
+    };
+    window.voxlog.onLLMProgress = function (p) {
+      var prog = document.getElementById('prog-llm');
+      if (prog) {
+        prog.style.display = 'inline-block';
+        if (p.total > 0) prog.value = Math.round((p.downloaded / p.total) * 100);
+      }
+    };
+    window.voxlog.onLLMDownloadDone = function (p) {
+      if (!p.error) llmModel.downloaded = true;
+      renderLLMModel();
+      if (p.error) document.getElementById('status').textContent = 'Download failed: ' + p.error;
+    };
+    window.voxlog.onProgress = function (p) {
+      var prog = document.getElementById('prog-' + p.file_family + '-' + p.file_variant);
+      if (prog && p.total > 0) prog.value = Math.round((p.downloaded / p.total) * 100);
+    };
+    window.voxlog.onDownloadDone = function (p) {
+      var prog = document.getElementById('prog-' + p.family + '-' + p.variant);
+      if (prog) prog.value = 100;
+      models.forEach(function (m) {
+        if (m.family === p.family && m.variant === p.variant && !p.error) m.downloaded = true;
+      });
+      renderModels();
+      renderCapabilities();
+      syncModelTest();
+      if (p.error) document.getElementById('status').textContent = 'Download failed: ' + p.error;
+    };
+
+    // --- hotkey capture -------------------------------------------------
+    var capturingBtn = null;
+    var KEY_NAMES = { dictate_key: 'Dictate', history_key: 'History', meeting_key: 'Meeting' };
+
+    function showKeyLabel(field) {
+      window.keyLabel(keys[field] || '').then(function (label) {
+        document.getElementById(field + '_label').textContent = label;
+      });
+    }
+
+    document.querySelectorAll('.capture-btn').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        if (capturingBtn) return;
+        capturingBtn = btn;
+        btn.disabled = true;
+        btn.textContent = 'Press a key or combination…';
+        window.captureKey();
+      });
+    });
+
+    window.voxlog.onKeyCaptured = function (p) {
+      var btn = capturingBtn;
+      capturingBtn = null;
+      if (!btn) return;
+      btn.disabled = false;
+      btn.textContent = 'Set…';
+      if (p.error) {
+        document.getElementById('status').textContent = 'No key captured: ' + p.error;
+        return;
+      }
+      // One key cannot mean two things: whichever binding is captured second
+      // would simply never fire, with nothing on screen saying why. Keep the
+      // old binding and name the one already using the key.
+      var target = btn.dataset.target;
+      var clash = Object.keys(keys).filter(function (f) {
+        return f !== target && keys[f] && keys[f] === p.keyId;
+      })[0];
+      if (clash) {
+        window.keyLabel(p.keyId).then(function (label) {
+          document.getElementById('status').textContent =
+            label + ' is already the ' + KEY_NAMES[clash] + ' key.';
+        });
+        return;
+      }
+
+      keys[target] = p.keyId;
+      showKeyLabel(target);
+      save();
+    };
+
+    // --- mic test -------------------------------------------------------
+    var METER_BARS = 12;
+    var meterLevel = 0;
+    var meterSmooth = 0;
+    var micTesting = false;
+
+    (function buildMeter() {
+      var meter = document.getElementById('mic-meter');
+      for (var i = 0; i < METER_BARS; i++) {
+        meter.appendChild(document.createElement('div')).className = 'bar';
+      }
+    })();
+
+    window.voxlog.onMicLevel = function (v) {
+      meterLevel = Math.max(0, Math.min(1, v));
+    };
+
+    function meterFrame() {
+      // Same ballistics as the recording overlay: instant rise so a peak is
+      // never under-reported, fixed decay so the bars do not strobe. The
+      // symmetric ease this replaced also smoothed the way UP, which read as
+      // an average of the last moment rather than the moment itself.
+      var want = micTesting ? meterLevel : 0;
+      meterSmooth = want > meterSmooth ? want : Math.max(want, meterSmooth - 0.035);
+      var bars = document.querySelectorAll('#mic-meter .bar');
+      for (var i = 0; i < bars.length; i++) {
+        // Each bar lights up past its own threshold, so the meter reads
+        // left-to-right like a level bar rather than all bars moving as one.
+        var threshold = i / bars.length;
+        var on = meterSmooth > threshold;
+        bars[i].style.height = (on ? 30 + 70 * Math.min(1, (meterSmooth - threshold) * 3) : 8) + '%';
+        bars[i].style.background = 'var(' + (i > bars.length - 3 ? '--red' : (i > bars.length - 6 ? '--yellow' : '--green')) + ')';
+        bars[i].style.opacity = on ? 1 : 0.25;
+      }
+      requestAnimationFrame(meterFrame);
+    }
+    requestAnimationFrame(meterFrame);
+
+    document.getElementById('mic-test-btn').addEventListener('click', function () {
+      var btn = this;
+      if (micTesting) {
+        micTesting = false;
+        btn.textContent = 'Test';
+        btn.classList.remove('recording');
+        window.stopMicTest();
+        return;
+      }
+      micTesting = true;
+      btn.textContent = 'Stop';
+      // Same red as the menu bar icon and the comparison button: an open
+      // microphone should look the same everywhere it can be opened.
+      btn.classList.add('recording');
+      window.startMicTest(
+        document.getElementById('input_device').value,
+        parseFloat(document.getElementById('mic_gain').value)
+      ).catch(function (err) {
+        micTesting = false;
+        btn.textContent = 'Test';
+        document.getElementById('status').textContent = 'Mic test failed: ' + err;
+      });
+    });
+
+    // One "Sensitivity" control over two different mechanisms, because they
+    // are two halves of the same knob and nobody wants to reason about which
+    // one they need:
+    //
+    //   0-100%   the input DEVICE's own volume, through CoreAudio. This is
+    //            the real one -- it decides how much signal the microphone
+    //            produces in the first place.
+    //   100-200% the device left at maximum, and the recorded samples scaled
+    //            on top. Genuinely doubles the waveform at 200%, it just
+    //            cannot add detail the converter never captured, so it also
+    //            doubles the hiss.
+    //
+    // The device volume is not stored in our settings: macOS remembers it,
+    // and a second copy could only disagree with the first. Only the
+    // multiplier above 100% is ours to keep.
+    var micVolumeSettable = false;
+
+    function applySensitivity(pct) {
+      var deviceVolume = Math.min(100, pct) / 100;
+      var gain = pct > 100 ? pct / 100 : 1.0;
+      if (!micVolumeSettable) {
+        // No device volume to set, so the whole range is the multiplier.
+        gain = pct / 100;
+      } else {
+        window.setMicVolume(deviceVolume);
+      }
+      document.getElementById('mic_gain').value = gain;
+      document.getElementById('mic_volume_val').textContent = pct + '%';
+      document.getElementById('mic_volume_note').textContent = pct > 100 && micVolumeSettable
+        ? 'Microphone at full, signal scaled ' + (pct / 100).toFixed(2) + '\u00d7 on top'
+        : (micVolumeSettable
+            ? "The microphone's own level, the same one System Settings shows"
+            : 'This device has no volume of its own, so the signal is scaled after recording');
+      save();
+    }
+
+    function loadMicVolume() {
+      window.micVolume().then(function (info) {
+        micVolumeSettable = !!(info.settable && info.readable);
+        var gain = parseFloat(settings.mic_gain) || 1.0;
+        // Show where the knob actually stands: the stored multiplier if it is
+        // doing anything, otherwise wherever the device volume sits.
+        var pct = micVolumeSettable
+          ? (gain > 1 ? Math.round(gain * 100) : Math.round(info.value * 100))
+          : Math.round(gain * 100);
+        document.getElementById('mic_volume').value = pct;
+        document.getElementById('mic_volume_val').textContent = pct + '%';
+        document.getElementById('mic_volume_note').textContent = micVolumeSettable
+          ? "The microphone's own level, the same one System Settings shows"
+          : 'This device has no volume of its own, so the signal is scaled after recording';
+      });
+    }
+
+    document.getElementById('mic_volume').addEventListener('input', function (e) {
+      applySensitivity(parseInt(e.target.value, 10));
+    });
+    document.getElementById('mic_volume').addEventListener('change', restartMicTestIfRunning);
+
+    function restartMicTestIfRunning() {
+      if (!micTesting) return;
+      window.stopMicTest().then(function () {
+        return window.startMicTest(
+          document.getElementById('input_device').value,
+          parseFloat(document.getElementById('mic_gain').value)
+        );
+      });
+    }
+
+    // --- transcripts directory ------------------------------------------
+    // Stored as the user's own value ('' meaning "use the default"), but
+    // always DISPLAYED as a real path so the field never looks unset.
+    var transcriptsDir = '';
+    var defaultDir = '';
+
+    function showTranscriptsDir() {
+      var el = document.getElementById('transcripts_dir_display');
+      if (transcriptsDir) {
+        el.textContent = transcriptsDir;
+      } else {
+        el.textContent = defaultDir ? defaultDir + '  (default)' : '(default)';
+      }
+    }
+
+    window.defaultTranscriptsDir().then(function (d) {
+      defaultDir = d || '';
+      showTranscriptsDir();
+    });
+
+    document.getElementById('transcripts_dir_btn').addEventListener('click', function () {
+      window.chooseDirectory().then(function (dir) {
+        if (!dir) return; // cancelled
+        transcriptsDir = dir;
+        showTranscriptsDir();
+        save();
+      });
+    });
+    document.getElementById('transcripts_dir_reset').addEventListener('click', function () {
+      transcriptsDir = '';
+      showTranscriptsDir();
+      save();
+    });
+
+    // --- form -----------------------------------------------------------
+    document.getElementById('input_device').addEventListener('change', restartMicTestIfRunning);
+
+    // --- model comparison -----------------------------------------------
+    // Pointless with one model: there is nothing to compare it against, and
+    // offering the button anyway would promise something it cannot deliver.
+    var modelTestRecording = false;
+
+    function downloadedModelCount() {
+      return models.filter(function (m) { return m.downloaded; }).length;
+    }
+
+    function syncModelTest() {
+      var n = downloadedModelCount();
+      var btn = document.getElementById('model-test-btn');
+      btn.disabled = n < 2 || modelTestRecording === 'working';
+      document.getElementById('model-test-note').textContent = n < 2
+        ? 'Needs at least two downloaded models to compare'
+        : 'Speak after pressing Record, then press Stop';
+    }
+
+    function renderModelTest(rows) {
+      var el = document.getElementById('model-test-results');
+      var html = '';
+      rows.forEach(function (r) {
+        html += '<div style="margin-bottom:10px">' +
+          '<div><span class="model-name">' + r.family + '</span> ' +
+          '<span class="note">' + r.variant + '</span>' +
+          (r.error ? '' : ' <span class="note">\u00b7 ' + r.seconds.toFixed(1) + 's to transcribe, ' +
+            r.load_seconds.toFixed(1) + 's to load</span>') + '</div>' +
+          '<div style="margin-top:2px">' +
+          (r.error ? '<span class="pill-bad">' + r.error + '</span>'
+                   : (r.text ? escapeHTML(r.text) : '<span class="note">(nothing recognized)</span>')) +
+          '</div></div>';
+      });
+      el.innerHTML = html;
+      el.style.display = '';
+    }
+
+    function escapeHTML(s) {
+      return String(s).replace(/[&<>"]/g, function (c) {
+        return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c];
+      });
+    }
+
+    document.getElementById('model-test-btn').addEventListener('click', function () {
+      var btn = document.getElementById('model-test-btn');
+      if (!modelTestRecording) {
+        window.startModelTest().then(function () {
+          modelTestRecording = true;
+          btn.textContent = 'Stop';
+          btn.classList.add('recording');
+          document.getElementById('model-test-results').style.display = 'none';
+        }).catch(function (e) {
+          document.getElementById('status').textContent = 'Could not record: ' + e;
+        });
+        return;
+      }
+      modelTestRecording = 'working';
+      btn.textContent = 'Transcribing…';
+      btn.classList.remove('recording');
+      btn.classList.add('transcribing');
+      syncModelTest();
+      window.runModelTest().then(function (rows) {
+        renderModelTest(rows);
+      }).catch(function (e) {
+        document.getElementById('status').textContent = 'Test failed: ' + e;
+      }).then(function () {
+        modelTestRecording = false;
+        btn.textContent = 'Record';
+        btn.classList.remove('transcribing');
+        syncModelTest();
+      });
+    });
+
+    function buildPayload() {
+      var model = currentModel();
+      return {
+        language: document.getElementById('language').value,
+        model_family: model[0],
+        model_variant: model[1],
+        dictate_key: keys.dictate_key,
+        history_key: keys.history_key,
+        meeting_key: keys.meeting_key,
+        dictate_activation: document.getElementById('dictate_activation').value,
+        meeting_transcribe: document.getElementById('meeting_transcribe').value,
+        keep_meeting_audio: document.getElementById('keep_meeting_audio').checked,
+        keep_dictation_audio: document.getElementById('keep_dictation_audio').checked,
+        input_device: document.getElementById('input_device').value,
+        output_mode: document.getElementById('output_mode').value,
+        mic_gain: parseFloat(document.getElementById('mic_gain').value),
+        live_streaming_text: document.getElementById('live_streaming_text').checked,
+        overlay_position: document.getElementById('overlay_position').value,
+        indicator_style: document.getElementById('indicator_style').value,
+        indicator_wave: document.getElementById('indicator_wave').checked,
+        indicator_timer: document.getElementById('indicator_timer').checked,
+        indicator_mode_label: document.getElementById('indicator_mode_label').checked,
+        indicator_stop_button: document.getElementById('indicator_stop_button').checked,
+        indicator_solid: document.getElementById('indicator_solid').checked,
+        indicator_outline: document.getElementById('indicator_outline').checked,
+        indicator_wave_width: parseInt(document.getElementById('indicator_wave_width').value, 10),
+        indicator_wave_height: parseInt(document.getElementById('indicator_wave_height').value, 10),
+        capture_system_audio: document.getElementById('capture_system_audio').checked,
+        separate_speakers: document.getElementById('separate_speakers').checked,
+        audio_retention: document.getElementById('audio_retention').value,
+        audio_max_gb: parseFloat(document.getElementById('audio_max_gb').value),
+        escape_cancels: document.getElementById('escape_cancels').checked,
+        show_transcribing_overlay: document.getElementById('show_transcribing_overlay').checked,
+        history_click_action: document.getElementById('history_click_action').value,
+        history_retention: document.getElementById('history_retention').value,
+        transcripts_dir: transcriptsDir,
+        task_hub_enabled: document.getElementById('task_hub_enabled').checked,
+        entity_dictionary: entityDict
+      };
+    }
+
+    var saveTimer = null;
+    function save() {
+      // Debounced: dragging the gain slider or flipping a radio fires many
+      // events in a row; one save per pause in activity is plenty.
+      clearTimeout(saveTimer);
+      saveTimer = setTimeout(function () {
+        window.saveSettings(buildPayload()).then(function () {
+          document.getElementById('status').textContent = 'Saved.';
+          setTimeout(function () { document.getElementById('status').textContent = ''; }, 1500);
+        });
+      }, 300);
+    }
+
+    // Separating speakers needs two streams to separate, so the row is only
+    // live while system audio is being captured. Disabled rather than hidden:
+    // hiding it would make the option look like it does not exist, when the
+    // real answer is "turn on the row above first".
+    function syncSeparateSpeakers() {
+      var on = document.getElementById('capture_system_audio').checked;
+      var box = document.getElementById('separate_speakers');
+      box.disabled = !on;
+      document.getElementById('separate-speakers-wrap').style.opacity = on ? '' : '0.45';
+    }
+    document.getElementById('capture_system_audio').addEventListener('change', syncSeparateSpeakers);
+
+    // A style owns where it goes and how much room it has, so the controls
+    // it cannot honor are taken away rather than left to do nothing. That is
+    // the same rule the language picker follows for models that ignore it.
+    var INDICATOR_NOTES = {
+      capsule: 'State, level and mode. Placed at the top centre it squares its shoulders and meets the menu bar.',
+      transcript: 'A panel built around the words themselves, with the level as a band under them.'
+    };
+    var INDICATOR_STYLES = [
+      ['capsule', 'Capsule'], ['transcript', 'Transcript']
+    ];
+    // Same densities the overlay uses, for the same reason: a cuff with seven
+    // fat bars looks like a capsule that grew.
+    var WAVE_BARS = { capsule: 16, transcript: 26 };
+    var SAMPLE_TEXT = 'треба закрити це до пʼятниці';
+
+    // The indicator's markup, built once here and once in overlay.html. It is
+    // the same shape both times; only the class list differs, and that comes
+    // from the same six switches either way.
+    function indicatorHTML(style) {
+      var wave = '';
+      for (var i = 0; i < (WAVE_BARS[style] || 16); i++) { wave += '<i></i>'; }
+      var words = SAMPLE_TEXT.split(' ');
+      var live = '';
+      for (var j = 0; j < words.length; j++) {
+        var age = words.length - 1 - j;
+        live += '<w' + (age < 4 ? ' class="n' + age + '"' : '') + '>' + words[j] + '</w> ';
+      }
+      return '<div class="ind">' +
+        '<span class="dot"></span>' +
+        '<div class="wave">' + wave + '</div>' +
+        '<div class="live">' + live + '</div>' +
+        '<div class="foot"><span class="dot"></span><span class="mode">Dictation</span>' +
+          '<span class="kbd">' + dictateLabel() + '</span><span class="timer">0:07</span>' +
+          '<span class="grow"></span><span class="stop">&#10005;</span></div>' +
+        '<span class="mode">Dictation</span>' +
+        '<span class="kbd">' + dictateLabel() + '</span>' +
+        '<span class="timer">0:07</span>' +
+        '<span class="stop">&#10005;</span>' +
+      '</div>';
+    }
+
+    function dictateLabel() {
+      var el = document.getElementById('dictate_key_label');
+      return (el && el.textContent) || '';
+    }
+
+    // The class list, built exactly as IndicatorParts.classList does in Go.
+    // If the two ever disagree the preview lies, which is worse than having
+    // no preview -- so this is the one thing worth keeping literal.
+    function indicatorClasses(style) {
+      var on = ['style-' + style];
+      [['indicator_wave', 'on-wave'], ['indicator_timer', 'on-timer'],
+       ['indicator_mode_label', 'on-mode'], ['indicator_stop_button', 'on-stop'],
+       ['indicator_solid', 'on-solid'], ['indicator_outline', 'on-outline']
+      ].forEach(function (pair) {
+        if (document.getElementById(pair[0]).checked) on.push(pair[1]);
+      });
+      return on.join(' ');
+    }
+
+    function renderStyleCards() {
+      var chosen = document.getElementById('indicator_style').value;
+      var host = document.getElementById('style-cards');
+      if (!host.children.length) {
+        host.innerHTML = INDICATOR_STYLES.map(function (s) {
+          // Each swatch is a real indicator with the parts a thumbnail can
+          // actually show; the big preview above is where the switches land.
+          return '<button type="button" class="style-card" data-style="' + s[0] + '">' +
+            '<span class="swatch"><span class="scale ' + s[0] + '-swatch"></span></span>' +
+            '<span class="name">' + s[1] + '</span></button>';
+        }).join('');
+        host.querySelectorAll('.style-card').forEach(function (card) {
+          var wrap = card.querySelector('.scale');
+          wrap.className = 'scale style-' + card.dataset.style + ' on-wave on-solid' +
+            ' at-' + (STYLE_DEFAULT_POSITION[card.dataset.style] || 'top_centre');
+          wrap.innerHTML = indicatorHTML(card.dataset.style);
+        });
+        host.addEventListener('click', function (e) {
+          var card = e.target.closest('.style-card');
+          if (!card) return;
+          document.getElementById('indicator_style').value = card.dataset.style;
+          // A freshly chosen style starts where it belongs -- picking "cuff"
+          // should not leave it in the corner the last style was moved to.
+          var def = STYLE_DEFAULT_POSITION[card.dataset.style];
+          if (def) document.getElementById('overlay_position').value = def;
+          syncIndicatorStyle();
+          // Setting .value from script fires no change event, so the form's
+          // own listener never hears this one.
+          save();
+        });
+      }
+      host.querySelectorAll('.style-card').forEach(function (card) {
+        card.setAttribute('aria-pressed', String(card.dataset.style === chosen));
+      });
+    }
+
+    // Where each style wants to be when you first pick it. Mirrors
+    // IndicatorStyles[...].DefaultPosition in Go; the user moves it from
+    // there and that choice sticks.
+    var STYLE_DEFAULT_POSITION = {
+      capsule: 'top_centre', transcript: 'bottom_centre'
+    };
+    var POSITION_NOTES = {
+      cursor: 'Placed beside the pointer once, when the take starts.',
+      follow: 'Keeps up with the pointer for as long as you are speaking.',
+      top_centre: 'Flush under the menu bar, where it meets the notch.',
+      bottom_centre: 'Centred above the Dock.',
+      top_left: 'Top left of the usable screen.',
+      top_right: 'Top right of the usable screen.',
+      bottom_left: 'Bottom left, above the Dock.',
+      bottom_right: 'Bottom right, above the Dock.',
+      screen_bottom_left: 'On the very bottom edge, left of the Dock.',
+      screen_bottom_right: 'On the very bottom edge, right of the Dock.'
+    };
+
+    function renderIndicatorPreview() {
+      var style = document.getElementById('indicator_style').value;
+      var pos = document.getElementById('overlay_position').value;
+      var mount = document.getElementById('indicator-preview');
+      // at-<pos> is not decoration: the capsule squares its shoulders when
+      // it is at the top centre, and the component reads that from here.
+      mount.className = 'preview-mount ' + indicatorClasses(style) + ' at-' + pos;
+      mount.innerHTML = indicatorHTML(style);
+      // Same two variables Go pushes into the overlay, so the picture is the
+      // size the thing will be.
+      var w = document.getElementById('indicator_wave_width').value;
+      var h = document.getElementById('indicator_wave_height').value;
+      mount.style.setProperty('--wave-w', w + 'px');
+      mount.style.setProperty('--wave-h', h + 'px');
+      document.getElementById('indicator_wave_width_val').textContent = w + ' pt';
+      document.getElementById('indicator_wave_height_val').textContent = h + ' pt';
+
+      document.getElementById('overlay_position_note').textContent =
+        POSITION_NOTES[pos] || '';
+      document.querySelectorAll('#place-map .place-spot, .place-chip')
+        .forEach(function (b) {
+          b.setAttribute('aria-pressed', String(b.dataset.pos === pos));
+        });
+    }
+
+    document.querySelector('.place-wrap').addEventListener('click', function (e) {
+      var b = e.target.closest('[data-pos]');
+      if (!b) return;
+      document.getElementById('overlay_position').value = b.dataset.pos;
+      renderIndicatorPreview();
+      // A hidden input assigned from script fires no change event.
+      save();
+    });
+
+    // One clock for every wave on the page -- the preview's and the five
+    // swatches' -- driven by a synthesised voice rather than the microphone.
+    // Settings must not open the input device just to animate a picture.
+    var previewLevel = 0, previewPhase = 0;
+    var sylEnd = 0, sylPeak = 0, quietUntil = 0;
+    function previewFrame(now) {
+      previewPhase += 1;
+      var target = 0;
+      if (now >= quietUntil) {
+        if (now > sylEnd) {
+          if (Math.random() < 0.11) {
+            quietUntil = now + 450 + Math.random() * 800;
+          } else {
+            sylPeak = 0.35 + Math.random() * 0.65;
+            sylEnd = now + 150 + Math.random() * 260;
+          }
+        }
+        target = sylPeak * Math.max(0, Math.min(1, (sylEnd - now) / 300));
+      }
+      // The overlay's own ballistics: rise instantly, fall on a fixed slope.
+      previewLevel = target > previewLevel
+        ? target
+        : Math.max(target, previewLevel - 0.035);
+
+      document.querySelectorAll('#indicator-preview-stage .wave, #style-cards .wave')
+        .forEach(function (row) {
+          var kids = row.children, n = kids.length;
+          var mirrored = !row.closest('.style-bars');
+          for (var i = 0; i < n; i++) {
+            var h;
+            if (mirrored) {
+              var d = n > 1 ? Math.abs(i - (n - 1) / 2) / ((n - 1) / 2) : 0;
+              var wob = 0.75 + 0.25 * Math.sin(previewPhase * 0.22 + i * 1.1);
+              h = Math.max(6, Math.min(100, previewLevel * Math.pow(1 - d, 1.5) * wob * 118));
+            } else {
+              var br = 0.04 * (0.5 + 0.5 * Math.sin(previewPhase * 0.083 + i * 0.9));
+              var w2 = 0.8 + 0.2 * Math.sin(previewPhase * 0.2 + i * 1.3);
+              h = Math.max(8, Math.min(100, (br + 0.92 * previewLevel * w2 + 0.02) * 100));
+            }
+            kids[i].style.height = h + '%';
+          }
+        });
+      requestAnimationFrame(previewFrame);
+    }
+    if (!matchMedia('(prefers-reduced-motion: reduce)').matches) {
+      requestAnimationFrame(previewFrame);
+    }
+
+    // Every switch redraws the preview, which is the only way a switch called
+    // "Outline" means anything before you have used it.
+    ['indicator_wave', 'indicator_timer', 'indicator_mode_label',
+     'indicator_stop_button', 'indicator_solid', 'indicator_outline'
+    ].forEach(function (id) {
+      document.getElementById(id).addEventListener('change', renderIndicatorPreview);
+    });
+    // Dragging redraws every frame; the save behind it is already debounced.
+    ['indicator_wave_width', 'indicator_wave_height'].forEach(function (id) {
+      document.getElementById(id).addEventListener('input', renderIndicatorPreview);
+    });
+
+    function syncIndicatorStyle() {
+      var style = document.getElementById('indicator_style').value;
+      document.getElementById('indicator_style_note').textContent =
+        INDICATOR_NOTES[style] || '';
+      renderStyleCards();
+      renderIndicatorPreview();
+    }
+    document.getElementById('indicator_style').addEventListener('change', syncIndicatorStyle);
+
+    // Sidebar. Every pane stays in the DOM whichever one is showing, so the
+    // form is always complete: collect() reads inputs the user may never
+    // have looked at, and hiding a pane must not take its values with it.
+    // Scoped to the fragment: the window's own sidebar uses the same role
+    // and the same aria-selected, and an unscoped querySelectorAll would
+    // deselect it every time a settings category is clicked.
+    document.getElementById('settings-subnav').addEventListener('click', function (e) {
+      var item = e.target.closest('.subnav-item');
+      if (!item) return;
+      var pane = item.dataset.subpane;
+      document.querySelectorAll('#settings-subnav .subnav-item').forEach(function (n) {
+        n.setAttribute('aria-selected', String(n === item));
+      });
+      document.querySelectorAll('#settings-pane .subpane').forEach(function (p) {
+        p.classList.toggle('on', p.dataset.subpane === pane);
+      });
+      document.getElementById('settings-subcontent').scrollTop = 0;
+    });
+
+    document.getElementById('form').addEventListener('change', save);
+    document.getElementById('form').addEventListener('input', save);
+    document.getElementById('form').addEventListener('submit', function (e) {
+      e.preventDefault();
+      save();
+    });
+
+    function fillDevices() {
+      return window.inputDevices().then(function (names) {
+        var sel = document.getElementById('input_device');
+        var html = '<option value="">System default</option>';
+        (names || []).forEach(function (n) {
+          html += '<option value="' + n + '">' + n + '</option>';
+        });
+        sel.innerHTML = html;
+        sel.value = settings.input_device || '';
+      });
+    }
+
+    function fillForm() {
+      document.getElementById('language').value = settings.language || 'auto';
+      document.getElementById('output_mode').value = settings.output_mode || 'paste';
+      // "paste_copy" is the one value the select cannot show: it dates from
+      // the popover, and the window's paste already leaves the clipboard as
+      // it found it. Read as plain paste, which is what it asked for.
+      var confirmAction = settings.history_click_action;
+      document.getElementById('history_click_action').value =
+        confirmAction === 'none' ? 'none'
+          : (confirmAction === 'paste' || confirmAction === 'paste_copy') ? 'paste'
+          : 'copy';
+      document.getElementById('history_retention').value = settings.history_retention || 'disabled';
+      transcriptsDir = settings.transcripts_dir || '';
+      showTranscriptsDir();
+      document.getElementById('mic_gain').value = settings.mic_gain || 1.0;
+      document.getElementById('live_streaming_text').checked = !!settings.live_streaming_text;
+      document.getElementById('overlay_position').value =
+        settings.overlay_position || STYLE_DEFAULT_POSITION[settings.indicator_style] || 'top_centre';
+      document.getElementById('indicator_style').value = settings.indicator_style || 'capsule';
+      document.getElementById('indicator_wave').checked = !!settings.indicator_wave;
+      document.getElementById('indicator_timer').checked = !!settings.indicator_timer;
+      document.getElementById('indicator_mode_label').checked = !!settings.indicator_mode_label;
+      document.getElementById('indicator_stop_button').checked = !!settings.indicator_stop_button;
+      document.getElementById('indicator_solid').checked = !!settings.indicator_solid;
+      document.getElementById('indicator_outline').checked = !!settings.indicator_outline;
+      document.getElementById('indicator_wave_width').value = settings.indicator_wave_width || 96;
+      document.getElementById('indicator_wave_height').value = settings.indicator_wave_height || 16;
+      syncIndicatorStyle();
+      document.getElementById('capture_system_audio').checked = !!settings.capture_system_audio;
+      document.getElementById('separate_speakers').checked = !!settings.separate_speakers;
+      document.getElementById('escape_cancels').checked = !!settings.escape_cancels;
+      document.getElementById('show_transcribing_overlay').checked = !!settings.show_transcribing_overlay;
+      document.getElementById('dictate_activation').value = settings.dictate_activation || 'toggle';
+      document.getElementById('meeting_transcribe').value = settings.meeting_transcribe || 'stop';
+      document.getElementById('keep_meeting_audio').checked = settings.keep_meeting_audio !== false;
+      document.getElementById('keep_dictation_audio').checked = settings.keep_dictation_audio !== false;
+      document.getElementById('audio_retention').value = settings.audio_retention || 'disabled';
+      document.getElementById('audio_max_gb').value = settings.audio_max_gb || 0;
+      syncSeparateSpeakers();
+      refreshRecordingsSize();
+
+      keys.dictate_key = settings.dictate_key || '';
+      keys.history_key = settings.history_key || '';
+      keys.meeting_key = settings.meeting_key || '';
+      showKeyLabel('dictate_key');
+      showKeyLabel('history_key');
+      showKeyLabel('meeting_key');
+      // Redraw once the labels exist: the preview shows the dictate shortcut,
+      // and syncIndicatorStyle ran above, before showKeyLabel had filled it in.
+      syncIndicatorStyle();
+
+      document.getElementById('task_hub_enabled').checked = !!settings.task_hub_enabled;
+      entityDict = (settings.entity_dictionary || []).slice();
+      // One-time migration convenience: tasks classified before projects
+      // became a closed list may carry names the model made up on its own.
+      // Surface those here, editable/removable, instead of the user having
+      // to retype every one by hand to start turning them into the real
+      // list. "Unfiltered" itself is the fixed catch-all, never a project.
+      var seeded = false;
+      ((window.voxlog && window.voxlog.tasks) || []).forEach(function (t) {
+        if (!t.entity || t.entity.toLowerCase() === 'unfiltered') return;
+        if (entityDict.some(function (e) { return e.toLowerCase() === t.entity.toLowerCase(); })) return;
+        entityDict.push(t.entity);
+        seeded = true;
+      });
+      renderEntityDict();
+      if (seeded) save();
+
+      renderModels();
+      renderLLMModel();
+      renderCapabilities();
+      fillDevices();
+    }
+
+    // --- permissions ----------------------------------------------------
+    function renderPermStatus(id, granted) {
+      var el = document.getElementById(id);
+      el.textContent = granted ? 'Granted' : 'Not granted';
+      el.className = granted ? 'pill-ok' : 'pill-bad';
+    }
+
+    // macOS answers AXIsProcessTrusted / CGPreflightScreenCaptureAccess
+    // once per process and caches it, so those two can keep reading
+    // "Not granted" after the user has just granted them -- only a relaunch
+    // clears that. The microphone check is live, so polling does update it
+    // on its own.
+    var permPollTimer = null;
+    function startPermPolling() {
+      if (permPollTimer) return;
+      permPollTimer = setInterval(refreshPermissions, 2000);
+    }
+
+    function refreshPermissions() {
+      window.checkPermissions().then(function (p) {
+        var accessOK = p.accessibility === 'granted';
+        var micOK = p.microphone === 'authorized';
+        var screenOK = p.screenrecording === 'granted';
+        renderPermStatus('perm-accessibility-status', accessOK);
+        renderPermStatus('perm-microphone-status', micOK);
+        var screenEl = document.getElementById('perm-screenrecording-status');
+        if (screenOK) {
+          screenEl.textContent = 'Granted';
+          screenEl.className = 'pill-ok';
+        } else {
+          // Optional: absent is a normal state, not an error, so it gets
+          // neutral styling rather than the red "not granted" pill.
+          // Says "restart to apply" rather than a flat denial, because the
+          // cached preflight answer means a fresh grant genuinely cannot
+          // show up until the next launch.
+          screenEl.textContent = 'Not granted (restart after granting)';
+          screenEl.className = 'note';
+        }
+        // Permissions used to fold themselves away once granted, because
+        // they sat at the top of a single scrolling column and pushed
+        // everything else down. In their own pane there is nothing to get
+        // out of the way of, and a section that hides itself is worse than
+        // one nobody opens: the answer to "did I grant that?" stops being
+        // somewhere you can look.
+
+        // Show the restart affordance whenever ANYTHING is still reading as
+        // denied -- including the optional Screen Recording. macOS caches
+        // both AXIsProcessTrusted and CGPreflightScreenCaptureAccess for the
+        // life of the process, so a just-granted permission cannot turn
+        // green here without a relaunch, and hiding the button left the
+        // user with a granted permission and no way to make the app see it.
+        document.getElementById('restart-row').style.display =
+          (accessOK && micOK && screenOK) ? 'none' : '';
+      });
+    }
+
+    document.getElementById('reveal-models').addEventListener('click', function () {
+      window.revealModels();
+    });
+
+    // The number shown is a query, not a cache: it comes straight from
+    // window.recordingsSize every time the pane opens, and again after Free
+    // up space runs, so it never drifts from what the sweep just saw on disk.
+    function refreshRecordingsSize() {
+      window.recordingsSize().then(function (r) {
+        document.getElementById('recordings-size-display').textContent = r.human;
+      });
+    }
+
+    document.getElementById('free-up-space-btn').addEventListener('click', function () {
+      var btn = this;
+      btn.disabled = true;
+      window.freeUpSpace().then(refreshRecordingsSize).finally(function () {
+        btn.disabled = false;
+      });
+    });
+
+    document.getElementById('restart-app').addEventListener('click', function () {
+      document.getElementById('status').textContent = 'Restarting…';
+      window.restartApp();
+    });
+
+    document.getElementById('perm-accessibility-btn').addEventListener('click', function () {
+      window.requestPermission('accessibility').then(function () {
+        document.getElementById('status').textContent =
+          'If a system dialog appeared, grant access there, then restart Voxlog.';
+        setTimeout(refreshPermissions, 500);
+      });
+    });
+    document.getElementById('perm-microphone-btn').addEventListener('click', function () {
+      window.requestPermission('microphone').then(function () {
+        setTimeout(refreshPermissions, 800);
+      });
+    });
+    document.getElementById('perm-screenrecording-btn').addEventListener('click', function () {
+      window.requestPermission('screenrecording').then(function () {
+        document.getElementById('status').textContent =
+          'Grant access in System Settings, then restart Voxlog.';
+        setTimeout(refreshPermissions, 500);
+      });
+    });
+
+    // Scoped to the fragment: the shell splices this in after its own
+    // DOMContentLoaded has already fired, so nothing would ever call a
+    // handler bound to that event. The shell calls this directly once the
+    // fragment is in the document.
+    window.initSettingsPane = function () {
+      settings = (window.voxlog && window.voxlog.settings) || {};
+      models = (window.voxlog && window.voxlog.models) || [];
+      llmModel = (window.voxlog && window.voxlog.llmModel) || { downloaded: false };
+      fillForm();
+      syncModelTest();
+      loadMicVolume();
+      refreshPermissions();
+      startPermPolling();
+    };
+    window.addEventListener('pagehide', function () {
+      window.settingsWindowClosed && window.settingsWindowClosed();
+    });
+  </script>
+  </div>

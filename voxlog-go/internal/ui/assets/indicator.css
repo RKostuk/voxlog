@@ -1,0 +1,184 @@
+/* The recording indicator, as one component.
+   Shared by overlay.html, which is the real thing, and by the preview in
+   the Settings pane of main.html -- spliced into both by Go (see
+   injectAsset), so a style can never look one way while you are choosing it
+   and another way once it is running.
+
+   Selectors key off the classes Go builds from the settings struct
+   ("style-capsule at-top_centre on-wave on-mode"). Those land on <body> in the
+   overlay and on the preview wrapper in Settings, so nothing here may
+   name an element -- only the classes. */
+
+/* State lives in a colour, in every layout: grey ready, red listening, blue
+   decoding. It is the one thing a user learns once, so no style is allowed
+   to express it differently. The variable sits on the indicator itself so a
+   preview can host several at once without them sharing a state. */
+.ind { --sig: #ff453a; }
+.transcribing .ind { --sig: #0a84ff; }
+
+.ind {
+  display: flex; align-items: center; gap: 9px;
+  color: #f2f2f5; white-space: nowrap;
+  background: rgba(16, 16, 20, 0.72);
+  -webkit-backdrop-filter: saturate(175%) blur(24px);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.16),
+              0 0 0 0.5px rgba(255,255,255,0.10),
+              0 12px 32px rgba(0,0,0,0.42);
+}
+.on-solid .ind {
+  background: #000;
+  -webkit-backdrop-filter: none;
+}
+.on-outline .ind {
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.20),
+              0 0 0 1px rgba(255,255,255,0.30),
+              0 12px 32px rgba(0,0,0,0.45);
+}
+
+/* ── Parts. Hidden until Go turns them on. ─────────────────────────── */
+.dot { width: 7px; height: 7px; border-radius: 50%; background: var(--sig);
+       flex: none; transition: background 0.3s ease; }
+/* Size comes from the settings, as two variables Go sets on the same element
+   that carries the class list. The fallbacks are the defaults, so the wave is
+   never invisible where nothing sets them (a style card in Settings, say). */
+.wave { display: none; align-items: center; gap: 2.5px;
+        height: var(--wave-h, 16px);
+        width: var(--wave-w, 96px); flex: none; }
+.wave i { flex: 1; background: var(--sig); border-radius: 999px; display: block;
+          height: 8%; min-height: 2px;
+          box-shadow: 0 0 5px color-mix(in srgb, var(--sig) 45%, transparent); }
+.mode, .kbd, .timer, .stop { display: none; }
+.mode { font-size: 11.5px; opacity: 0.62; }
+.kbd { font: 10.5px ui-monospace, "SF Mono", Menlo, monospace;
+       padding: 1.5px 6px; border-radius: 5px;
+       background: rgba(255,255,255,0.11); opacity: 0.8; }
+.timer { font: 11.5px ui-monospace, "SF Mono", Menlo, monospace;
+         font-variant-numeric: tabular-nums; opacity: 0.7; }
+.stop { width: 18px; height: 18px; border-radius: 50%; place-items: center;
+        font-size: 9px; background: rgba(255,255,255,0.15); flex: none;
+        cursor: default; }
+.stop:hover { background: rgba(255,255,255,0.26); }
+.grow { flex: 1; }
+
+/* Live transcript. Nothing scrolls: the text stays put and the brightness
+   walks along it, newest word white through three steps of fade. Text
+   moving at speech speed is a marquee -- visible and unreadable. */
+.live { display: none; color: rgba(255,255,255,0.30); white-space: normal; }
+.live w { transition: color 0.5s ease; }
+.live w.n0 { color: #fff; }
+.live w.n1 { color: rgba(255,255,255,0.84); }
+.live w.n2 { color: rgba(255,255,255,0.62); }
+.live w.n3 { color: rgba(255,255,255,0.44); }
+
+.on-wave  .wave  { display: flex; }
+.on-mode  .mode  { display: inline; }
+.on-mode  .kbd   { display: inline; }
+.on-timer .timer { display: inline; }
+.on-stop  .stop  { display: grid; }
+.streaming .live { display: block; }
+/* Decoding has nothing left to say about words that are still arriving. */
+.transcribing .live { display: none; }
+
+/* ── Layouts ───────────────────────────────────────────────────────── */
+
+/* capsule: a rounded pill wherever you put it... A taller meter grows the
+   pill around it rather than spilling out of it, so the height slider cannot
+   produce bars that overflow their own background. */
+.style-capsule .ind {
+  min-height: 32px; padding: 4px 15px; border-radius: 999px;
+}
+
+/* ...except against the menu bar, where it squares its top corners and sits
+   flush, so it reads as the notch growing rather than as a window that has
+   appeared above your work. Same object, different place -- which is why
+   this is a placement rule and not a second style. */
+.at-top_centre.style-capsule .ind {
+  min-height: 28px; padding: 2px 13px;
+  border-radius: 0 0 13px 13px;
+}
+
+/* Live text is its own panel under the pill, not part of it. In flow (which
+   is what wrapping it inside .ind amounted to) the pill itself changed size
+   with every word -- a black bar at the notch quietly growing and shrinking
+   while you speak. Taken out of flow it cannot: the pill keeps the size its
+   parts give it, and the words appear below on a background of their own
+   rather than as pale text floating on the desktop. The window's extra
+   height (see overlay.go's capsule Height) is the room this sits in, empty
+   until a live transcript arrives. */
+.style-capsule .ind { position: relative; }
+.style-capsule .live {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 50%;
+  transform: translateX(-50%);
+  width: max-content;
+  max-width: 420px;
+  padding: 5px 12px;
+  border-radius: 12px;
+  background: rgba(16, 16, 20, 0.82);
+  -webkit-backdrop-filter: saturate(175%) blur(24px);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.14),
+              0 8px 24px rgba(0,0,0,0.40);
+  color: rgba(255,255,255,0.55);
+  font-size: 12px;
+  line-height: 1.35;
+  text-align: center;
+}
+.on-solid.style-capsule .live {
+  background: #000; -webkit-backdrop-filter: none;
+}
+/* Centred under the pill everywhere except against an edge, where a panel
+   wider than the pill would hang off the window and be clipped. */
+.at-top_left.style-capsule .live, .at-bottom_left.style-capsule .live,
+.at-screen_bottom_left.style-capsule .live,
+.at-cursor.style-capsule .live, .at-follow.style-capsule .live {
+  left: 0; transform: none;
+}
+.at-top_right.style-capsule .live, .at-bottom_right.style-capsule .live,
+.at-screen_bottom_right.style-capsule .live {
+  left: auto; right: 0; transform: none;
+}
+
+/* transcript: text is the content, the wave is a band under it. */
+.style-transcript .ind {
+  flex-direction: column; align-items: stretch; gap: 0;
+  white-space: normal; width: 390px;
+  border-radius: 14px; padding: 12px 14px 11px;
+}
+.style-transcript .live {
+  display: flex; align-items: flex-end; flex-wrap: wrap; gap: 0 0.3em;
+  font-size: 14px; line-height: 1.5; height: 42px; overflow: hidden;
+}
+/* The teleprompters always show their text area, even before the first
+   word: a panel that pops into existence mid-sentence is worse than an
+   empty one that fills. */
+.style-transcript .live { display: flex; }
+/* Tall enough for the level to be visible. At 3px with a 3px floor on the
+   bars every one of them was pinned at its minimum, so the wave under the
+   text was a static line no matter how loud you spoke -- a meter that cannot
+   move is worse than no meter, because it reads as "not hearing you". */
+.style-transcript .wave {
+  width: auto; height: var(--wave-h, 16px); margin: 10px 0 8px; gap: 2px;
+  align-items: center;
+}
+.style-transcript .wave i { min-height: 2px; }
+.foot { display: none; align-items: center; gap: 9px; }
+.style-transcript .foot { display: flex; }
+/* In a teleprompter every label lives in the footer row. The same parts
+   exist twice in the markup -- once inline, once in the footer -- because
+   one layout wants them beside the wave and the other wants them under
+   it; whichever set the layout is not using is taken out entirely. */
+.style-transcript > .ind > .dot,
+.style-transcript > .ind > .mode,
+.style-transcript > .ind > .kbd,
+.style-transcript > .ind > .timer,
+.style-transcript > .ind > .stop {
+  display: none !important;
+}
+/* Text above the rule it stands on, without moving it in the markup --
+   every other layout wants the wave first. */
+.style-transcript .live { order: -1; }
+
+@media (prefers-reduced-motion: reduce) {
+  .dot, .live w { transition: none; }
+}

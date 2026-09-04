@@ -1,0 +1,421 @@
+  /* macOS System Settings look: grouped inset cards, label on the left,
+     control on the right, hairline separators between rows. Colors follow
+     Apple's semantic palette and flip with the system appearance -- the
+     palette and the generic controls live in assets/kit.css; what's left
+     here is specific to the Settings pane's own layout. The page that hosts
+     the pane splices both files in, in that order. */
+
+  /* ── Buttons ────────────────────────────────────────────────────────
+     The same soft, borderless chip the history rows use (.act in main.html):
+     a tinted field at rest, filled with the accent on hover. The old bordered
+     card-with-a-shadow button read as chrome from a different app next to it.
+
+     This block sits first on purpose. Every selector here carries the
+     #settings-pane id, so a plain .subnav-item or .place-spot rule can never
+     outweigh it -- the specialised buttons below carry the same id and win on
+     source order instead. Move this block down and the sidebar, the placement
+     map and the style cards all revert to looking like generic buttons. */
+  #settings-pane button {
+    font: inherit;
+    font-size: 11.5px;
+    color: var(--secondary);
+    background: var(--field);
+    border: none;
+    border-radius: 7px;
+    padding: 4px 11px;
+    white-space: nowrap;
+    box-shadow: none;
+    cursor: pointer;
+    transition: background 0.15s ease, color 0.15s ease;
+  }
+  #settings-pane button:hover:not(:disabled) { background: var(--accent); color: #fff; }
+  #settings-pane button:active:not(:disabled) {
+    background: color-mix(in srgb, var(--accent) 84%, #000);
+    color: #fff;
+  }
+  #settings-pane button:disabled { color: var(--tertiary); }
+  #settings-pane button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+  @media (prefers-reduced-motion: reduce) { #settings-pane button { transition: none; } }
+  /* A group's small action stays subordinate to its heading (kit.css sizes
+     it, but a bare class cannot outweigh the id rule above). */
+  #settings-pane .group-title button { font-size: 10px; padding: 2px 8px; }
+
+  /* Sidebar and one scrolling pane, the way System Settings does it. The
+     old single column meant scrolling past nine unrelated groups to reach
+     the tenth; the groups themselves are unchanged, they are just sorted
+     into the six things this app is about. */
+  .subnav {
+    flex: none;
+    width: 196px;
+    padding: 12px 10px;
+    background: var(--sidebar);
+    -webkit-backdrop-filter: blur(28px) saturate(180%);
+    backdrop-filter: blur(28px) saturate(180%);
+    border-right: 0.5px solid var(--separator);
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+  }
+  /* Never sideways. A grid or flex item defaults to min-width:auto, so one
+     over-wide child -- a 390px indicator inside a preview swatch -- forces
+     the whole pane wider than the window and the content starts scrolling
+     horizontally. Clipping here is the backstop; the min-width:0 rules on
+     the offenders are the actual fix. */
+  .subcontent {
+    flex: 1; min-width: 0;
+    overflow-y: auto; overflow-x: hidden;
+    padding: 0 20px 32px;
+  }
+  .subpane, .group { min-width: 0; }
+
+  #settings-pane .subnav-item {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    width: 100%;
+    padding: 6px 9px;
+    border: none;
+    border-radius: 8px;
+    background: none;
+    box-shadow: none;
+    font: inherit;
+    color: var(--label);
+    text-align: left;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  #settings-pane .subnav-item:hover:not([aria-selected="true"]) { background: var(--field); }
+  #settings-pane .subnav-item[aria-selected="true"] {
+    background: var(--accent);
+    color: #fff;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.28);
+  }
+  #settings-pane .subnav-item:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+  .i-dictation { --tint: #007aff; }
+  .i-model     { --tint: #af52de; }
+  .i-audio     { --tint: #ff2d55; }
+  .i-meetings  { --tint: #34c759; }
+  .i-history   { --tint: #ff9500; }
+  .i-advanced  { --tint: #8e8e93; }
+
+  .subpane { display: none; }
+  .subpane.on { display: block; animation: pane-in 0.22s ease; }
+  /* A rise and a fade, never a slide: a pane that slides in implies the two
+     panes are next to each other, and they are not. */
+  @keyframes pane-in {
+    from { opacity: 0; transform: translateY(4px); }
+    to   { opacity: 1; transform: none; }
+  }
+  @media (prefers-reduced-motion: reduce) { .subpane.on { animation: none; } }
+
+  .subpane-title {
+    position: sticky;
+    top: 0;
+    z-index: 2;
+    background: var(--bg);
+    padding: 16px 0 10px;
+    font-size: 15px;
+    font-weight: 650;
+    letter-spacing: -0.01em;
+  }
+
+  .group { margin-bottom: 22px; }
+
+  .subtext {
+    font-size: 11px;
+    color: var(--secondary);
+    margin-top: 2px;
+  }
+  .note { font-size: 11px; color: var(--secondary); }
+  /* A setting that is legal but produces nothing. Red rather than grey: the
+     combination it warns about silently throws a recording away. */
+  .warn { font-size: 11px; color: var(--red); }
+
+  #settings-pane select, #settings-pane input[type=text] {
+    font: inherit;
+    color: var(--label);
+    background: var(--field);
+    border: 0.5px solid var(--separator);
+    border-radius: 6px;
+    padding: 4px 8px;
+    min-width: 170px;
+  }
+  .item.stacked select,
+  .item.stacked input[type=text] { width: 100%; }
+  #settings-pane select:focus, #settings-pane input:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+
+  #settings-pane input[type=range] { accent-color: var(--accent); width: 100%; }
+  #settings-pane input[type=radio] { accent-color: var(--accent); margin: 0 6px 0 0; }
+
+  #settings-pane progress { width: 90px; accent-color: var(--accent); }
+
+  .mono-field {
+    flex: 1;
+    min-width: 0;
+    padding: 4px 8px;
+    background: var(--field);
+    border-radius: 6px;
+    font-size: 12px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  /* Model rows sit inside the card as a radio list. */
+  .model-row { display: flex; align-items: center; gap: 8px; }
+  .model-row label { flex: 1; display: flex; align-items: flex-start; margin: 0; cursor: pointer; }
+  .model-row input[type=radio] { margin-top: 2px; }
+  .model-name { font-weight: 500; text-transform: capitalize; }
+  .badge {
+    font-size: 10px;
+    font-weight: 600;
+    color: var(--green);
+    border: 0.5px solid var(--green);
+    border-radius: 4px;
+    padding: 0 4px;
+    margin-left: 6px;
+  }
+
+  .entity-dict-list {
+    display: flex; flex-wrap: wrap; gap: 6px;
+    margin-top: 8px; width: 100%;
+  }
+  .entity-chip {
+    display: inline-flex; align-items: center; gap: 5px;
+    padding: 3px 6px 3px 9px; border-radius: 999px;
+    background: var(--field); color: var(--label);
+    font-size: 11.5px;
+  }
+  .entity-chip-text { cursor: text; border-radius: 4px; padding: 0 2px; }
+  .entity-chip-text:hover { background: color-mix(in srgb, var(--accent) 14%, transparent); }
+  .entity-chip-remove {
+    display: grid; place-items: center;
+    width: 15px; height: 15px; padding: 0;
+    border-radius: 50%; line-height: 1;
+    font-size: 12px;
+  }
+  .entity-chip-edit {
+    font: inherit; font-size: 11.5px; width: 9em;
+    border: none; border-radius: 999px;
+    padding: 3px 9px; background: var(--card);
+    box-shadow: inset 0 0 0 1px var(--accent);
+  }
+  .entity-dict-add {
+    display: flex; gap: 6px; margin-top: 10px; width: 100%;
+  }
+  .entity-dict-add input[type=text] { flex: 1; }
+
+  .meter { display: flex; align-items: flex-end; gap: 2px; height: 20px; flex: 1; }
+  .meter .bar { flex: 1; background: var(--green); border-radius: 1.5px; height: 8%;
+                transition: height 0.06s linear; }
+
+  #status {
+    display: block;
+    text-align: center;
+    color: var(--secondary);
+    font-size: 11px;
+    min-height: 14px;
+  }
+  /* The comparison button carries its own state, in the same colours the
+     menu bar icon uses: red while the microphone is open, blue while the
+     models are working. Without it the button said "Stop" and nothing else,
+     and there was no way to tell a recording in progress from a window
+     sitting idle. */
+  /* The id gives the base rules above enough weight to win a plain
+     .recording selector, hover included -- so the state colours carry it. */
+  #settings-pane button.recording,
+  #settings-pane button.recording:hover {
+    color: #fff;
+    background: var(--red);
+    animation: recording-pulse 1.4s ease-in-out infinite;
+  }
+  #settings-pane button.transcribing,
+  #settings-pane button.transcribing:hover {
+    color: #fff;
+    background: var(--accent);
+    animation: transcribing-pulse 1.8s ease-in-out infinite;
+  }
+  #settings-pane button.transcribing:disabled { color: #fff; }
+  @keyframes recording-pulse {
+    0%, 100% { box-shadow: 0 0 0 0 rgba(255, 59, 48, 0.55); }
+    50%      { box-shadow: 0 0 0 7px rgba(255, 59, 48, 0); }
+  }
+  @keyframes transcribing-pulse {
+    0%, 100% { opacity: 1; }
+    50%      { opacity: 0.65; }
+  }
+  /* Movement is decoration here: the colour already carries the state. */
+  @media (prefers-reduced-motion: reduce) {
+    #settings-pane button.recording, #settings-pane button.recording:hover,
+    #settings-pane button.transcribing, #settings-pane button.transcribing:hover { animation: none; }
+  }
+
+  .pill-ok { color: var(--green); font-weight: 500; }
+  .pill-bad { color: var(--red); font-weight: 500; }
+
+  /* ── Indicator preview ──────────────────────────────────────────────
+     A mock screen, so a style anchored to the notch can be judged against
+     one. Everything inside .preview-mount is the real component, styled by
+     the same assets/indicator.css the overlay gets. */
+  .preview-stage {
+    position: relative;
+    height: 168px;
+    border-radius: 10px;
+    overflow: hidden;
+    margin-bottom: 10px;
+    display: flex;
+    justify-content: center;
+    background:
+      radial-gradient(60% 55% at 22% 12%, #ff9d6e 0, transparent 60%),
+      radial-gradient(55% 55% at 82% 28%, #7b5cff 0, transparent 58%),
+      linear-gradient(162deg, #2a1b50, #0c0f2c 62%, #07121e);
+    box-shadow: 0 0 0 0.5px var(--separator);
+  }
+  .preview-menubar {
+    position: absolute; top: 0; left: 0; right: 0; height: 18px; z-index: 1;
+    background: rgba(8, 10, 18, 0.45);
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 0 9px;
+    font-size: 9px; color: rgba(255, 255, 255, 0.8);
+  }
+  .preview-notch {
+    position: absolute; top: 0; left: 50%; transform: translateX(-50%);
+    width: 104px; height: 18px; background: #000;
+    border-radius: 0 0 7px 7px; z-index: 2;
+  }
+  /* The mount carries the class list, so the component's own selectors
+     resolve here exactly as they do on <body> in the overlay. */
+  .preview-mount {
+    position: absolute; left: 0; right: 0; z-index: 3;
+    display: flex; justify-content: center;
+    font: 12px -apple-system, "SF Pro Text", system-ui, sans-serif;
+    /* The real thing is drawn at full size in a window as wide as the
+       screen; here it has to fit a settings pane. */
+    transform: scale(0.62);
+  }
+  /* The preview sits where the chosen placement says it will, so the map
+     above and the picture below always agree. */
+  .preview-mount.at-top_centre { top: 18px; transform-origin: top center; }
+  .preview-mount.at-top_left { top: 22px; justify-content: flex-start;
+                               padding-left: 8px; transform-origin: top left; }
+  .preview-mount.at-top_right { top: 22px; justify-content: flex-end;
+                                padding-right: 8px; transform-origin: top right; }
+  .preview-mount.at-bottom_centre { bottom: 8px; transform-origin: bottom center; }
+  .preview-mount.at-bottom_left { bottom: 12px; justify-content: flex-start;
+                                  padding-left: 8px; transform-origin: bottom left; }
+  .preview-mount.at-bottom_right { bottom: 12px; justify-content: flex-end;
+                                   padding-right: 8px; transform-origin: bottom right; }
+  .preview-mount.at-screen_bottom_left { bottom: 0; justify-content: flex-start;
+                                         padding-left: 6px; transform-origin: bottom left; }
+  .preview-mount.at-screen_bottom_right { bottom: 0; justify-content: flex-end;
+                                          padding-right: 6px; transform-origin: bottom right; }
+  /* Both cursor modes are drawn where the pointer is, next to it. */
+  .preview-mount.at-cursor, .preview-mount.at-follow {
+    top: 58px; justify-content: flex-start; padding-left: 40%;
+    transform-origin: top left;
+  }
+  .preview-mount.at-cursor::before, .preview-mount.at-follow::before {
+    content: ""; position: absolute; left: calc(40% - 13px); top: 1px;
+    width: 11px; height: 16px;
+    background: #fff;
+    clip-path: polygon(0 0, 0 82%, 26% 62%, 45% 100%, 62% 91%, 44% 55%, 78% 55%);
+    filter: drop-shadow(0 1px 1px rgba(0, 0, 0, 0.6));
+  }
+
+  /* Two across. Everything in one row pushed the pane wider than the window
+     and the last card fell off the edge; two styles fit that row exactly. */
+  .style-cards {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 6px;
+    margin-bottom: 8px;
+  }
+  #settings-pane .style-card {
+    display: flex; flex-direction: column; align-items: center; gap: 7px;
+    min-width: 0;
+    padding: 9px 4px 7px;
+    border: 1px solid transparent;
+    border-radius: 9px;
+    background: var(--field);
+    box-shadow: none;
+    cursor: pointer;
+    font: inherit;
+    color: var(--label);
+  }
+  #settings-pane .style-card[aria-pressed="true"] {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 2.5px color-mix(in srgb, var(--accent) 22%, transparent);
+  }
+  #settings-pane .style-card:hover:not([aria-pressed="true"]) { background: var(--separator); }
+  #settings-pane .style-card:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  /* Each card holds a real indicator at a size that fits, so the card is a
+     picture of the thing rather than a word for it. */
+  .style-card .swatch {
+    height: 34px; width: 100%; min-width: 0;
+    display: flex; align-items: center; justify-content: center;
+    overflow: hidden; pointer-events: none;
+  }
+  /* A teleprompter is 640 px wide and a capsule is 84; one scale factor
+     cannot show both. Each swatch gets the reduction its own style needs, or
+     the wide ones run past the card. */
+  .style-card .swatch > .scale { transform-origin: center; }
+  .swatch > .style-capsule    { transform: scale(0.52); }
+  .swatch > .style-transcript { transform: scale(0.30); }
+  .style-card .name { font-size: 10.5px; color: var(--secondary); text-align: center; }
+  .style-card[aria-pressed="true"] .name { color: var(--label); font-weight: 500; }
+
+  /* ── Placement map ──────────────────────────────────────────────────
+     A picture of the screen with the eight fixed spots on it, plus the two
+     cursor-following modes, which have no place on a map. */
+  .place-wrap { display: flex; flex-direction: column; gap: 7px; }
+  .place-map {
+    position: relative;
+    height: 104px;
+    border-radius: 8px;
+    padding: 5px;
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr;
+    grid-template-rows: 1fr 1fr auto;
+    gap: 5px;
+    background: linear-gradient(160deg, #26204a, #0c1128 65%, #08131f);
+    box-shadow: 0 0 0 0.5px var(--separator);
+  }
+  #settings-pane .place-spot {
+    border: 1px dashed rgba(255, 255, 255, 0.22);
+    border-radius: 5px;
+    background: rgba(255, 255, 255, 0.05);
+    box-shadow: none;
+    padding: 0;
+    cursor: pointer;
+  }
+  #settings-pane .place-spot:hover { background: rgba(255, 255, 255, 0.14); }
+  #settings-pane .place-spot[aria-pressed="true"] {
+    background: var(--accent);
+    border-style: solid;
+    border-color: transparent;
+  }
+  #settings-pane .place-spot:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  /* The two screen-edge slots share the bottom strip, the way they share the
+     strip the Dock sits in. */
+  #settings-pane .place-spot.wide { grid-row: 3; height: 12px; }
+  #settings-pane .place-spot.wide[data-pos="screen_bottom_left"] { grid-column: 1; }
+  #settings-pane .place-spot.wide[data-pos="screen_bottom_right"] { grid-column: 3; }
+
+  .place-follow { display: flex; gap: 6px; }
+  #settings-pane .place-chip {
+    flex: 1;
+    font-size: 11.5px;
+    padding: 5px 8px;
+    border-radius: 7px;
+    cursor: pointer;
+  }
+  #settings-pane .place-chip[aria-pressed="true"] {
+    background: var(--accent);
+    border-color: transparent;
+    color: #fff;
+  }
+
+  /* The indicator component itself is not here: the hosting page splices
+     assets/indicator.css in after this file, the same bytes the overlay
+     gets, so the preview cannot drift from the thing it previews. */

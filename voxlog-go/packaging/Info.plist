@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleName</key>
+    <string>Voxlog</string>
+    <!-- Must match the Makefile's codesign --identifier, and must not go
+         back to com.voxlog.app / .desktop / .mac: macOS's notification
+         service has those three permanently refused. See the Makefile. -->
+    <key>CFBundleIdentifier</key>
+    <string>com.rkostiuk.voxlog2</string>
+    <key>CFBundleExecutable</key>
+    <string>voxlog-go</string>
+    <key>CFBundleIconFile</key>
+    <string>AppIcon.icns</string>
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
+    <key>CFBundleShortVersionString</key>
+    <string>0.1.0</string>
+    <key>CFBundleVersion</key>
+    <string>1</string>
+    <key>LSMinimumSystemVersion</key>
+    <string>13.0</string>
+    <key>LSUIElement</key>
+    <true/>
+    <key>NSScreenCaptureUsageDescription</key>
+    <string>Voxlog needs screen recording access to capture system audio (no screen content is recorded).</string>
+    <key>NSMicrophoneUsageDescription</key>
+    <string>Voxlog needs microphone access to transcribe your dictation.</string>
+</dict>
+</plist>

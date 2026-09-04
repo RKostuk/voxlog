@@ -1,0 +1,185 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  /* The recording indicator: one markup, several layouts.
+     Go sets a class list on <body> ("style-cuff on-wave on-mode ...") from
+     the settings struct and never branches again. Every part is hidden by
+     default and turned on by an on-* class, so a style and its options are
+     the same mechanism -- which is what makes "cuff with a timer and no
+     wave" cost nothing but a class.
+
+     The window itself is a bounding box, not the shape. The indicator is
+     content-sized and aligned inside it, so a cuff's black ends where its
+     content ends instead of filling the frame Go asked for. */
+
+  html, body {
+    margin: 0; padding: 0; width: 100%; height: 100%;
+    background: transparent; overflow: hidden;
+    -webkit-font-smoothing: antialiased;
+  }
+  body {
+    display: flex; justify-content: center;
+    font: 12px -apple-system, "SF Pro Text", system-ui, sans-serif;
+  }
+  /* A window is a bounding box; where the indicator sits inside it follows
+     the placement, so a capsule at the top meets the menu bar exactly. */
+  body { align-items: center; }
+  body.at-top_centre { align-items: flex-start; }
+  body.at-bottom_centre { align-items: flex-end; }
+
+  /* The indicator itself, injected by Go from assets/indicator.css -- the
+     same bytes the Settings preview gets, so what you choose there and what
+     appears here cannot drift apart. */
+  /* INDICATOR_CSS */
+</style>
+</head>
+<body class="style-capsule at-top_centre on-wave on-mode on-solid">
+  <div class="ind">
+    <span class="dot"></span>
+    <div class="wave" id="wave"></div>
+    <div class="live" id="live"></div>
+    <div class="foot">
+      <span class="dot"></span>
+      <span class="mode">Dictation</span>
+      <span class="kbd" id="kbd-foot"></span>
+      <span class="timer" id="timer-foot">0:00</span>
+      <span class="grow"></span>
+      <span class="stop" onclick="window.voxlog.stopClicked()">&#10005;</span>
+    </div>
+    <span class="mode">Dictation</span>
+    <span class="kbd" id="kbd"></span>
+    <span class="timer" id="timer">0:00</span>
+    <span class="stop" onclick="window.voxlog.stopClicked()">&#10005;</span>
+  </div>
+
+  <script>
+    // Go pushes the mic's level in via window.voxlog.setLevel; everything
+    // else here is presentation.
+    var WAVE_BARS = { capsule: 16, transcript: 26 };
+
+    var waveEl = document.getElementById('wave');
+    var liveEl = document.getElementById('live');
+    var bars = [];
+    var style = 'capsule';
+    var target = 0, smooth = 0, phase = 0;
+
+    // Build the wave at the density the current layout wants. A cuff with
+    // seven fat bars looks like a capsule that grew; a capsule with forty
+    // hairlines looks like a mistake.
+    function buildWave(name) {
+      var n = WAVE_BARS[name] || 16;
+      var html = '';
+      for (var i = 0; i < n; i++) { html += '<i></i>'; }
+      waveEl.innerHTML = html;
+      bars = waveEl.querySelectorAll('i');
+    }
+
+    window.voxlog = window.voxlog || {};
+
+    // setStyle takes the whole class list Go built from the settings struct.
+    // Replacing it wholesale (rather than toggling) means the page has no
+    // opinion about which classes exist, and no way to drift out of sync.
+    window.voxlog.setStyle = function (classes, waveW, waveH) {
+      document.body.className = classes;
+      // The meter's size is a number, not a class, so it arrives as two CSS
+      // variables on the same element the classes land on.
+      if (waveW) document.body.style.setProperty('--wave-w', waveW + 'px');
+      if (waveH) document.body.style.setProperty('--wave-h', waveH + 'px');
+      var m = /style-(\w+)/.exec(classes);
+      style = m ? m[1] : 'capsule';
+      buildWave(style);
+    };
+
+    window.voxlog.setLevel = function (v) {
+      target = Math.max(0, Math.min(1, v));
+    };
+
+    window.voxlog.setShortcut = function (label) {
+      document.getElementById('kbd').textContent = label || '';
+      document.getElementById('kbd-foot').textContent = label || '';
+    };
+
+    window.voxlog.setElapsed = function (seconds) {
+      var s = Math.max(0, Math.floor(seconds));
+      var text = Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0');
+      document.getElementById('timer').textContent = text;
+      document.getElementById('timer-foot').textContent = text;
+    };
+
+    // Go calls this only while live streaming is on; the first call is what
+    // switches a capsule into its wider text-carrying layout.
+    window.voxlog.setText = function (s) {
+      document.body.classList.add('streaming');
+      if (style === 'transcript') {
+        // Word by word, so the last four can be lit and the rest recede.
+        var words = String(s || '').split(/\s+/).filter(Boolean);
+        var html = '';
+        for (var i = 0; i < words.length; i++) {
+          var age = words.length - 1 - i;
+          html += '<w' + (age < 4 ? ' class="n' + age + '"' : '') + '>' + words[i] + '</w> ';
+        }
+        liveEl.innerHTML = html;
+      } else {
+        liveEl.textContent = s || '';
+      }
+    };
+
+    window.voxlog.clearText = function () {
+      document.body.classList.remove('streaming');
+      liveEl.innerHTML = '';
+    };
+
+    window.voxlog.setTranscribing = function (on) {
+      document.body.classList.toggle('transcribing', !!on);
+      if (on) {
+        // Drop the meter to rest so the bars aren't mid-swing when they come
+        // back for the next take.
+        target = 0;
+        smooth = 0;
+      }
+    };
+
+    // Bound by Go when the stop button is mounted; a no-op otherwise, so the
+    // inline handler above can never throw on a style without one.
+    window.voxlog.stopClicked = window.voxlog.stopClicked || function () {};
+
+    function frame() {
+      phase += 1;
+      // Peak-meter ballistics: rise instantly, fall on a fixed slope. Going
+      // up through an ease meant a syllable shorter than a few frames never
+      // reached its own height, so the bars reported something lower than
+      // what was actually said. Coming down is deliberately slow: at true
+      // speed the bars would strobe between syllables.
+      if (target > smooth) {
+        smooth = target;
+      } else {
+        smooth = Math.max(target, smooth - 0.035); // ~0.6s from full to zero
+      }
+
+      var n = bars.length;
+      for (var i = 0; i < n; i++) {
+        // Bloom from the centre out. Bars rising from a baseline read as a
+        // chart; bars growing either side of a centre line read as a voice.
+        //
+        // The envelope is deliberately shallow and the per-bar motion
+        // deliberately large: a steep centre bias plus a small wobble made
+        // every bar move together in one flat arc, which reads as a progress
+        // bar rather than as sound. Two sine terms at unrelated speeds keep
+        // neighbours out of step.
+        var d = n > 1 ? Math.abs(i - (n - 1) / 2) / ((n - 1) / 2) : 0;
+        var shape = 0.45 + 0.55 * Math.pow(1 - d, 0.8);
+        var wobble = 0.62 + 0.38 * Math.sin(phase * 0.31 + i * 1.7)
+                          * Math.cos(phase * 0.13 + i * 0.6);
+        var h = Math.max(5, Math.min(100, smooth * shape * wobble * 165));
+        bars[i].style.height = h + '%';
+      }
+      requestAnimationFrame(frame);
+    }
+
+    buildWave(style);
+    requestAnimationFrame(frame);
+  </script>
+</body>
+</html>

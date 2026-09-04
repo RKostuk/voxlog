@@ -1,0 +1,255 @@
+package main
+
+import (
+	"log"
+	"path/filepath"
+	"strings"
+	"sync"
+	"time"
+
+	"voxlog-go/internal/asr"
+	"voxlog-go/internal/history"
+	"voxlog-go/internal/llm"
+	"voxlog-go/internal/settings"
+	"voxlog-go/internal/task"
+	"voxlog-go/internal/ui"
+)
+
+// app is everything a hotkey press needs to do its job, in one place.
+//
+// It exists because there are now two recordings that can be live at the same
+// time -- a meeting and a dictation inside it -- and their state cannot be a
+// handful of variables closed over by one function the way a single take's
+// was.
+type app struct {
+	store     *settings.Store
+	hist      *history.Store
+	meetings  *history.MeetingStore
+	tasks     *task.Store
+	llm       *llm.Cache
+	modelsDir string
+	overlay   *ui.Overlay
+	models    *transcriberCache
+	speakers  *diarizerCache
+	queue     *decodeQueue
+	tray      *tray
+
+	// mu guards the two session slots, and nothing else. It is held for as
+	// long as it takes to open or close a capture and never across a decode
+	// or an output.Emit -- which is the whole difference from the single lock
+	// this replaces, where every hotkey press waited for the previous take's
+	// transcript.
+	mu        sync.Mutex
+	dictation *dictation
+	meeting   *meeting
+
+	// onMeetingState shows or hides the tray's "Stop meeting recording" item.
+	// A menu entry that does nothing most of the time is worse than no entry.
+	onMeetingState func(running bool)
+}
+
+func newApp(store *settings.Store, hist *history.Store, meetings *history.MeetingStore, tasks *task.Store, modelsDir string, overlay *ui.Overlay) *app {
+	a := &app{
+		store:     store,
+		hist:      hist,
+		meetings:  meetings,
+		tasks:     tasks,
+		llm:       llm.NewCache(modelsDir),
+		modelsDir: modelsDir,
+		overlay:   overlay,
+		models:    &transcriberCache{},
+		speakers:  &diarizerCache{},
+		tray:      &tray{},
+	}
+	a.queue = newDecodeQueue(a.tray.setDecoding)
+	return a
+}
+
+// classifyForTasks runs Task Hub's classifier over a finished transcript in
+// the background. Called as a goroutine right after the dictation/meeting
+// store write it's tagging succeeds (see dictate.go/meeting.go) -- never on
+// the hot path, and never surfaced to the user as an error: a missed
+// classification is a background feature quietly doing nothing, not a
+// failure worth a banner.
+func (a *app) classifyForTasks(sourceKind, sourceKey, text string) {
+	cfg := a.store.Get()
+	if !cfg.TaskHubEnabled {
+		return
+	}
+	if !asr.IsDownloaded(a.modelsDir, llm.Spec) {
+		return
+	}
+	entities := a.entityNames(cfg)
+	rejected, err := a.tasks.LoadRejected()
+	if err != nil {
+		log.Printf("task classify: rejected examples: %v", err)
+	}
+	modelDir := asr.ModelDir(a.modelsDir, llm.Spec)
+	result, err := a.llm.Classify(modelDir, text, entities, rejected, time.Now())
+	if err != nil {
+		log.Printf("task classify: %v", err)
+		return
+	}
+	if !result.IsTask {
+		return
+	}
+
+	t := task.Task{
+		ID:         task.NewID(),
+		SourceKind: sourceKind,
+		SourceKey:  sourceKey,
+		Text:       result.Text,
+		Entity:     result.Entity,
+		Status:     task.Status(result.Status),
+		Reminder:   result.Reminder,
+		Created:    time.Now(),
+	}
+	if err := a.tasks.Append(t); err != nil {
+		log.Printf("task append: %v", err)
+		return
+	}
+	if t.Reminder != nil {
+		task.ScheduleReminder(t)
+	}
+	ui.RefreshMainWindowIfOpen(a.hist, a.meetings, a.tasks)
+}
+
+// summarizeMeeting fills in a meeting's Summary after its transcript lands --
+// same trigger, same model, and the same "never surfaced as an error"
+// philosophy as classifyForTasks, just a different prompt. Runs as its own
+// goroutine from transcribeMeetingEntry (meeting.go), independent of task
+// classification, so one failing doesn't hold up the other.
+func (a *app) summarizeMeeting(start time.Time, text string) {
+	cfg := a.store.Get()
+	if !cfg.TaskHubEnabled {
+		return
+	}
+	if !asr.IsDownloaded(a.modelsDir, llm.Spec) {
+		return
+	}
+	entities := a.entityNames(cfg)
+	modelDir := asr.ModelDir(a.modelsDir, llm.Spec)
+	summary, err := a.llm.Summarize(modelDir, text, entities)
+	if err != nil {
+		log.Printf("meeting summarize: %v", err)
+		return
+	}
+	if summary == "" {
+		return
+	}
+	if err := a.meetings.Update(start, func(m *history.Meeting) { m.Summary = summary }); err != nil {
+		log.Printf("meeting summarize: attaching summary: %v", err)
+		return
+	}
+	ui.RefreshMainWindowIfOpen(a.hist, a.meetings, a.tasks)
+}
+
+// entityNames is the closed list of projects Task Hub is allowed to file a
+// task under -- the user's own dictionary (Settings > LLM model), nothing
+// else. The model no longer gets to invent new project names (see
+// llm.normalizeEntity, which enforces this even if the model tries anyway);
+// anything not on this list, including everything when the list is empty,
+// lands under llm.UnfilteredEntity.
+func (a *app) entityNames(cfg settings.Settings) []string {
+	seen := make(map[string]bool, len(cfg.EntityDictionary))
+	names := make([]string, 0, len(cfg.EntityDictionary))
+	for _, n := range cfg.EntityDictionary {
+		key := strings.ToLower(n)
+		if n == "" || seen[key] {
+			continue
+		}
+		seen[key] = true
+		names = append(names, n)
+	}
+	return names
+}
+
+// model resolves and checks the configured model, notifying the user about
+// the two ways it can be unusable. Deliberately cheap -- a slice scan and a
+// few os.Stat calls -- so a misconfigured model is reported before the
+// microphone is touched, while the expensive load happens elsewhere.
+func (a *app) model(cfg settings.Settings) (asr.ModelSpec, bool) {
+	spec, ok := modelForSettings(cfg)
+	if !ok {
+		log.Printf("no known model for %s/%s", cfg.ModelFamily, cfg.ModelVariant)
+		notify("No model selected. Pick one in Settings.")
+		a.openSettingsForMissingModel()
+		return spec, false
+	}
+	if !asr.IsDownloaded(a.modelsDir, spec) {
+		log.Printf("model %s/%s not downloaded", spec.Family, spec.Variant)
+		notify("Model not downloaded yet. Download it in Settings first.")
+		a.openSettingsForMissingModel()
+		return spec, false
+	}
+	return spec, true
+}
+
+// openSettingsForMissingModel opens the Settings window directly, on top of
+// the notify() calls above. A hotkey press that can't record anything must
+// never end in "nothing but a log line" -- the notification alone depends
+// on Notification Center permission this app can't guarantee is granted (see
+// internal/usernotify), but a window popping open cannot silently fail the
+// same way.
+func (a *app) openSettingsForMissingModel() {
+	recordingsDir := filepath.Join(a.hist.Dir(), meetingsDirName)
+	ui.ShowMainWindow("settings", a.hist, a.meetings, a.tasks, a.store, knownModels, a.modelsDir, recordingsDir)
+}
+
+// meetingRunning reports whether a meeting is recording right now.
+func (a *app) meetingRunning() bool {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.meeting != nil
+}
+
+// sweepRecordings applies the cleanup settings. Called at startup and after
+// each recording finishes -- the folder only grows at those moments, so
+// there is nothing for a timer to catch in between.
+func (a *app) sweepRecordings() {
+	cfg := a.store.Get()
+	dir := filepath.Join(a.hist.Dir(), meetingsDirName)
+	removed, freed, err := history.SweepRecordings(dir, cfg.AudioRetention, int64(cfg.AudioMaxGB*1e9), a.recordingsInUse())
+	if err != nil {
+		log.Printf("recordings sweep: %v", err)
+		return
+	}
+	if removed > 0 {
+		log.Printf("recordings sweep: removed %d file(s), freed %d bytes", removed, freed)
+	}
+}
+
+// recordingsInUse is the set of WAVs a running meeting still has open. The
+// sweep must not delete a file that is still being written to.
+func (a *app) recordingsInUse() map[string]bool {
+	a.mu.Lock()
+	m := a.meeting
+	a.mu.Unlock()
+
+	inUse := map[string]bool{}
+	if m == nil {
+		return inUse
+	}
+	if m.micPath != "" {
+		inUse[m.micPath] = true
+	}
+	if m.sysPath != "" {
+		inUse[m.sysPath] = true
+	}
+	return inUse
+}
+
+// releaseOverlay puts the capsule away, unless a recording has since taken it
+// over. A decode finishing must not hide the overlay of the take that started
+// while it was running.
+func (a *app) releaseOverlay() {
+	a.mu.Lock()
+	busy := a.dictation != nil
+	a.mu.Unlock()
+	if busy {
+		return
+	}
+	a.overlay.SetTranscribing(false)
+	a.overlay.ClearText()
+	a.overlay.Hide()
+}

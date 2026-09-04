@@ -1,0 +1,1143 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  /* KIT_CSS */
+  /* SETTINGS_CSS */
+  /* INDICATOR_CSS */
+
+  /* Window chrome: a sidebar and one scrolling pane, the way System
+     Settings does it. Every pane stays in the DOM whichever one is
+     showing -- the settings form has to be complete when it is read, and
+     hiding a pane must not take its values with it. */
+  .shell { display: flex; height: 100%; }
+  .sidebar { flex: none; width: 196px; padding: 10px; background: var(--sidebar);
+             -webkit-backdrop-filter: blur(28px) saturate(180%);
+             backdrop-filter: blur(28px) saturate(180%);
+             border-right: 0.5px solid var(--separator); display: flex;
+             flex-direction: column; gap: 1px; }
+  .content { flex: 1; min-width: 0; overflow-y: auto; overflow-x: hidden; }
+  .pane { display: none; padding: 0 20px 28px; }
+  .pane.on { display: block; }
+  /* The settings pane brings its own two-column layout, so it opts out of
+     the padding the other three want. */
+  .pane[data-pane="settings"] { padding: 0; height: 100%; }
+  /* The fragment is a sidebar plus a pane in its own right; nothing in
+     settings.css says so, because the window it came from said it on
+     <body>. */
+  #settings-pane { display: flex; height: 100%; }
+
+  .navitem {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    width: 100%;
+    padding: 6px 9px;
+    border: none;
+    border-radius: 8px;
+    background: none;
+    box-shadow: none;
+    font: inherit;
+    color: var(--label);
+    text-align: left;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  .navitem:hover:not([aria-selected="true"]) { background: var(--field); }
+  .navitem[aria-selected="true"] {
+    background: var(--accent);
+    color: #fff;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.28);
+  }
+  .navitem:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+  /* Days are sections; entries are rows in a card. The heading is the kit's
+     group title with the breathing room a scrolling list needs. */
+  .group-title.day { margin: 20px 0 6px 10px; }
+  .group-title.day:first-child { margin-top: 16px; }
+
+  .entry {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    padding: 9px 12px;
+    border-top: 0.5px solid var(--separator);
+    /* wrap, not nowrap: the player is a full-width item appended after the
+       pill/body/acts/chevron row, and wrap is what drops it onto its own
+       line instead of squeezing it in beside them. */
+    flex-wrap: wrap;
+  }
+  .entry:first-child { border-top: none; }
+  .entry .player { width: 100%; margin-top: 6px; }
+  .entry:hover { background: color-mix(in srgb, var(--accent) 9%, transparent); }
+  /* Arrow-key selection, distinct from :hover so a mouse resting over a
+     different row doesn't visually compete with the one Enter would act on. */
+  .entry.kbd-selected { background: color-mix(in srgb, var(--accent) 16%, transparent);
+                         box-shadow: inset 2px 0 0 var(--accent); }
+  /* How long it took, as a pill on the left: the one number worth scanning
+     down the column. */
+  .entry .pill {
+    flex: none;
+    min-width: 48px;
+    text-align: center;
+    padding: 2px 7px;
+    border-radius: 999px;
+    background: var(--field);
+    color: var(--secondary);
+    font-size: 11px;
+    font-variant-numeric: tabular-nums;
+    margin-top: 1px;
+  }
+  .entry .body { flex: 1; min-width: 0; cursor: pointer; }
+  /* Collapsed by default: one line, ellipsised. Expanding drops the clamp,
+     so there is never a second copy of the text anywhere. */
+  .entry .text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .entry.expanded .text { white-space: pre-wrap; overflow: visible; }
+  .entry .body:hover .text { color: var(--accent); }
+  .entry .untranscribed { color: var(--tertiary); font-style: italic; }
+  .entry .summary {
+    margin-top: 5px; padding: 6px 9px;
+    border-radius: 8px; background: var(--field);
+    font-size: 11.5px; color: var(--label); line-height: 1.4;
+  }
+  .entry .summary-label {
+    display: block; font-size: 9.5px; font-weight: 700;
+    text-transform: uppercase; letter-spacing: 0.05em;
+    color: var(--tertiary); margin-bottom: 2px;
+  }
+  .entry .meta {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+    margin-top: 2px;
+    font-size: 11px;
+    color: var(--tertiary);
+    font-variant-numeric: tabular-nums;
+  }
+  .tag { padding: 1px 6px; border-radius: 5px; background: var(--field);
+         color: var(--secondary); font-size: 10px; }
+  .tag.pending { background: color-mix(in srgb, var(--yellow) 18%, transparent);
+                 color: var(--yellow); }
+
+  /* Row actions appear on hover or once the row is open -- the resting list
+     stays a list, not a wall of buttons. */
+  .acts { display: none; gap: 4px; flex: none; }
+  .entry:hover .acts, .entry.expanded .acts { display: flex; }
+  .act {
+    height: 24px;
+    padding: 0 8px;
+    border: none;
+    border-radius: 6px;
+    background: var(--field);
+    color: var(--secondary);
+    box-shadow: none;
+    font: inherit;
+    font-size: 11px;
+    cursor: pointer;
+  }
+  .act:hover:not(:disabled) { background: var(--accent); color: #fff; }
+  .act:disabled { color: var(--tertiary); }
+  .act:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+  .chev {
+    flex: none;
+    width: 24px; height: 24px;
+    border: none; border-radius: 6px;
+    background: none; box-shadow: none;
+    color: var(--tertiary);
+    font-size: 10px; cursor: pointer;
+  }
+  .entry.expanded .chev { transform: rotate(90deg); }
+  .chev:hover { color: var(--label); background: var(--separator); }
+
+  .empty { color: var(--secondary); text-align: center; padding: 48px 20px; }
+
+  /* ---------------- overview ---------------- */
+  /* Live meeting banner: state is carried by form (pulsing dot, red rule)
+     as well as by the words, so it reads before it is read. */
+  .live {
+    margin-top: 16px;
+    display: flex;
+    align-items: center;
+    gap: 11px;
+    padding: 11px 13px;
+    border-radius: 10px;
+    background: linear-gradient(135deg, color-mix(in srgb, var(--red) 14%, transparent), transparent), var(--card);
+    -webkit-backdrop-filter: blur(24px) saturate(180%);
+    backdrop-filter: blur(24px) saturate(180%);
+    box-shadow: inset 0 1px 0 var(--glass-edge), inset 0 0 0 0.5px var(--separator), 0 6px 16px var(--glass-shadow);
+    border-left: 3px solid var(--red);
+  }
+  .live .pulse {
+    width: 9px; height: 9px; border-radius: 50%;
+    background: var(--red);
+    animation: pulse 1.6s ease-in-out infinite;
+    flex: none;
+  }
+  @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.25; } }
+  @media (prefers-reduced-motion: reduce) { .live .pulse { animation: none; } }
+  .live .what { font-weight: 590; }
+  .live .sub { font-size: 11px; color: var(--secondary); }
+  .live .elapsed {
+    margin-left: auto;
+    font-variant-numeric: tabular-nums;
+    font-size: 15px;
+    letter-spacing: -0.01em;
+  }
+
+  .tiles { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-top: 16px; }
+  .tile {
+    background: var(--card);
+    -webkit-backdrop-filter: blur(26px) saturate(180%);
+    backdrop-filter: blur(26px) saturate(180%);
+    border-radius: 10px;
+    box-shadow: inset 0 1px 0 var(--glass-edge), inset 0 0 0 0.5px var(--separator), 0 6px 16px var(--glass-shadow);
+    padding: 12px 13px 13px;
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    min-width: 0;
+    position: relative;
+    overflow: hidden;
+  }
+  /* A soft sweep top-left, the thing that reads as "curved and lit" rather
+     than "a flat rectangle with a blur filter on it". */
+  .tile::before {
+    content: "";
+    position: absolute; inset: 0;
+    background: radial-gradient(120% 60% at 0% 0%, var(--glass-edge), transparent 55%);
+    opacity: 0.4;
+    pointer-events: none;
+  }
+  /* Positioned, not just styled: an absolutely-positioned ::before paints
+     after static in-flow content by CSS's own stacking rules, so without
+     this the highlight sweep would sit on top of the numbers instead of
+     under them. */
+  .tile .k, .tile .v, .tile .d { position: relative; }
+  .tile .k {
+    font-size: 11px;
+    color: var(--secondary);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .tile .v {
+    font-size: 26px;
+    font-weight: 590;
+    letter-spacing: -0.025em;
+    font-variant-numeric: tabular-nums;
+    line-height: 1.1;
+  }
+  .tile .v small { font-size: 13px; font-weight: 500; color: var(--secondary); letter-spacing: 0; }
+  .tile .d { font-size: 11px; color: var(--tertiary); }
+
+  /* 14-day column chart. Today is the emphasised endpoint. */
+  .chart { padding: 14px 14px 10px; }
+  .bars { display: flex; align-items: flex-end; gap: 6px; height: 92px; }
+  .bars .col { flex: 1; display: flex; flex-direction: column; justify-content: flex-end; gap: 4px; min-width: 0; }
+  .bars .stack { display: flex; flex-direction: column; justify-content: flex-end; gap: 2px; height: 82px; }
+  .bars .dict { background: var(--accent); border-radius: 3px 3px 0 0; opacity: 0.85; }
+  /* #af52de, not a --purple token: kit.css doesn't define one, and this is
+     the same hardcoded hue the Meetings sidebar glyph already uses. */
+  .bars .meet { background: #af52de; border-radius: 3px 3px 0 0; opacity: 0.8; }
+  .bars .col.today .dict, .bars .col.today .meet { opacity: 1; }
+  .bars .lbl {
+    text-align: center;
+    font-size: 9.5px;
+    color: var(--tertiary);
+    font-variant-numeric: tabular-nums;
+  }
+  .bars .col.today .lbl { color: var(--accent); font-weight: 600; }
+  .legend {
+    display: flex;
+    gap: 14px;
+    padding: 10px 2px 2px;
+    border-top: 0.5px solid var(--separator);
+    margin-top: 10px;
+    font-size: 11px;
+    color: var(--secondary);
+  }
+  .legend span { display: inline-flex; align-items: center; gap: 5px; }
+  .swatch { width: 8px; height: 8px; border-radius: 2.5px; }
+
+  /* ---------------- task hub ---------------- */
+  /* A classified entry gets the same "this row means more" language the
+     live-meeting banner already uses -- a left rule plus a faint tint --
+     rather than a new visual idiom for the same idea. */
+  .entry.task-detected {
+    border-left: 3px solid var(--green);
+    background: color-mix(in srgb, var(--green) 6%, transparent);
+  }
+  .tag.task-detected { background: color-mix(in srgb, var(--green) 18%, transparent); color: #1b8a3e; }
+  .entry .hub-note { margin-top: 4px; font-size: 11px; color: #1b8a3e; font-weight: 500; }
+  /* Entity/status tags on a classified History or Meetings row -- the same
+     facts the Tasks pane shows for this task, so the project and where it
+     stands are visible right where it was dictated too. */
+  .tag.task-entity-tag { display: inline-flex; align-items: center; gap: 4px; }
+  .tag.task-entity-tag::before {
+    content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--dot);
+  }
+  .tag.status-todo { background: var(--field); color: var(--secondary); }
+  .tag.status-in_progress { background: color-mix(in srgb, var(--accent) 16%, transparent); color: var(--accent); }
+  .tag.status-blocked { background: color-mix(in srgb, var(--red) 16%, transparent); color: #c62b22; }
+  .tag.status-done { background: color-mix(in srgb, var(--green) 18%, transparent); color: #1b8a3e; }
+
+  .task-summary { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-top: 16px; }
+  .task-stat {
+    background: var(--card);
+    -webkit-backdrop-filter: blur(20px) saturate(180%);
+    backdrop-filter: blur(20px) saturate(180%);
+    border-radius: 9px; padding: 8px 13px;
+    box-shadow: inset 0 1px 0 var(--glass-edge), inset 0 0 0 0.5px var(--separator);
+  }
+  .task-stat .n { font-size: 19px; font-weight: 650; letter-spacing: -0.02em; }
+  .task-stat .k { font-size: 10.5px; color: var(--secondary); text-transform: uppercase; letter-spacing: 0.04em; }
+  .task-stat.todo .n { color: var(--secondary); }
+  .task-stat.progress .n { color: var(--accent); }
+  .task-stat.blocked .n { color: var(--red); }
+  .task-stat.done .n { color: var(--green); }
+
+  .task-entity { display: flex; align-items: center; gap: 7px; margin: 22px 0 6px 2px; }
+  .task-entity:first-child { margin-top: 16px; }
+  .task-entity-dot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
+  .task-entity-name { font-size: 12.5px; font-weight: 650; }
+  .task-entity-count { font-size: 11px; color: var(--tertiary); }
+  .task-entity-auto { margin-left: auto; font-size: 10px; color: var(--tertiary); font-weight: 500; }
+
+  .task-row { display: flex; align-items: flex-start; gap: 11px; padding: 11px 13px; border-top: 0.5px solid var(--separator); }
+  .task-row:first-child { border-top: none; }
+  .task-row .body { flex: 1; min-width: 0; }
+  .task-row .text { font-weight: 500; }
+  .task-row.done .text { color: var(--tertiary); text-decoration: line-through; }
+  .task-row .meta { display: flex; flex-wrap: wrap; align-items: center; gap: 7px; margin-top: 5px; font-size: 11px; color: var(--tertiary); }
+  .task-row .meta a { color: var(--secondary); text-decoration: none; cursor: pointer; }
+  .task-row .meta a:hover { color: var(--accent); }
+
+  /* Hidden until hovered, same as History/Meetings row actions -- a resting
+     task list should read as a list, not a wall of buttons. */
+  .task-acts { display: none; gap: 4px; flex: none; }
+  .task-row:hover .task-acts { display: flex; }
+  .task-act {
+    height: 22px; padding: 0 8px; border: none; border-radius: 6px;
+    background: var(--field); color: var(--secondary);
+    font: inherit; font-size: 10.5px; cursor: pointer;
+  }
+  .task-act:hover:not(:disabled) { background: var(--accent); color: #fff; }
+  .task-act:disabled { color: var(--tertiary); }
+
+  .task-done-toggle summary {
+    cursor: pointer; padding: 8px 13px;
+    font-size: 11px; color: var(--tertiary);
+    border-top: 0.5px solid var(--separator);
+  }
+  .task-done-toggle summary:hover { color: var(--label); }
+  .task-done-toggle .task-row:first-of-type { border-top: 0.5px solid var(--separator); }
+
+  .reminder-chip {
+    display: inline-flex; align-items: center; padding: 2px 8px; border-radius: 999px;
+    font-size: 10.5px; font-weight: 600;
+    background: color-mix(in srgb, var(--yellow) 20%, transparent); color: #92700a;
+  }
+  .reminder-chip.overdue { background: color-mix(in srgb, var(--red) 16%, transparent); color: #c62b22; }
+  .reminder-chip.none { background: var(--field); color: var(--tertiary); }
+
+  /* A native <select>, styled as a pill -- it's the smallest control that
+     cycles four states without four buttons per row. */
+  .status-select {
+    flex: none; border: none; border-radius: 999px; padding: 3px 9px;
+    font-size: 10.5px; font-weight: 650; font-family: inherit; cursor: pointer;
+  }
+  .status-select.todo { background: var(--field); color: var(--secondary); }
+  .status-select.progress { background: color-mix(in srgb, var(--accent) 16%, transparent); color: var(--accent); }
+  .status-select.blocked { background: color-mix(in srgb, var(--red) 16%, transparent); color: #c62b22; }
+  .status-select.done { background: color-mix(in srgb, var(--green) 18%, transparent); color: #1b8a3e; }
+
+  .pane-filters { display: flex; align-items: center; gap: 10px; margin: 16px 0 4px; flex-wrap: wrap; }
+  .pane-filters select {
+    font: inherit; font-size: 11.5px; color: var(--label);
+    background: var(--field); border: none; border-radius: 7px;
+    padding: 4px 9px; cursor: pointer;
+  }
+  .filter-chips { display: flex; gap: 4px; }
+  .filter-chip {
+    font: inherit; font-size: 11px; color: var(--secondary);
+    background: var(--field); border: none; border-radius: 999px;
+    padding: 4px 10px; cursor: pointer;
+  }
+  .filter-chip.on { background: var(--accent); color: #fff; }
+</style>
+</head>
+<body>
+  <div class="shell">
+    <nav class="sidebar" id="shell-nav" role="tablist" aria-label="Sections">
+      <button type="button" class="navitem" role="tab" data-pane="overview" aria-selected="true">
+        <span class="glyph" style="--tint:#007aff"><svg viewBox="0 0 24 24"><path d="M4 19V11M10 19V5M16 19v-6M22 19H2"/></svg></span>Overview
+      </button>
+      <button type="button" class="navitem" role="tab" data-pane="history" aria-selected="false">
+        <span class="glyph" style="--tint:#5e5ce6"><svg viewBox="0 0 24 24"><path d="M12 7v5l3 2"/><circle cx="12" cy="12" r="8"/></svg></span>History
+      </button>
+      <button type="button" class="navitem" role="tab" data-pane="meetings" aria-selected="false">
+        <span class="glyph" style="--tint:#af52de"><svg viewBox="0 0 24 24"><path d="M9 10a3 3 0 106 0 3 3 0 10-6 0M5 19a7 7 0 0114 0"/></svg></span>Meetings
+      </button>
+      <button type="button" class="navitem" role="tab" data-pane="tasks" aria-selected="false">
+        <span class="glyph" style="--tint:#ff9500"><svg viewBox="0 0 24 24"><path d="M9 11l3 3L22 4M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11"/></svg></span>Tasks
+      </button>
+      <button type="button" class="navitem" role="tab" data-pane="settings" aria-selected="false">
+        <span class="glyph" style="--tint:#8e8e93"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 3v3M12 18v3M3 12h3M18 12h3M5.6 5.6l2.1 2.1M16.3 16.3l2.1 2.1M18.4 5.6l-2.1 2.1M7.7 16.3l-2.1 2.1"/></svg></span>Settings
+      </button>
+    </nav>
+    <main class="content" id="shell-content">
+      <div class="pane on" data-pane="overview">
+        <div id="overview-live"></div>
+        <div class="group-title day">Today</div>
+        <div class="tiles" id="overview-tiles"></div>
+        <div class="group-title day">Last 14 days</div>
+        <div class="card chart">
+          <div class="bars" id="overview-bars"></div>
+          <div class="legend" id="overview-legend"></div>
+        </div>
+        <div class="group-title day">Recent</div>
+        <div class="card" id="overview-recent"></div>
+      </div>
+      <div class="pane" data-pane="history"><div id="history-list"></div></div>
+      <div class="pane" data-pane="meetings">
+        <div class="pane-filters" id="meetings-filters"></div>
+        <div id="meetings-list"></div>
+      </div>
+      <div class="pane" data-pane="tasks">
+        <div class="task-summary" id="task-summary"></div>
+        <div class="pane-filters" id="task-filters"></div>
+        <div id="task-groups"></div>
+      </div>
+      <div class="pane" data-pane="settings">
+  <!-- SETTINGS_PANE -->
+      </div>
+    </main>
+  </div>
+  <script>
+    // Dictations and meetings are separate stores now (see main_window.go),
+    // each with its own flat-or-grouped shape coming over from Go -- so each
+    // gets its own render function rather than one filtered by a shared flag.
+    function render() {
+      // A refresh rebuilds both lists' HTML from scratch; a player mounted
+      // in a row that is about to be thrown away would keep playing,
+      // invisible and unstoppable, if it weren't stopped first.
+      stopPlayer();
+      renderDays(document.getElementById('history-list'),
+        (window.voxlog && window.voxlog.days) || [], 'No transcripts yet.');
+      renderMeetings(document.getElementById('meetings-filters'), document.getElementById('meetings-list'),
+        (window.voxlog && window.voxlog.meetings) || [], 'No meetings recorded yet.');
+      renderTasks(document.getElementById('task-summary'), document.getElementById('task-filters'),
+        document.getElementById('task-groups'), (window.voxlog && window.voxlog.tasks) || []);
+      renderOverview();
+    }
+
+    // Only one recording plays at a time -- two of them talking over each
+    // other is never what was wanted. currentPlayer tracks the one <audio>
+    // element live in the page, and the row it belongs to.
+    var currentPlayer = null;
+
+    function stopPlayer() {
+      if (!currentPlayer) return;
+      currentPlayer.audio.pause();
+      currentPlayer.audio.remove();
+      currentPlayer = null;
+    }
+
+    // playIn mounts a player for name inside row, stopping whatever was
+    // playing before it (including a player already in this same row).
+    // preload="none" matters: a day with forty takes must not open forty
+    // HTTP requests just because the rows are on screen.
+    function playIn(row, name) {
+      stopPlayer();
+      var audio = document.createElement('audio');
+      audio.className = 'player';
+      audio.controls = true;
+      audio.preload = 'none';
+      audio.src = ((window.voxlog && window.voxlog.audioBase) || '') + name;
+      row.appendChild(audio);
+      currentPlayer = { audio: audio, row: row };
+      audio.play().catch(function () {}); // autoplay can be refused; controls still work
+    }
+
+    // dictationRowHTML and meetingRowHTML build one .entry row each; every
+    // place that lists a dictation or a meeting (History, Meetings, and the
+    // Overview pane's Recent card) draws from these two, rather than each
+    // keeping its own copy of the row markup.
+    // taskHint is the History/Meetings side of Task Hub classification: a row
+    // whose entry carries a task_id gets a green accent and a small note
+    // pointing at the Tasks pane, so a classified snippet is visible right
+    // where it was dictated, not only inside Tasks.
+    function taskHint(e) {
+      if (!e.task_id) return { cls: '', html: '' };
+      var tags = '<span class="tag task-detected">Task detected</span>';
+      if (e.task_entity) {
+        tags += '<span class="tag task-entity-tag" style="--dot:' + entityColor(e.task_entity) + '">' +
+          escapeHtml(e.task_entity) + '</span>';
+      }
+      if (e.task_status) {
+        tags += '<span class="tag status-' + e.task_status + '">' +
+          (taskStatusLabel[e.task_status] || e.task_status) + '</span>';
+      }
+      return {
+        cls: ' task-detected',
+        html: '<div class="meta">' + tags + '</div>' +
+          '<div class="hub-note">Added to Task Hub' + (e.task_reminder ? ' · reminder ' + e.task_reminder : '') + '</div>'
+      };
+    }
+
+    function dictationRowHTML(e, gi, ei) {
+      // Index rather than inlining the text: the entry goes back to Go
+      // verbatim on click, and round-tripping it through an HTML attribute
+      // would mean escaping it correctly twice.
+      var body = e.text
+        ? '<div class="text">' + escapeHtml(e.text) + '</div>'
+        : '<div class="text untranscribed">' +
+            (e.has_audio ? 'Not transcribed yet' : 'No transcript, and the audio is gone') +
+          '</div>';
+      var hint = taskHint(e);
+
+      return '<div class="entry' + hint.cls + '" data-day="' + gi + '" data-entry="' + ei + '">' +
+        '<span class="pill" title="Transcription time">' + e.duration_seconds.toFixed(1) + 's</span>' +
+        '<div class="body">' +
+          body +
+          '<div class="meta"><span>' + e.time + '</span></div>' +
+          hint.html +
+        '</div>' +
+        '<div class="acts">' +
+          // Clicking the row body already copies (see wireEntries); the
+          // button is the same action made visible, same as the meeting
+          // row's Copy button.
+          (e.text ? '<button type="button" class="act copy">Copy</button>' : '') +
+          (e.audio ? '<button type="button" class="act play" data-audio="' + e.audio + '">Play</button>' : '') +
+          (e.audio ? '<button type="button" class="act delete-audio" data-audio="' + e.audio + '">Delete audio</button>' : '') +
+        '</div>' +
+        '<button type="button" class="chev" title="Expand" aria-label="Expand">&#9654;</button>' +
+      '</div>';
+    }
+
+    function renderDays(root, days, emptyText) {
+      var html = '';
+      days.forEach(function (group, gi) {
+        var rows = '';
+        group.entries.forEach(function (e, ei) { rows += dictationRowHTML(e, gi, ei); });
+        if (rows) html += '<div class="group-title day">' + group.day + '</div><div class="card">' + rows + '</div>';
+      });
+      root.innerHTML = html || '<div class="empty">' + emptyText + '</div>';
+
+      wireEntries(root, function (row) {
+        var day = days[parseInt(row.dataset.day, 10)];
+        return day && day.entries[parseInt(row.dataset.entry, 10)];
+      });
+    }
+
+    // meetings is the flat list from MeetingStore.All, grouped here by its
+    // own day field -- there is no separate day-grouped shape for it the way
+    // groupByDay makes for dictations, since Go only ever hands this one list
+    // over.
+    function meetingRowHTML(e, gi, ei) {
+      var body = e.text
+        ? '<div class="text">' + escapeHtml(e.text) + '</div>'
+        : '<div class="text untranscribed">' +
+            (e.has_audio ? 'Not transcribed yet' : 'No transcript, and the audio is gone') +
+          '</div>';
+      // The pill is the decode time, the same thing it means on a dictation
+      // row -- a meeting that took 50 minutes to record and one minute to
+      // transcribe reads as two numbers, not one repeated twice. Until there
+      // is a transcript there is no decode time, so the pill falls back to
+      // the length of the call rather than showing 0s.
+      var pill = e.duration_seconds > 0
+        ? { text: duration(e.duration_seconds), title: 'Transcription time' }
+        : { text: duration(e.recording_seconds), title: 'Length of the recording' };
+      var hint = taskHint(e);
+      var summary = e.summary
+        ? '<div class="summary"><span class="summary-label">Summary</span>' + escapeHtml(e.summary) + '</div>' : '';
+      return '<div class="entry' + hint.cls + '" data-day="' + gi + '" data-entry="' + ei + '">' +
+        '<span class="pill" title="' + pill.title + '">' + pill.text + '</span>' +
+        '<div class="body">' +
+          body +
+          summary +
+          '<div class="meta"><span>' + e.time + '</span>' +
+            '<span>' + duration(e.recording_seconds) + '</span>' +
+            (!e.text ? '<span class="tag pending">Not transcribed</span>' : '') +
+          '</div>' +
+          hint.html +
+        '</div>' +
+        '<div class="acts">' +
+          (!e.text && e.has_audio
+            ? '<button type="button" class="act transcribe">Transcribe</button>' : '') +
+          // Clicking the row body already copies the transcript (see
+          // wireEntries), but a meeting row is the one place that action was
+          // invisible -- a dedicated button says so, the same explicit
+          // affordance the "You" play button used to sit where this is.
+          (e.text ? '<button type="button" class="act copy">Copy</button>' : '') +
+          // A meeting is an hour long -- exactly what the Range support
+          // in the loopback server (see server.go) is for.
+          (e.system_audio ? '<button type="button" class="act play" data-audio="' + e.system_audio + '">Them</button>' : '') +
+          // One button clears whichever track(s) this row has -- a call
+          // is one recording to the person listening to it back, even
+          // when it is two files on disk.
+          (e.audio ? '<button type="button" class="act delete-audio" data-audio="' + e.audio +
+            (e.system_audio ? ',' + e.system_audio : '') + '">Delete audio</button>' : '') +
+        '</div>' +
+        '<button type="button" class="chev" title="Expand" aria-label="Expand">&#9654;</button>' +
+      '</div>';
+    }
+
+    // meetingEntityFilter persists across re-renders (RefreshMainWindowIfOpen
+    // re-invokes render() often), so a filter picked once stays picked until
+    // the user changes it, not just until the next transcript lands.
+    var meetingEntityFilter = '';
+
+    function renderMeetingFilter(root, meetings) {
+      var names = [];
+      meetings.forEach(function (m) { if (m.task_entity && names.indexOf(m.task_entity) === -1) names.push(m.task_entity); });
+      names.sort();
+      if (!names.length) { root.innerHTML = ''; return; }
+      if (meetingEntityFilter && names.indexOf(meetingEntityFilter) === -1) meetingEntityFilter = '';
+
+      root.innerHTML = '<select id="meeting-filter-entity"><option value="">All projects</option>' +
+        names.map(function (n) {
+          return '<option value="' + escapeHtml(n) + '"' + (n === meetingEntityFilter ? ' selected' : '') + '>' + escapeHtml(n) + '</option>';
+        }).join('') + '</select>';
+      root.querySelector('#meeting-filter-entity').addEventListener('change', function (e) {
+        meetingEntityFilter = e.target.value;
+        renderMeetings(document.getElementById('meetings-filters'), document.getElementById('meetings-list'),
+          window.voxlog.meetings || [], 'No meetings recorded yet.');
+      });
+    }
+
+    function renderMeetings(filtersRoot, root, allMeetings, emptyText) {
+      renderMeetingFilter(filtersRoot, allMeetings);
+      var meetings = meetingEntityFilter
+        ? allMeetings.filter(function (m) { return m.task_entity === meetingEntityFilter; })
+        : allMeetings;
+
+      var byDay = [], indexByDay = {};
+      meetings.forEach(function (m) {
+        if (!(m.day in indexByDay)) {
+          indexByDay[m.day] = byDay.length;
+          byDay.push({ day: m.day, entries: [] });
+        }
+        byDay[indexByDay[m.day]].entries.push(m);
+      });
+
+      var html = '';
+      byDay.forEach(function (group, gi) {
+        var rows = '';
+        group.entries.forEach(function (e, ei) { rows += meetingRowHTML(e, gi, ei); });
+        if (rows) html += '<div class="group-title day">' + group.day + '</div><div class="card">' + rows + '</div>';
+      });
+      var empty = meetingEntityFilter && allMeetings.length ? 'No meetings for this project.' : emptyText;
+      root.innerHTML = html || '<div class="empty">' + empty + '</div>';
+
+      wireEntries(root, function (row) {
+        var day = byDay[parseInt(row.dataset.day, 10)];
+        return day && day.entries[parseInt(row.dataset.entry, 10)];
+      });
+    }
+
+    // entityColor turns a task's entity name into a stable colour, so the
+    // same project always draws the same dot without a colour picked or
+    // stored anywhere -- a plain string hash into a small fixed palette.
+    function entityColor(name) {
+      // Unfiltered is the catch-all, not a real project -- a neutral dot
+      // says so at a glance instead of it looking like just another one of
+      // the user's configured projects.
+      if (name === 'Unfiltered') return '#8e8e93';
+      var hash = 0;
+      for (var i = 0; i < name.length; i++) { hash = (hash * 31 + name.charCodeAt(i)) >>> 0; }
+      var hues = ['#007aff', '#af52de', '#34c759', '#ff9500', '#ff3b30', '#5e5ce6', '#00c7be'];
+      return hues[hash % hues.length];
+    }
+
+    var taskStatusLabel = { todo: 'To do', in_progress: 'In progress', blocked: 'Blocked', done: 'Done' };
+    function taskStatusClass(status) { return status === 'in_progress' ? 'progress' : status; }
+
+    // renderTasks draws the Tasks pane: a status summary bar, then tasks
+    // grouped by their LLM-assigned entity (project/client/topic) -- the
+    // classification step decides is_task/entity/reminder; this only lays
+    // out whatever Task Hub already produced.
+    // taskFilter persists across re-renders (see meetingEntityFilter above
+    // for why) -- picked once, kept until changed, not reset every time a
+    // classification lands and re-triggers render().
+    var taskFilter = { entity: '', status: '' };
+
+    function renderTaskFilters(root, tasks) {
+      var names = [];
+      tasks.forEach(function (t) { if (t.entity && names.indexOf(t.entity) === -1) names.push(t.entity); });
+      names.sort();
+      if (taskFilter.entity && names.indexOf(taskFilter.entity) === -1) taskFilter.entity = '';
+
+      var entitySelect = names.length
+        ? '<select id="task-filter-entity"><option value="">All projects</option>' +
+          names.map(function (n) {
+            return '<option value="' + escapeHtml(n) + '"' + (n === taskFilter.entity ? ' selected' : '') + '>' + escapeHtml(n) + '</option>';
+          }).join('') + '</select>'
+        : '';
+      var statusChips = ['', 'todo', 'in_progress', 'blocked', 'done'].map(function (s) {
+        return '<button type="button" class="filter-chip' + (taskFilter.status === s ? ' on' : '') + '" data-status="' + s + '">' +
+          (s ? taskStatusLabel[s] : 'All') + '</button>';
+      }).join('');
+
+      root.innerHTML = entitySelect + '<div class="filter-chips">' + statusChips + '</div>';
+
+      var reRender = function () {
+        renderTasks(document.getElementById('task-summary'), document.getElementById('task-filters'),
+          document.getElementById('task-groups'), window.voxlog.tasks || []);
+      };
+      var entitySel = root.querySelector('#task-filter-entity');
+      if (entitySel) entitySel.addEventListener('change', function (e) { taskFilter.entity = e.target.value; reRender(); });
+      root.querySelectorAll('.filter-chip').forEach(function (btn) {
+        btn.addEventListener('click', function () { taskFilter.status = btn.dataset.status; reRender(); });
+      });
+    }
+
+    function renderTasks(summaryRoot, filtersRoot, groupsRoot, allTasks) {
+      var counts = { todo: 0, in_progress: 0, blocked: 0, done: 0 };
+      allTasks.forEach(function (t) { if (counts[t.status] !== undefined) counts[t.status]++; });
+      summaryRoot.innerHTML =
+        '<div class="task-stat todo"><div class="n">' + counts.todo + '</div><div class="k">To do</div></div>' +
+        '<div class="task-stat progress"><div class="n">' + counts.in_progress + '</div><div class="k">In progress</div></div>' +
+        '<div class="task-stat blocked"><div class="n">' + counts.blocked + '</div><div class="k">Blocked</div></div>' +
+        '<div class="task-stat done"><div class="n">' + counts.done + '</div><div class="k">Done</div></div>';
+
+      renderTaskFilters(filtersRoot, allTasks);
+      var tasks = allTasks.filter(function (t) {
+        return (!taskFilter.entity || t.entity === taskFilter.entity) &&
+               (!taskFilter.status || t.status === taskFilter.status);
+      });
+
+      // Done tasks split out per group rather than dropped: still reachable
+      // (a collapsed "N completed" -- see taskRowHTML/the details element
+      // below), just not cluttering the default view of what's still open.
+      var byEntity = [], indexByEntity = {};
+      tasks.forEach(function (t) {
+        var key = t.entity || 'Unfiltered';
+        if (!(key in indexByEntity)) {
+          indexByEntity[key] = byEntity.length;
+          byEntity.push({ entity: key, active: [], done: [] });
+        }
+        (t.status === 'done' ? byEntity[indexByEntity[key]].done : byEntity[indexByEntity[key]].active)
+          .push(t);
+      });
+      // Unfiltered is the catch-all, not a project -- keep it visually last
+      // regardless of when its tasks happened to land, so the real projects
+      // read top-to-bottom first.
+      byEntity.sort(function (a, b) {
+        return (a.entity === 'Unfiltered') - (b.entity === 'Unfiltered');
+      });
+
+      var now = new Date();
+      function taskRowHTML(t) {
+        var reminderHTML = '<span class="reminder-chip none">No reminder</span>';
+        if (t.reminder) {
+          var when = new Date(t.reminder);
+          var overdue = when < now && t.status !== 'done';
+          reminderHTML = '<span class="reminder-chip' + (overdue ? ' overdue' : '') + '">' +
+            (overdue ? 'Overdue · ' : '') +
+            when.toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) +
+            '</span>';
+        }
+        var sourcePane = t.source_kind === 'meeting' ? 'meetings' : 'history';
+        var options = ['todo', 'in_progress', 'blocked', 'done'].map(function (s) {
+          return '<option value="' + s + '"' + (s === t.status ? ' selected' : '') + '>' + taskStatusLabel[s] + '</option>';
+        }).join('');
+        return '<div class="task-row' + (t.status === 'done' ? ' done' : '') + '">' +
+          '<div class="body">' +
+            '<div class="text">' + escapeHtml(t.text) + '</div>' +
+            '<div class="meta">' + reminderHTML +
+              '<a data-source-pane="' + sourcePane + '">from ' + (sourcePane === 'meetings' ? 'meeting' : 'dictation') + ' ↗</a>' +
+            '</div>' +
+          '</div>' +
+          '<select class="status-select ' + taskStatusClass(t.status) + '" data-id="' + t.id + '">' + options + '</select>' +
+          '<div class="task-acts">' +
+            '<button type="button" class="task-act" data-act="reject" data-id="' + t.id + '" title="Wrong -- not actually a task">Not a task</button>' +
+            '<button type="button" class="task-act" data-act="delete" data-id="' + t.id + '" title="Remove">Delete</button>' +
+          '</div>' +
+        '</div>';
+      }
+
+      groupsRoot.innerHTML = byEntity.length ? byEntity.map(function (g) {
+        var rows = g.active.map(taskRowHTML).join('');
+        var doneSection = g.done.length
+          ? '<details class="task-done-toggle"><summary>' + g.done.length + ' completed</summary>' +
+            g.done.map(taskRowHTML).join('') + '</details>'
+          : '';
+        var tag = g.entity === 'Unfiltered' ? 'no project matched' : 'from Settings';
+        return '<div class="task-entity">' +
+          '<span class="task-entity-dot" style="background:' + entityColor(g.entity) + '"></span>' +
+          '<span class="task-entity-name">' + escapeHtml(g.entity) + '</span>' +
+          '<span class="task-entity-count">' + (g.active.length + g.done.length) + '</span>' +
+          '<span class="task-entity-auto">' + tag + '</span>' +
+        '</div><div class="card">' + (rows || '<div class="empty">All done here.</div>') + doneSection + '</div>';
+      }).join('') : '<div class="empty">' +
+        ((taskFilter.entity || taskFilter.status) && allTasks.length ? 'No tasks match this filter.' : 'No tasks yet.') +
+        '</div>';
+
+      groupsRoot.querySelectorAll('.status-select').forEach(function (sel) {
+        sel.addEventListener('change', function () {
+          var id = sel.dataset.id, status = sel.value;
+          sel.className = 'status-select ' + taskStatusClass(status);
+          window.setTaskStatus(id, status).catch(function (e) { alert(e); });
+        });
+      });
+      groupsRoot.querySelectorAll('[data-source-pane]').forEach(function (a) {
+        a.addEventListener('click', function () { window.selectPane(a.dataset.sourcePane); });
+      });
+      groupsRoot.querySelectorAll('.task-act').forEach(function (btn) {
+        btn.addEventListener('click', function () {
+          var id = btn.dataset.id;
+          var call = btn.dataset.act === 'reject' ? window.rejectTask : window.deleteTask;
+          btn.disabled = true;
+          call(id).catch(function (e) { alert(e); btn.disabled = false; });
+        });
+      });
+    }
+
+    // wireEntries hooks up the hover-revealed expand/collapse and Transcribe
+    // buttons shared by both lists. entryFor maps a row back to the JS object
+    // it was drawn from -- renderDays and renderMeetings each index into a
+    // different array, so the lookup is the one thing that has to be passed
+    // in rather than shared.
+    function wireEntries(root, entryFor) {
+      root.querySelectorAll('.entry').forEach(function (row) {
+        // Stashed on the element itself rather than kept in this closure:
+        // keyboard navigation (below) needs to read the entry back off
+        // whichever row is highlighted, without caring which list drew it.
+        row._entry = entryFor(row);
+        row.querySelector('.chev').addEventListener('click', function (ev) {
+          // Expanding is not "using" the entry -- keep it off the output path.
+          ev.stopPropagation();
+          var open = row.classList.toggle('expanded');
+          this.title = open ? 'Collapse' : 'Expand';
+          // A collapsed row must not leave a dead player behind it.
+          if (!open && currentPlayer && currentPlayer.row === row) stopPlayer();
+        });
+        row.querySelector('.body').addEventListener('click', function () {
+          var entry = entryFor(row);
+          // A meeting with no transcript has nothing to re-deliver; clicking
+          // it must not put an empty string on the clipboard.
+          // Confirming a row: whatever the setting says happens, which may
+          // be pasting it back into the app behind this window.
+          if (entry && entry.text) window.applyEntry(entry.text, false);
+        });
+
+        var copy = row.querySelector('.copy');
+        if (copy) {
+          copy.addEventListener('click', function (ev) {
+            ev.stopPropagation();
+            var entry = entryFor(row);
+            if (!entry || !entry.text) return;
+            // A button that says Copy copies, whatever confirming a row is
+            // set to do -- and the window stays open, since the user asked
+            // for the clipboard rather than for the text to land somewhere.
+            window.applyEntry(entry.text, true);
+            // The only feedback a copy-to-clipboard action can give --
+            // there is nowhere else for "done" to show up.
+            var was = copy.textContent;
+            copy.textContent = 'Copied';
+            setTimeout(function () { copy.textContent = was; }, 1200);
+          });
+        }
+
+        var transcribe = row.querySelector('.transcribe');
+        if (transcribe) {
+          transcribe.addEventListener('click', function (ev) {
+            ev.stopPropagation();
+            var entry = entryFor(row);
+            if (!entry) return;
+            // The decode is queued behind whatever else is running, so this
+            // says "asked for" rather than pretending to be finished. The row
+            // rewrites itself when the transcript lands.
+            transcribe.disabled = true;
+            transcribe.textContent = 'Queued…';
+            window.transcribeEntry(entry.id).catch(function (e) {
+              transcribe.disabled = false;
+              transcribe.textContent = 'Transcribe';
+              alert(e);
+            });
+          });
+        }
+
+        // A row may have more than one Play button now (a meeting's mic and
+        // system-audio tracks) -- each carries the file to play in its own
+        // data-audio attribute, and playIn/stopPlayer are what still keep it
+        // to one sounding at a time, in this row or any other.
+        row.querySelectorAll('.play').forEach(function (play) {
+          play.addEventListener('click', function (ev) {
+            ev.stopPropagation();
+            var name = play.dataset.audio;
+            if (!name) return;
+            if (!row.classList.contains('expanded')) {
+              row.classList.add('expanded');
+              var chev = row.querySelector('.chev');
+              if (chev) chev.title = 'Collapse';
+            }
+            playIn(row, name);
+          });
+        });
+
+        // Not undoable, and Copy/Play sit right next to it -- a plain
+        // confirm() is the whole guard against a stray click, per the plan
+        // (no custom dialog for something this rare).
+        var del = row.querySelector('.delete-audio');
+        if (del) {
+          del.addEventListener('click', function (ev) {
+            ev.stopPropagation();
+            if (!confirm('Delete this recording? This cannot be undone.')) return;
+            var names = del.dataset.audio.split(',');
+            if (currentPlayer && currentPlayer.row === row) stopPlayer();
+            del.disabled = true;
+            Promise.all(names.map(function (n) { return window.deleteRecording(n); }))
+              .catch(function (e) { alert(e); del.disabled = false; });
+          });
+        }
+      });
+    }
+
+    // ---------------- overview ----------------
+
+    function renderOverview() {
+      var ov = (window.voxlog && window.voxlog.overview) || {};
+      renderOverviewTiles(ov);
+      renderOverviewChart(ov);
+      renderOverviewRecent();
+    }
+
+    function renderOverviewTiles(ov) {
+      var el = document.getElementById('overview-tiles');
+      if (!el) return;
+      el.innerHTML =
+        '<div class="tile"><div class="k">Recordings</div><div class="v">' + (ov.recordings || 0) + '</div></div>' +
+        '<div class="tile"><div class="k">Words dictated</div><div class="v">' + (ov.words || 0) + '</div>' +
+          // "≈" is load-bearing: 40 words/minute is a typing-speed estimate,
+          // never this user's actual one (see buildOverview in stats.go).
+          '<div class="d">≈ ' + (ov.typing_minutes || 0) + ' min of typing saved</div></div>' +
+        '<div class="tile"><div class="k">Time speaking</div><div class="v">' + minutes(ov.speaking_seconds) + '<small> min</small></div></div>' +
+        '<div class="tile"><div class="k">Median decode</div><div class="v">' + (ov.median_decode || 0).toFixed(1) + '<small> s</small></div></div>';
+    }
+
+    // The chart draws one column per day, stacking meetings above
+    // dictations, scaled to the tallest column -- and a day with nothing in
+    // it still gets its label and an empty column, so a gap reads as a gap
+    // rather than vanishing from the axis.
+    function renderOverviewChart(ov) {
+      var bars = document.getElementById('overview-bars');
+      var legend = document.getElementById('overview-legend');
+      if (!bars || !legend) return;
+      var days = ov.days || [];
+      var max = 1;
+      days.forEach(function (d) { max = Math.max(max, d.dictations + d.meetings); });
+
+      bars.innerHTML = days.map(function (d, i) {
+        var dict = Math.round(d.dictations / max * 76);
+        var meet = Math.round(d.meetings / max * 76);
+        var today = i === days.length - 1 ? ' today' : '';
+        return '<div class="col' + today + '"><div class="stack">' +
+          (meet ? '<div class="meet" style="height:' + Math.max(meet, 4) + 'px"></div>' : '') +
+          (dict ? '<div class="dict" style="height:' + Math.max(dict, 3) + 'px"></div>' : '') +
+          '</div><div class="lbl">' + d.label + '</div></div>';
+      }).join('');
+
+      legend.innerHTML =
+        '<span><i class="swatch" style="background:var(--accent)"></i> Dictation</span>' +
+        '<span><i class="swatch" style="background:#af52de"></i> Meetings</span>' +
+        '<span style="margin-left:auto">' + (ov.total_recordings || 0) + ' recordings · ' +
+          (ov.total_words || 0) + ' words · ' + duration(ov.total_seconds) + ' of audio</span>';
+    }
+
+    // Recent reuses the same row markup History and Meetings draw from --
+    // never a second copy of it -- picking the three newest across both
+    // lists by their id, which both sides format as a sortable RFC3339Nano
+    // timestamp.
+    function renderOverviewRecent() {
+      var root = document.getElementById('overview-recent');
+      if (!root) return;
+      var dictations = ((window.voxlog && window.voxlog.days) || []).reduce(function (acc, g) {
+        return acc.concat(g.entries);
+      }, []);
+      var meetings = (window.voxlog && window.voxlog.meetings) || [];
+
+      var recent = dictations.map(function (e) { return { kind: 'd', e: e }; })
+        .concat(meetings.map(function (e) { return { kind: 'm', e: e }; }))
+        .sort(function (a, b) { return a.e.id < b.e.id ? 1 : -1; })
+        .slice(0, 3);
+
+      root.innerHTML = recent.length
+        ? recent.map(function (r, i) { return r.kind === 'm' ? meetingRowHTML(r.e, 0, i) : dictationRowHTML(r.e, 0, i); }).join('')
+        : '<div class="empty">Nothing recorded yet.</div>';
+
+      wireEntries(root, function (row) {
+        return recent[parseInt(row.dataset.entry, 10)] && recent[parseInt(row.dataset.entry, 10)].e;
+      });
+    }
+
+    // Minutes, rounded -- the tile shows a whole number, not a number of
+    // seconds nobody would read at a glance.
+    function minutes(seconds) {
+      return Math.round((seconds || 0) / 60);
+    }
+
+    // mm:ss for the live banner's elapsed time.
+    function elapsedLabel(seconds) {
+      var total = Math.max(0, Math.round(seconds || 0));
+      var m = Math.floor(total / 60), s = total % 60;
+      return m + ':' + (s < 10 ? '0' : '') + s;
+    }
+
+    function renderLiveBanner(status) {
+      var el = document.getElementById('overview-live');
+      if (!el) return;
+      if (!status || !status.running) {
+        el.innerHTML = '';
+        return;
+      }
+      el.innerHTML =
+        '<div class="live"><span class="pulse"></span>' +
+          '<div><div class="what">Meeting recording</div><div class="sub">Microphone + system audio · dictation still works</div></div>' +
+          '<div class="elapsed">' + elapsedLabel(status.seconds) + '</div>' +
+          '<button type="button" class="act" id="overview-stop">Stop</button>' +
+        '</div>';
+      var stop = document.getElementById('overview-stop');
+      stop.addEventListener('click', function () {
+        stop.disabled = true;
+        window.stopMeeting().catch(function (e) { stop.disabled = false; alert(e); });
+      });
+    }
+
+    // The banner's poll is the only repeating timer in this window, and it
+    // must run only while there is an Overview pane to show it in --
+    // otherwise a window left open on Settings, or merely hidden behind
+    // another app, would wake the process every second forever. Both the
+    // pane switch and the page's own visibility (an orderOut'd window still
+    // exists, it just isn't on screen) are checked every time either could
+    // have changed.
+    var meetingPollTimer = null;
+    function pollMeetingStatus() {
+      window.meetingStatus().then(renderLiveBanner).catch(function () { renderLiveBanner(null); });
+    }
+    function updateMeetingPoll() {
+      var overviewNav = document.querySelector('#shell-nav .navitem[data-pane="overview"]');
+      var showing = !!overviewNav && overviewNav.getAttribute('aria-selected') === 'true';
+      var shouldPoll = showing && document.visibilityState === 'visible';
+      if (shouldPoll && meetingPollTimer === null) {
+        pollMeetingStatus();
+        meetingPollTimer = setInterval(pollMeetingStatus, 1000);
+      } else if (!shouldPoll && meetingPollTimer !== null) {
+        clearInterval(meetingPollTimer);
+        meetingPollTimer = null;
+        renderLiveBanner(null); // stale "recording" state must not linger once nothing is polling it
+      }
+    }
+    document.addEventListener('visibilitychange', updateMeetingPoll);
+
+    // Recording length, as minutes and seconds -- a call is not a number of
+    // seconds anybody reads.
+    function duration(seconds) {
+      var total = Math.round(seconds || 0);
+      var h = Math.floor(total / 3600), m = Math.floor(total / 60) % 60, s = total % 60;
+      if (h > 0) return h + 'h ' + m + 'm';
+      if (m > 0) return m + 'm ' + (s < 10 ? '0' : '') + s + 's';
+      return s + 's';
+    }
+    function escapeHtml(s) {
+      var d = document.createElement('div');
+      d.textContent = s;
+      return d.innerHTML;
+    }
+
+    // Panes are switched here and nowhere else. The settings fragment runs
+    // its own nav, scoped to itself, so the two never see each other's
+    // clicks.
+    function selectPane(name) {
+      document.querySelectorAll('#shell-nav .navitem').forEach(function (n) {
+        n.setAttribute('aria-selected', String(n.dataset.pane === name));
+      });
+      document.querySelectorAll('#shell-content > .pane').forEach(function (p) {
+        p.classList.toggle('on', p.dataset.pane === name);
+      });
+      document.getElementById('shell-content').scrollTop = 0;
+      updateMeetingPoll();
+      // A highlight left over from the pane just left would sit on a row
+      // that is no longer the thing Enter acts on.
+      kbdClearSelection();
+    }
+    window.selectPane = selectPane;
+
+    document.getElementById('shell-nav').addEventListener('click', function (e) {
+      var item = e.target.closest('.navitem');
+      if (item) selectPane(item.dataset.pane);
+    });
+
+    // ---------------- keyboard row selection (History, Meetings) ----------------
+    // Up/Down highlights a row without touching the clipboard; Enter acts on
+    // whichever row is highlighted, the same action a click on its body
+    // would -- so a transcript can be picked and pasted without the mouse.
+    var kbdSelected = null;
+
+    function kbdListRoot() {
+      var pane = document.querySelector('#shell-nav .navitem[aria-selected="true"]');
+      if (!pane) return null;
+      if (pane.dataset.pane === 'history') return document.getElementById('history-list');
+      if (pane.dataset.pane === 'meetings') return document.getElementById('meetings-list');
+      return null;
+    }
+
+    function kbdClearSelection() {
+      if (kbdSelected) kbdSelected.classList.remove('kbd-selected');
+      kbdSelected = null;
+    }
+
+    function kbdSelect(row) {
+      if (kbdSelected) kbdSelected.classList.remove('kbd-selected');
+      kbdSelected = row;
+      row.classList.add('kbd-selected');
+      row.scrollIntoView({ block: 'nearest' });
+    }
+
+    document.addEventListener('keydown', function (e) {
+      if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp' && e.key !== 'Enter') return;
+      // A form control's own arrow/Enter behaviour (a <select>, a text
+      // field) takes precedence -- this is for the row list, not for
+      // whatever the Settings pane happens to have focused.
+      var tag = document.activeElement && document.activeElement.tagName;
+      if (tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA' || tag === 'BUTTON') return;
+
+      var root = kbdListRoot();
+      if (!root) return;
+      var rows = Array.prototype.slice.call(root.querySelectorAll('.entry'));
+      if (!rows.length) return;
+
+      if (e.key === 'Enter') {
+        if (!kbdSelected || rows.indexOf(kbdSelected) === -1) return;
+        e.preventDefault();
+        var entry = kbdSelected._entry;
+        if (entry && entry.text) window.applyEntry(entry.text, false);
+        return;
+      }
+
+      e.preventDefault();
+      var idx = rows.indexOf(kbdSelected);
+      if (idx === -1) {
+        idx = e.key === 'ArrowDown' ? 0 : rows.length - 1;
+      } else {
+        idx = e.key === 'ArrowDown' ? Math.min(idx + 1, rows.length - 1) : Math.max(idx - 1, 0);
+      }
+      kbdSelect(rows[idx]);
+    });
+
+    // The fragment used to initialise itself on DOMContentLoaded. Spliced
+    // into this page it is present before that event, so the shell drives it.
+    window.initSettingsPane && window.initSettingsPane();
+    render();
+    if (window.voxlog && window.voxlog.pane) selectPane(window.voxlog.pane);
+    // selectPane already calls updateMeetingPoll when it runs; this covers
+    // the case where window.voxlog.pane was never set and the markup's own
+    // default (Overview, aria-selected="true") is what's actually showing.
+    updateMeetingPoll();
+  </script>
+</body>
+</html>
