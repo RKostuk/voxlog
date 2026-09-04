@@ -94,6 +94,7 @@
 
   .i-dictation { --tint: #007aff; }
   .i-model     { --tint: #af52de; }
+  .i-llm       { --tint: #5856d6; }
   .i-audio     { --tint: #ff2d55; }
   .i-meetings  { --tint: #34c759; }
   .i-history   { --tint: #ff9500; }
@@ -205,6 +206,28 @@
     display: flex; gap: 6px; margin-top: 10px; width: 100%;
   }
   .entity-dict-add input[type=text] { flex: 1; }
+  /* Add and the LLM pane's Download sit next to a bordered input: the generic
+     #settings-pane button has no border, so without matching the input's box
+     they end up a pixel short and visibly off the row. Same padding, same
+     radius, a transparent border of the same width -- the accent hover from
+     the generic rule still applies, no new colours. */
+  .entity-dict-add button,
+  #llm-model button {
+    align-self: stretch;
+    border: 0.5px solid transparent;
+    border-radius: 6px;
+    padding: 4px 11px;
+  }
+  #llm-model { display: flex; align-items: center; gap: 8px; }
+
+  /* A rejected line is a sentence, not a one-word project name, so its chip
+     wraps to the row width and truncates rather than stretching the card. */
+  .rejected-chip { width: 100%; padding: 4px 6px 4px 10px; border-radius: 8px; }
+  .rejected-text {
+    flex: 1; min-width: 0;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  #settings-pane .rejected-restore { font-size: 10.5px; padding: 2px 8px; }
 
   .meter { display: flex; align-items: flex-end; gap: 2px; height: 20px; flex: 1; }
   .meter .bar { flex: 1; background: var(--green); border-radius: 1.5px; height: 8%;

@@ -26,6 +26,42 @@ func TestLoadRejectedMissingFileIsNotAnError(t *testing.T) {
 	}
 }
 
+func TestRemoveRejectedDropsOnlyTheNamedEntry(t *testing.T) {
+	s := NewStore(t.TempDir())
+	for _, text := range []string{"first", "second", "third"} {
+		if err := s.AppendRejected(text); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := s.RemoveRejected("second"); err != nil {
+		t.Fatal(err)
+	}
+	list, err := s.LoadRejected()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(list) != 2 || list[0] != "first" || list[1] != "third" {
+		t.Fatalf("got %v, want [first third]", list)
+	}
+}
+
+func TestRemoveRejectedUnknownEntryIsANoOp(t *testing.T) {
+	s := NewStore(t.TempDir())
+	if err := s.AppendRejected("only"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.RemoveRejected("never added"); err != nil {
+		t.Fatalf("removing an absent entry should not fail: %v", err)
+	}
+	list, err := s.LoadRejected()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(list) != 1 || list[0] != "only" {
+		t.Fatalf("got %v, want [only]", list)
+	}
+}
+
 func TestGetAndDeleteRoundTrip(t *testing.T) {
 	s := NewStore(t.TempDir())
 	tk := Task{ID: NewID(), Text: "send report"}

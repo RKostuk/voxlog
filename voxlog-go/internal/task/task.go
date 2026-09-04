@@ -39,6 +39,13 @@ type Task struct {
 	Status     Status     `json:"status"`
 	Reminder   *time.Time `json:"reminder,omitempty"`
 	Created    time.Time  `json:"created"`
+	// Notes is the user's own free text about the task -- everything the
+	// classifier's one-line extraction had no room for. Updated is when the
+	// text or the notes were last edited by hand; zero on a task nobody has
+	// touched since it was classified. Both omitempty, so tasks written
+	// before these existed decode unchanged.
+	Notes   string    `json:"notes,omitempty"`
+	Updated time.Time `json:"updated,omitempty"`
 }
 
 type Store struct {

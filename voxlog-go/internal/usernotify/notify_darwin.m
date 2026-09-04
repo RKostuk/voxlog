@@ -85,7 +85,11 @@ void voxlogNotifyInit(void) {
       }
       gDelegate = [[VoxlogNotifyDelegate alloc] init];
       center.delegate = gDelegate;
-      [center requestAuthorizationWithOptions:UNAuthorizationOptionAlert
+      // Sound is requested alongside Alert because voxlogNotifyPost sets
+      // content.sound; without the option the system drops the sound and
+      // keeps the banner.
+      [center requestAuthorizationWithOptions:(UNAuthorizationOptionAlert |
+                                               UNAuthorizationOptionSound)
                             completionHandler:^(BOOL granted, NSError *e) {
                               if (!granted) {
                                 NSLog(@"voxlog: notifications not permitted "
@@ -114,8 +118,16 @@ int voxlogNotifyPost(const char *message, const char *action) {
         [[UNMutableNotificationContent alloc] init];
     content.title = @"Voxlog";
     content.body = [NSString stringWithUTF8String:message];
+    // A reminder that arrives silently is a reminder that gets missed, and
+    // grouping them under one thread keeps a burst of them from filling
+    // Notification Center with unrelated-looking rows.
+    content.sound = [UNNotificationSound defaultSound];
     if (action != NULL && action[0] != '\0') {
-      content.userInfo = @{@"action" : [NSString stringWithUTF8String:action]};
+      NSString *actionStr = [NSString stringWithUTF8String:action];
+      content.userInfo = @{@"action" : actionStr};
+      content.threadIdentifier = actionStr;
+    } else {
+      content.threadIdentifier = @"voxlog";
     }
     // nil trigger: deliver now.
     UNNotificationRequest *request =

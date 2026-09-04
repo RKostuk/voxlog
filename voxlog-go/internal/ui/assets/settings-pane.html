@@ -287,6 +287,20 @@
         </div>
       </div>
     </div>
+
+    <div class="group">
+      <div class="group-title">Not a task</div>
+      <div class="card">
+        <div class="item stacked">
+          <div class="title">Rejected lines
+            <div class="subtext">Everything you have marked &quot;Not a task&quot;. Task Hub is shown
+              these as examples of what not to extract. Only the last few are kept -- restoring one
+              puts it back in Tasks as a fresh to-do, without a link to where it came from.</div>
+          </div>
+          <div id="rejected-list" class="entity-dict-list"></div>
+        </div>
+      </div>
+    </div>
       </div>
 
       <div class="subpane" data-subpane="audio">
@@ -485,6 +499,7 @@
     var models = [];
     var llmModel = { downloaded: false };
     var entityDict = [];
+    var entityDictSeeded = false;
     // Raw KeyID strings ("vk:54"); the form shows human labels for these
     // but always saves the raw ids.
     var keys = { dictate_key: '', history_key: '', meeting_key: '' };
@@ -674,6 +689,39 @@
       renderEntityDict();
       save();
     }
+    // renderRejected draws the "Not a task" list. Same chip markup and CSS as
+    // the dictionary above; the difference is two actions per row rather than
+    // one, and that both go straight to Go instead of into the debounced
+    // settings save -- the list lives in task-rejected.json, not in settings.
+    function renderRejected() {
+      var root = document.getElementById('rejected-list');
+      if (!root) return;
+      var list = (window.voxlog && window.voxlog.rejected) || [];
+      root.innerHTML = list.length
+        ? list.map(function (text, i) {
+            return '<span class="entity-chip rejected-chip">' +
+              '<span class="rejected-text" title="' + escapeHtml(text) + '">' + escapeHtml(text) + '</span>' +
+              '<button type="button" class="rejected-restore" data-index="' + i + '">Actually a task</button>' +
+              '<button type="button" class="entity-chip-remove rejected-remove" data-index="' + i + '" aria-label="Remove">&times;</button>' +
+              '</span>';
+          }).join('')
+        : '<div class="subtext">Nothing rejected yet.</div>';
+      root.querySelectorAll('.rejected-remove').forEach(function (btn) {
+        btn.addEventListener('click', function () {
+          var text = list[parseInt(btn.dataset.index, 10)];
+          if (text === undefined) return;
+          window.removeRejected(text);
+        });
+      });
+      root.querySelectorAll('.rejected-restore').forEach(function (btn) {
+        btn.addEventListener('click', function () {
+          var text = list[parseInt(btn.dataset.index, 10)];
+          if (text === undefined) return;
+          window.restoreRejected(text);
+        });
+      });
+    }
+
     document.getElementById('entity-dict-add-btn').addEventListener('click', addEntityDictEntry);
     document.getElementById('entity-dict-input').addEventListener('keydown', function (e) {
       if (e.key === 'Enter') { e.preventDefault(); addEntityDictEntry(); }
@@ -1039,7 +1087,8 @@
         history_retention: document.getElementById('history_retention').value,
         transcripts_dir: transcriptsDir,
         task_hub_enabled: document.getElementById('task_hub_enabled').checked,
-        entity_dictionary: entityDict
+        entity_dictionary: entityDict,
+        entity_dictionary_seeded: entityDictSeeded
       };
     }
 
@@ -1378,21 +1427,29 @@
 
       document.getElementById('task_hub_enabled').checked = !!settings.task_hub_enabled;
       entityDict = (settings.entity_dictionary || []).slice();
+      entityDictSeeded = !!settings.entity_dictionary_seeded;
       // One-time migration convenience: tasks classified before projects
       // became a closed list may carry names the model made up on its own.
       // Surface those here, editable/removable, instead of the user having
       // to retype every one by hand to start turning them into the real
       // list. "Unfiltered" itself is the fixed catch-all, never a project.
-      var seeded = false;
-      ((window.voxlog && window.voxlog.tasks) || []).forEach(function (t) {
-        if (!t.entity || t.entity.toLowerCase() === 'unfiltered') return;
-        if (entityDict.some(function (e) { return e.toLowerCase() === t.entity.toLowerCase(); })) return;
-        entityDict.push(t.entity);
-        seeded = true;
-      });
-      renderEntityDict();
-      if (seeded) save();
+      // Guarded by entity_dictionary_seeded: without the flag this ran on
+      // every open of the pane and put back every name the user had just
+      // deleted from the dictionary.
+      if (!entityDictSeeded) {
+        ((window.voxlog && window.voxlog.tasks) || []).forEach(function (t) {
+          if (!t.entity || t.entity.toLowerCase() === 'unfiltered') return;
+          if (entityDict.some(function (e) { return e.toLowerCase() === t.entity.toLowerCase(); })) return;
+          entityDict.push(t.entity);
+        });
+        entityDictSeeded = true;
+        renderEntityDict();
+        save();
+      } else {
+        renderEntityDict();
+      }
 
+      renderRejected();
       renderModels();
       renderLLMModel();
       renderCapabilities();

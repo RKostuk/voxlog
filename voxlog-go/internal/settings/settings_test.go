@@ -166,3 +166,25 @@ func TestLegacyMeetingKeepAudioUntilTranscribedBecomesOn(t *testing.T) {
 		t.Error("a settings file that meant 'keep it for now' should keep it")
 	}
 }
+
+func TestEntityDictionarySeedingFlagRoundTrips(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "settings.json")
+	s := NewStore(path)
+	v := s.Get()
+	if v.EntityDictionarySeeded {
+		t.Fatal("a fresh settings file must not claim the dictionary was seeded")
+	}
+	v.EntityDictionary = []string{"Voxlog"}
+	v.EntityDictionarySeeded = true
+	if err := s.Set(v); err != nil {
+		t.Fatalf("Set: %v", err)
+	}
+
+	got := NewStore(path).Get()
+	if !got.EntityDictionarySeeded {
+		t.Fatal("EntityDictionarySeeded did not survive a reload")
+	}
+	if len(got.EntityDictionary) != 1 || got.EntityDictionary[0] != "Voxlog" {
+		t.Fatalf("EntityDictionary = %v, want [Voxlog]", got.EntityDictionary)
+	}
+}

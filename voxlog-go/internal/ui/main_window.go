@@ -333,6 +333,10 @@ type taskJSON struct {
 	// against "now" itself (for the overdue styling); "" means none set.
 	Reminder string `json:"reminder,omitempty"`
 	Created  string `json:"created"`
+	// Notes is the user's free text (task detail view); Updated is RFC3339
+	// or "" for a task nobody has edited by hand.
+	Notes   string `json:"notes,omitempty"`
+	Updated string `json:"updated,omitempty"`
 }
 
 func tasksJSON(tasks []task.Task) []taskJSON {
@@ -346,6 +350,10 @@ func tasksJSON(tasks []task.Task) []taskJSON {
 			Entity:     t.Entity,
 			Status:     string(t.Status),
 			Created:    t.Created.Format(time.RFC3339),
+			Notes:      t.Notes,
+		}
+		if !t.Updated.IsZero() {
+			row.Updated = t.Updated.Format(time.RFC3339)
 		}
 		if t.Reminder != nil {
 			row.Reminder = t.Reminder.Format(time.RFC3339)
@@ -776,7 +784,7 @@ func RefreshMainWindowIfOpen(store *history.Store, meetings *history.MeetingStor
 // they share one window now, and the one the user did not ask for is a click
 // away rather than a reload away.
 func refreshMainWindow(w webview.WebView, pane string, store *history.Store, meetings *history.MeetingStore, tasks *task.Store, cfgStore *settings.Store, models []asr.ModelSpec, modelsBaseDir string) {
-	daysData, meetingsData, overviewData, tasksData := pageData(store, meetings, tasks)
+	daysData, meetingsData, overviewData, tasksData, rejectedData := pageData(store, meetings, tasks)
 	settingsData, modelsData, llmData := settingsJSON(cfgStore, models, modelsBaseDir)
 	w.Dispatch(func() {
 		// Re-show, not just re-populate: this same window survives its close
@@ -786,8 +794,8 @@ func refreshMainWindow(w webview.WebView, pane string, store *history.Store, mee
 		activateApp()
 		showWindow(w.Window())
 		w.Eval(fmt.Sprintf(
-			"window.voxlog = window.voxlog || {}; window.voxlog.days = %s; window.voxlog.meetings = %s; window.voxlog.overview = %s; window.voxlog.tasks = %s; window.voxlog.settings = %s; window.voxlog.models = %s; window.voxlog.llmModel = %s; typeof render === 'function' && render(); typeof fillForm === 'function' && fillForm(); typeof refreshPermissions === 'function' && refreshPermissions();",
-			daysData, meetingsData, overviewData, tasksData, settingsData, modelsData, llmData,
+			"window.voxlog = window.voxlog || {}; window.voxlog.days = %s; window.voxlog.meetings = %s; window.voxlog.overview = %s; window.voxlog.tasks = %s; window.voxlog.rejected = %s; window.voxlog.settings = %s; window.voxlog.models = %s; window.voxlog.llmModel = %s; typeof render === 'function' && render(); typeof fillForm === 'function' && fillForm(); typeof refreshPermissions === 'function' && refreshPermissions();",
+			daysData, meetingsData, overviewData, tasksData, rejectedData, settingsData, modelsData, llmData,
 		))
 		w.Eval(fmt.Sprintf("window.selectPane && window.selectPane(%q);", pane))
 	})
@@ -813,7 +821,7 @@ func humanBytes(n int64) string {
 // pageData reads entries and meetings once and marshals every list the page
 // needs from that single read, overview included -- so opening or
 // refreshing the window costs one disk read, not one per list it fills.
-func pageData(store *history.Store, meetings *history.MeetingStore, tasks *task.Store) (daysData, meetingsData, overviewData, tasksData []byte) {
+func pageData(store *history.Store, meetings *history.MeetingStore, tasks *task.Store) (daysData, meetingsData, overviewData, tasksData, rejectedData []byte) {
 	entries, err := store.AllEntries()
 	if err != nil {
 		entries = nil
@@ -835,6 +843,17 @@ func pageData(store *history.Store, meetings *history.MeetingStore, tasks *task.
 	meetingsData, _ = json.Marshal(withSpeakers(meetingsJSON(meetingList, bySource), meetingList, meetingSpeakers))
 	overviewData, _ = json.Marshal(buildOverview(entries, meetingList, time.Now()))
 	tasksData, _ = json.Marshal(tasksJSON(taskList))
+	// The rejected list rides along with the tasks it is the mirror image of,
+	// so Settings' "Not a task" section refreshes with everything else
+	// instead of needing a fetch of its own.
+	rejected, err := tasks.LoadRejected()
+	if err != nil {
+		log.Printf("reading rejected tasks: %v", err)
+	}
+	if rejected == nil {
+		rejected = []string{}
+	}
+	rejectedData, _ = json.Marshal(rejected)
 	return
 }
 
@@ -1264,6 +1283,71 @@ func runMainWindow(pane string, store *history.Store, meetings *history.MeetingS
 		return nil
 	})
 
+	// setTaskNotes and setTaskText back the task detail view. Both stamp
+	// Updated: once a line has been edited by hand, "when did I last touch
+	// this" is a different question from "when was it classified".
+	//
+	// setTaskNotes deliberately does NOT refresh the window: it is called on
+	// a debounce while the user is still typing, and a refresh redraws the
+	// Tasks pane -- replacing the textarea under the caret. The page keeps
+	// its own copy of what was typed; the next refresh from anything else
+	// picks the notes up from disk.
+	w.Bind("setTaskNotes", func(id, notes string) error {
+		return tasks.Update(id, func(t *task.Task) {
+			t.Notes = notes
+			t.Updated = time.Now()
+		})
+	})
+
+	// setTaskText edits the extracted line itself -- the classifier's wording
+	// is often nearly-but-not-quite right, and rejecting the whole task over
+	// a wrong verb is too blunt. Empty text is refused: it would leave an
+	// unidentifiable row.
+	w.Bind("setTaskText", func(id, text string) error {
+		text = strings.TrimSpace(text)
+		if text == "" {
+			return fmt.Errorf("task text cannot be empty")
+		}
+		if err := tasks.Update(id, func(t *task.Task) {
+			t.Text = text
+			t.Updated = time.Now()
+		}); err != nil {
+			return err
+		}
+		RefreshMainWindowIfOpen(store, meetings, tasks)
+		return nil
+	})
+
+	// removeRejected forgets a "Not a task" correction: the entry stops being
+	// a negative example for the classifier and disappears from the list.
+	w.Bind("removeRejected", func(text string) error {
+		if err := tasks.RemoveRejected(text); err != nil {
+			return err
+		}
+		RefreshMainWindowIfOpen(store, meetings, tasks)
+		return nil
+	})
+
+	// restoreRejected is "actually a task after all": drop the negative
+	// example and put the line back in Tasks as a fresh todo. The original
+	// source is not recoverable -- rejection only ever stored the text -- so
+	// the restored task has no SourceKind/SourceKey and links nowhere.
+	w.Bind("restoreRejected", func(text string) error {
+		if err := tasks.RemoveRejected(text); err != nil {
+			return err
+		}
+		if err := tasks.Append(task.Task{
+			ID:      task.NewID(),
+			Text:    text,
+			Status:  task.StatusTodo,
+			Created: time.Now(),
+		}); err != nil {
+			return err
+		}
+		RefreshMainWindowIfOpen(store, meetings, tasks)
+		return nil
+	})
+
 	// deleteTask removes a task with no further signal -- the neutral case
 	// (a duplicate, already handled another way, no longer relevant). Kept
 	// separate from rejectTask below on purpose: a plain cleanup deletion is
@@ -1349,14 +1433,14 @@ func runMainWindow(pane string, store *history.Store, meetings *history.MeetingS
 		return nil
 	})
 
-	daysData, meetingsData, overviewData, tasksData := pageData(store, meetings, tasks)
+	daysData, meetingsData, overviewData, tasksData, rejectedData := pageData(store, meetings, tasks)
 	settingsData, modelsData, llmData := settingsJSON(cfgStore, models, modelsBaseDir)
 	// Init runs at document start on every navigation (including the one
 	// below), so window.voxlog is populated before the page's own script
 	// runs, whether the page was just built or is a reload.
 	w.Init(fmt.Sprintf(
-		"window.voxlog = window.voxlog || {}; window.voxlog.pane = %q; window.voxlog.days = %s; window.voxlog.meetings = %s; window.voxlog.overview = %s; window.voxlog.tasks = %s; window.voxlog.settings = %s; window.voxlog.models = %s; window.voxlog.llmModel = %s; window.voxlog.audioBase = %q; window.voxlog.voiceBase = %q;",
-		pane, daysData, meetingsData, overviewData, tasksData, settingsData, modelsData, llmData, srv.AudioURL(), srv.VoiceURL(),
+		"window.voxlog = window.voxlog || {}; window.voxlog.pane = %q; window.voxlog.days = %s; window.voxlog.meetings = %s; window.voxlog.overview = %s; window.voxlog.tasks = %s; window.voxlog.rejected = %s; window.voxlog.settings = %s; window.voxlog.models = %s; window.voxlog.llmModel = %s; window.voxlog.audioBase = %q; window.voxlog.voiceBase = %q;",
+		pane, daysData, meetingsData, overviewData, tasksData, rejectedData, settingsData, modelsData, llmData, srv.AudioURL(), srv.VoiceURL(),
 	))
 
 	// Navigate, not SetHtml: the page is served over loopback (see

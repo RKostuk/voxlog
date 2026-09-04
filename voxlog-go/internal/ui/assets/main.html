@@ -428,6 +428,33 @@
   .task-act:hover:not(:disabled) { background: var(--accent); color: #fff; }
   .task-act:disabled { color: var(--tertiary); }
 
+  /* The task row is a <summary>: strip the disclosure triangle so it still
+     reads as a row, and keep the cursor honest about being clickable. */
+  .task-detail > summary { cursor: pointer; list-style: none; }
+  .task-detail > summary::-webkit-details-marker { display: none; }
+  .task-detail > summary:hover .text { color: var(--accent); }
+  .task-detail[open] > summary { border-bottom: 0.5px solid var(--separator); }
+  .task-panel {
+    display: flex; flex-direction: column; gap: 10px;
+    padding: 12px 13px 14px; background: var(--field);
+  }
+  .task-field { display: flex; flex-direction: column; gap: 4px; }
+  .task-field-label { font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--tertiary); }
+  .task-panel input[type=text], .task-panel textarea {
+    font: inherit; color: var(--label); background: var(--card);
+    border: 0.5px solid var(--separator); border-radius: 6px;
+    padding: 6px 8px; width: 100%; resize: vertical;
+  }
+  .task-panel input[type=text]:focus, .task-panel textarea:focus {
+    outline: 2px solid var(--accent); outline-offset: -1px;
+  }
+  .task-panel-meta {
+    display: flex; flex-wrap: wrap; gap: 4px 12px;
+    font-size: 11px; color: var(--tertiary);
+  }
+  .task-panel-meta a { color: var(--secondary); text-decoration: none; cursor: pointer; }
+  .task-panel-meta a:hover { color: var(--accent); }
+
   .task-done-toggle summary {
     cursor: pointer; padding: 8px 13px;
     font-size: 11px; color: var(--tertiary);
@@ -1314,6 +1341,18 @@
     // for why) -- picked once, kept until changed, not reset every time a
     // classification lands and re-triggers render().
     var taskFilter = { entity: '', status: '' };
+    // Which task detail sections are expanded. Kept by id, not by element:
+    // every save redraws the whole pane from fresh data, and a row that was
+    // open before the redraw must still be open after it.
+    var openTaskIDs = {};
+
+    function taskByID(id) {
+      var list = (window.voxlog && window.voxlog.tasks) || [];
+      for (var i = 0; i < list.length; i++) {
+        if (list[i].id === id) return list[i];
+      }
+      return null;
+    }
 
     function renderTaskFilters(root, tasks) {
       var names = [];
@@ -1395,19 +1434,49 @@
         var options = ['todo', 'in_progress', 'blocked', 'done'].map(function (s) {
           return '<option value="' + s + '"' + (s === t.status ? ' selected' : '') + '>' + taskStatusLabel[s] + '</option>';
         }).join('');
-        return '<div class="task-row' + (t.status === 'done' ? ' done' : '') + '">' +
-          '<div class="body">' +
-            '<div class="text">' + escapeHtml(t.text) + '</div>' +
-            '<div class="meta">' + reminderHTML +
-              '<a data-source-pane="' + sourcePane + '">from ' + (sourcePane === 'meetings' ? 'meeting' : 'dictation') + ' ↗</a>' +
+        var created = t.created
+          ? new Date(t.created).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
+          : '';
+        var updated = t.updated
+          ? new Date(t.updated).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
+          : '';
+        // The row is the <summary> of a <details>: same idiom as the
+        // "N completed" toggle above, so clicking a task opens it in place
+        // rather than navigating away from the list.
+        return '<details class="task-detail"' + (openTaskIDs[t.id] ? ' open' : '') + ' data-id="' + t.id + '">' +
+          '<summary class="task-row' + (t.status === 'done' ? ' done' : '') + '">' +
+            '<div class="body">' +
+              '<div class="text">' + escapeHtml(t.text) + '</div>' +
+              '<div class="meta">' + reminderHTML +
+                '<a data-source-pane="' + sourcePane + '">from ' + (sourcePane === 'meetings' ? 'meeting' : 'dictation') + ' ↗</a>' +
+              '</div>' +
+            '</div>' +
+            '<select class="status-select ' + taskStatusClass(t.status) + '" data-id="' + t.id + '">' + options + '</select>' +
+            '<div class="task-acts">' +
+              '<button type="button" class="task-act" data-act="reject" data-id="' + t.id + '" title="Wrong -- not actually a task">Not a task</button>' +
+              '<button type="button" class="task-act" data-act="delete" data-id="' + t.id + '" title="Remove">Delete</button>' +
+            '</div>' +
+          '</summary>' +
+          '<div class="task-panel">' +
+            '<label class="task-field"><span class="task-field-label">Task</span>' +
+              '<input type="text" class="task-text-edit" data-id="' + t.id + '" value="' + escapeHtml(t.text) + '">' +
+            '</label>' +
+            '<label class="task-field"><span class="task-field-label">Notes</span>' +
+              '<textarea class="task-notes" data-id="' + t.id + '" rows="3" placeholder="Anything the one-line summary left out">' +
+                escapeHtml(t.notes || '') + '</textarea>' +
+            '</label>' +
+            '<div class="task-panel-meta">' +
+              '<span>Project: ' + escapeHtml(t.entity || 'Unfiltered') + '</span>' +
+              '<span>Status: ' + escapeHtml(taskStatusLabel[t.status] || t.status) + '</span>' +
+              '<span>Reminder: ' + (t.reminder
+                ? escapeHtml(new Date(t.reminder).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }))
+                : 'none') + '</span>' +
+              (created ? '<span>Created ' + escapeHtml(created) + '</span>' : '') +
+              (updated ? '<span>Edited ' + escapeHtml(updated) + '</span>' : '') +
+              '<a data-source-pane="' + sourcePane + '">Open the ' + (sourcePane === 'meetings' ? 'meeting' : 'dictation') + ' it came from ↗</a>' +
             '</div>' +
           '</div>' +
-          '<select class="status-select ' + taskStatusClass(t.status) + '" data-id="' + t.id + '">' + options + '</select>' +
-          '<div class="task-acts">' +
-            '<button type="button" class="task-act" data-act="reject" data-id="' + t.id + '" title="Wrong -- not actually a task">Not a task</button>' +
-            '<button type="button" class="task-act" data-act="delete" data-id="' + t.id + '" title="Remove">Delete</button>' +
-          '</div>' +
-        '</div>';
+        '</details>';
       }
 
       groupsRoot.innerHTML = byEntity.length ? byEntity.map(function (g) {
@@ -1427,6 +1496,60 @@
         ((taskFilter.entity || taskFilter.status) && allTasks.length ? 'No tasks match this filter.' : 'No tasks yet.') +
         '</div>';
 
+      groupsRoot.querySelectorAll('.task-detail').forEach(function (det) {
+        det.addEventListener('toggle', function () {
+          if (det.open) openTaskIDs[det.dataset.id] = true;
+          else delete openTaskIDs[det.dataset.id];
+        });
+      });
+      // The status select and the action buttons live inside the <summary>,
+      // where a plain click would also toggle the section open or shut.
+      groupsRoot.querySelectorAll('.task-row .status-select, .task-row .task-act').forEach(function (el) {
+        el.addEventListener('click', function (ev) { ev.preventDefault(); ev.stopPropagation(); });
+      });
+
+      // Notes save on a debounce while typing. Deliberately no redraw of the
+      // pane afterwards (setTaskNotes does not refresh): a redraw mid-sentence
+      // would replace the textarea under the caret. The in-memory task is
+      // updated here instead, so the next redraw -- whatever triggers it --
+      // still draws what was typed.
+      groupsRoot.querySelectorAll('.task-notes').forEach(function (area) {
+        var timer = null;
+        function commit() {
+          timer = null;
+          var t = taskByID(area.dataset.id);
+          if (t) t.notes = area.value;
+          window.setTaskNotes(area.dataset.id, area.value).catch(function (e) { alert(e); });
+        }
+        area.addEventListener('input', function () {
+          if (timer) clearTimeout(timer);
+          timer = setTimeout(commit, 600);
+        });
+        area.addEventListener('blur', function () {
+          if (!timer) return;
+          clearTimeout(timer);
+          commit();
+        });
+      });
+
+      // The task line itself commits on blur or Enter, not on every
+      // keystroke: unlike notes it is what the collapsed row shows, and
+      // setTaskText does redraw the pane.
+      groupsRoot.querySelectorAll('.task-text-edit').forEach(function (input) {
+        var original = input.value;
+        function commit() {
+          var v = input.value.trim();
+          if (!v || v === original) { input.value = original; return; }
+          original = v;
+          window.setTaskText(input.dataset.id, v).catch(function (e) { alert(e); });
+        }
+        input.addEventListener('blur', commit);
+        input.addEventListener('keydown', function (ev) {
+          if (ev.key === 'Enter') { ev.preventDefault(); input.blur(); }
+          if (ev.key === 'Escape') { ev.preventDefault(); input.value = original; input.blur(); }
+        });
+      });
+
       groupsRoot.querySelectorAll('.status-select').forEach(function (sel) {
         sel.addEventListener('change', function () {
           var id = sel.dataset.id, status = sel.value;
@@ -1435,7 +1558,13 @@
         });
       });
       groupsRoot.querySelectorAll('[data-source-pane]').forEach(function (a) {
-        a.addEventListener('click', function () { window.selectPane(a.dataset.sourcePane); });
+        a.addEventListener('click', function (ev) {
+          // Inside a <summary>, so the click has to be stopped from also
+          // toggling the section on the way out.
+          ev.preventDefault();
+          ev.stopPropagation();
+          window.selectPane(a.dataset.sourcePane);
+        });
       });
       groupsRoot.querySelectorAll('.task-act').forEach(function (btn) {
         btn.addEventListener('click', function () {

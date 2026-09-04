@@ -141,6 +141,11 @@ type Settings struct {
 	// misrecognized name here only affects future classification, nothing is
 	// rewritten retroactively.
 	EntityDictionary []string `json:"entity_dictionary"`
+	// EntityDictionarySeeded records that the one-time seeding of
+	// EntityDictionary from already-classified tasks has run. Without it the
+	// Settings pane re-adds every entity it finds on every open, resurrecting
+	// names the user has just deleted.
+	EntityDictionarySeeded bool `json:"entity_dictionary_seeded"`
 }
 
 // Dictation activation modes.

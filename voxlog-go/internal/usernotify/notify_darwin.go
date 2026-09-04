@@ -39,6 +39,12 @@ var (
 
 type pendingPost struct{ message, action string }
 
+// warnFallbackOnce keeps the osascript-fallback warning to a single line per
+// run. It is the one symptom that explains both "wrong icon" and "clicking
+// the banner opens Finder", and without it the fallback is silent -- which is
+// exactly why those two were diagnosed as separate bugs.
+var warnFallbackOnce sync.Once
+
 // pendingTimeout is the safety net for a decision that never arrives (an
 // unbundled dev build, per voxlogNotifyInit's early return -- gDecided is
 // never set in that case). Past this, queued messages are flushed via the
@@ -145,6 +151,13 @@ func postNow(message, action string) {
 	if C.voxlogNotifyPost(cMessage, cAction) == 1 {
 		return
 	}
+	warnFallbackOnce.Do(func() {
+		log.Print("notify: falling back to osascript banners -- the native " +
+			"path was refused or unavailable, so banners will carry " +
+			"osascript's icon and a click on one will activate osascript " +
+			"(Finder) instead of Voxlog. Run the app bundle (make bundle), " +
+			"then check System Settings > Notifications for Voxlog")
+	})
 	postViaOSAScript(message)
 }
 

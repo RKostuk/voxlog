@@ -41,6 +41,30 @@ func (s *Store) LoadRejected() ([]string, error) {
 	return list, nil
 }
 
+// RemoveRejected drops one entry from the list. Removing an entry that is
+// not there is not an error: the caller is a UI button, and a stale click
+// after the list has already changed under it should be a no-op, not a
+// failure dialog.
+func (s *Store) RemoveRejected(text string) error {
+	rejectedMu.Lock()
+	defer rejectedMu.Unlock()
+
+	list, err := s.LoadRejected()
+	if err != nil {
+		return err
+	}
+	kept := make([]string, 0, len(list))
+	for _, e := range list {
+		if e != text {
+			kept = append(kept, e)
+		}
+	}
+	if len(kept) == len(list) {
+		return nil
+	}
+	return s.writeRejected(kept)
+}
+
 // AppendRejected records one more misclassification and trims the list back
 // to maxRejected, oldest first out.
 func (s *Store) AppendRejected(text string) error {
@@ -56,6 +80,11 @@ func (s *Store) AppendRejected(text string) error {
 		list = list[len(list)-maxRejected:]
 	}
 
+	return s.writeRejected(list)
+}
+
+// writeRejected persists the list. Callers hold rejectedMu.
+func (s *Store) writeRejected(list []string) error {
 	data, err := json.MarshalIndent(list, "", "  ")
 	if err != nil {
 		return err
