@@ -68,6 +68,27 @@ const (
 	autoSweepInterval = time.Hour
 )
 
+// listenMsg is what the capture callbacks hand the worker. Everything the
+// gates ever see arrives this way, so the gates need no lock of their own:
+// one goroutine touches them, from creation to close.
+type listenMsg struct {
+	kind    int
+	samples []float32
+	gate    *vad.Gate
+}
+
+const (
+	// msgMic and msgFar are audio from the two capture paths.
+	msgMic = iota
+	msgFar
+	// msgFarGateOpen and msgFarGateClose hand the far-end gate to the worker
+	// and take it back. The tap starts and stops on the supervisor's
+	// schedule, not the worker's, and routing the handover through the same
+	// channel is what keeps the gate single-threaded anyway.
+	msgFarGateOpen
+	msgFarGateClose
+)
+
 // alwaysOn is the listening half of the app: it owns the microphone, the
 // gate, and whatever session is currently open.
 type alwaysOn struct {
@@ -79,10 +100,19 @@ type alwaysOn struct {
 	listening bool
 
 	recorder *audio.Recorder
-	gate     *vad.Gate
-	// farGate is the same gate over the system-audio tap, so the far end of
-	// a call is judged as speech rather than as sound.
-	farGate *vad.Gate
+	// work carries audio from the capture callback to the worker goroutine,
+	// which owns both voice-activity gates and does every model call. The
+	// callback must stay cheap: silero on every window and CAM++ on every
+	// reply used to run on the capture thread, and that is what made the app
+	// stutter. nil while not listening, which is also how the callback knows
+	// there is nobody to send to.
+	work chan listenMsg
+	// workerDone closes when the worker has drained work and released its
+	// gates, so stopListening can wait rather than race it.
+	workerDone chan struct{}
+	// droppedOnce keeps the "the worker fell behind" warning to one line per
+	// run; audio must never block on the worker, so a full channel drops.
+	droppedOnce bool
 	// tapRunning is whether this listener started the system-audio tap.
 	tapRunning bool
 
@@ -240,39 +270,147 @@ func (a *app) startListening(cfg settings.Settings) {
 	// StartUnbuffered: nothing is kept except the rolling pre-roll and
 	// whatever a session is writing. Most of what this hears is thrown away,
 	// which is the point.
+	// workQueue is generous: a second of audio at the callback's chunk size,
+	// so a slow embedding never costs a reply.
+	work := make(chan listenMsg, 128)
+	done := make(chan struct{})
+
+	a.listen.mu.Lock()
+	a.listen.recorder, a.listen.work, a.listen.workerDone = rec, work, done
+	a.listen.listening = true
+	a.listen.mu.Unlock()
+
+	go a.listenWorker(gate, work, done)
+
 	if err := rec.StartUnbuffered(a.onListenChunk); err != nil {
 		log.Printf("always-on: microphone: %v", err)
+		a.listen.mu.Lock()
+		a.listen.recorder, a.listen.work, a.listen.workerDone = nil, nil, nil
+		a.listen.listening = false
+		a.listen.mu.Unlock()
+		close(work)
+		<-done
 		rec.Close()
-		gate.Close()
 		return
 	}
 
-	a.listen.mu.Lock()
-	a.listen.recorder, a.listen.gate, a.listen.listening = rec, gate, true
-	a.listen.mu.Unlock()
 	a.tray.setListening(true)
 	log.Print("always-on: listening")
+}
+
+// listenWorker is the only goroutine that touches a gate or a model. It ends
+// when work is closed, releasing both gates on the way out.
+func (a *app) listenWorker(gate *vad.Gate, work <-chan listenMsg, done chan<- struct{}) {
+	defer close(done)
+	defer gate.Close()
+
+	var farGate *vad.Gate
+	defer func() {
+		if farGate != nil {
+			farGate.Close()
+		}
+	}()
+
+	for msg := range work {
+		switch msg.kind {
+		case msgFarGateOpen:
+			if farGate != nil {
+				farGate.Close()
+			}
+			farGate = msg.gate
+		case msgFarGateClose:
+			if farGate != nil {
+				farGate.Close()
+				farGate = nil
+			}
+		case msgMic:
+			a.handleMicSegments(gate.Feed(msg.samples))
+		case msgFar:
+			if farGate != nil {
+				a.handleFarSegments(farGate.Feed(msg.samples))
+			}
+		}
+	}
+}
+
+// handleMicSegments acts on the stretches of speech the microphone gate has
+// finished. Runs on the worker, so it may take as long as a model needs.
+func (a *app) handleMicSegments(segments []vad.Segment) {
+	for _, seg := range segments {
+		embed, ok := a.confirmSpeech(seg)
+		if !ok {
+			continue
+		}
+		a.listen.mu.Lock()
+		sess := a.listen.sess
+		if sess == nil {
+			a.listen.pendingSpeech = true
+			a.listen.mu.Unlock()
+			return
+		}
+		a.listen.mu.Unlock()
+
+		// Live speaker counting: this is what turns a note into a meeting
+		// the moment a second person has said enough (see session.noteVoice),
+		// and the only thing that keeps the silence timer alive.
+		if sess.noteVoice(embed, seg.Seconds()) {
+			log.Print("always-on: a second voice -- this is a conversation")
+			a.noteSessionKind(sessionMeeting)
+		}
+	}
+}
+
+// handleFarSegments is the same for the other side of a call.
+func (a *app) handleFarSegments(segments []vad.Segment) {
+	for _, seg := range segments {
+		if seg.Seconds() < minVoicedSeconds || audio.Level(seg.Samples) < autoSpeechLevel {
+			continue
+		}
+		a.listen.mu.Lock()
+		sess := a.listen.sess
+		if sess == nil {
+			// Somebody is talking on the other end while the user says
+			// nothing: a call they are listening to. Worth recording, and a
+			// conversation by definition.
+			a.listen.pendingFarEnd = true
+			a.listen.mu.Unlock()
+			return
+		}
+		a.listen.mu.Unlock()
+
+		if sess.noteFarEnd(seg.Seconds()) {
+			log.Print("always-on: the far end is talking -- this is a conversation")
+			a.noteSessionKind(sessionMeeting)
+		}
+	}
 }
 
 // stopListening closes the microphone and the tap, and forgets what the gate
 // heard. Idempotent.
 func (a *app) stopListening() {
+	a.stopTap()
+
+	// work is cleared under the lock BEFORE it is closed, and every send is
+	// made under that same lock: that is what makes closing it safe while a
+	// capture callback may be running.
 	a.listen.mu.Lock()
-	rec, gate := a.listen.recorder, a.listen.gate
+	rec, work, done := a.listen.recorder, a.listen.work, a.listen.workerDone
 	was := a.listen.listening
-	a.listen.recorder, a.listen.gate, a.listen.listening = nil, nil, false
+	a.listen.recorder, a.listen.work, a.listen.workerDone = nil, nil, nil
+	a.listen.listening = false
 	a.listen.preroll, a.listen.farPreroll = nil, nil
 	a.listen.pendingSpeech, a.listen.pendingFarEnd = false, false
 	a.listen.mu.Unlock()
-
-	a.stopTap()
 
 	if rec != nil {
 		rec.Stop()
 		rec.Close()
 	}
-	if gate != nil {
-		gate.Close()
+	if work != nil {
+		close(work)
+	}
+	if done != nil {
+		<-done
 	}
 	if was {
 		a.tray.setListening(false)
@@ -280,45 +418,47 @@ func (a *app) stopListening() {
 	}
 }
 
-// onListenChunk runs on the audio thread. It feeds the session if one is
-// open, keeps the pre-roll rolling if one is not, and pushes everything
-// through the gate. It never touches files or devices.
+// sendToWorker hands one message to the worker, dropping it if the worker is
+// behind. Called with a.listen.mu held: the lock is what guarantees the
+// channel is not closed underneath the send (see stopListening).
+//
+// Dropping is the only correct answer to a full queue here. This runs on
+// miniaudio's realtime thread, and blocking it to wait for an embedding
+// would glitch the very recording being made.
+func (l *alwaysOn) sendToWorkerLocked(msg listenMsg) {
+	if l.work == nil {
+		return
+	}
+	select {
+	case l.work <- msg:
+	default:
+		if !l.droppedOnce {
+			l.droppedOnce = true
+			log.Print("always-on: the voice-activity worker fell behind; dropping audio from the gate " +
+				"(the recording itself is unaffected)")
+		}
+	}
+}
+
+// onListenChunk runs on the audio thread, and does only what is safe there:
+// keep the pre-roll rolling, hand the chunk to the worker, and write it to
+// the open session's file. No model runs here.
+//
+// The slice is not copied because the recorder allocates a fresh one per
+// callback (see audio.Recorder.onData) and nothing else writes to it.
 func (a *app) onListenChunk(chunk []float32) {
 	l := &a.listen
 
 	l.mu.Lock()
-	gate, sess := l.gate, l.sess
-	if gate == nil {
-		l.mu.Unlock()
-		return
-	}
+	sess := l.sess
 	if sess == nil {
 		l.preroll = appendBounded(l.preroll, chunk, prerollSeconds*audio.SampleRate)
 	}
-	segments := gate.Feed(chunk)
+	l.sendToWorkerLocked(listenMsg{kind: msgMic, samples: chunk})
 	l.mu.Unlock()
 
 	if sess != nil {
-		sess.writeMic(chunk, audio.Level(chunk) >= systemVoicedThreshold)
-	}
-
-	for _, seg := range segments {
-		embed, ok := a.confirmSpeech(seg)
-		if !ok {
-			continue
-		}
-		if sess == nil {
-			l.mu.Lock()
-			l.pendingSpeech = true
-			l.mu.Unlock()
-			return
-		}
-		// Live speaker counting: this is what turns a note into a meeting
-		// the moment a second person has said enough (see session.noteVoice).
-		if sess.noteVoice(embed, seg.Seconds()) {
-			log.Print("always-on: a second voice -- this is a conversation")
-			a.noteSessionKind(sessionMeeting)
-		}
+		sess.writeMic(chunk)
 	}
 }
 
@@ -327,37 +467,15 @@ func (a *app) onFarEndChunk(chunk []float32) {
 	l := &a.listen
 
 	l.mu.Lock()
-	gate, sess := l.farGate, l.sess
+	sess := l.sess
 	if sess == nil {
 		l.farPreroll = appendBounded(l.farPreroll, chunk, prerollSeconds*audio.SampleRate)
 	}
-	var segments []vad.Segment
-	if gate != nil {
-		segments = gate.Feed(chunk)
-	}
+	l.sendToWorkerLocked(listenMsg{kind: msgFar, samples: chunk})
 	l.mu.Unlock()
 
 	if sess != nil {
 		sess.writeSystem(chunk, audio.Level(chunk))
-	}
-
-	for _, seg := range segments {
-		if seg.Seconds() < minVoicedSeconds || audio.Level(seg.Samples) < autoSpeechLevel {
-			continue
-		}
-		if sess == nil {
-			// Somebody is talking on the other end while the user says
-			// nothing: a call they are listening to. Worth recording, and a
-			// conversation by definition.
-			l.mu.Lock()
-			l.pendingFarEnd = true
-			l.mu.Unlock()
-			return
-		}
-		if sess.noteFarEnd(seg.Seconds()) {
-			log.Print("always-on: the far end is talking -- this is a conversation")
-			a.noteSessionKind(sessionMeeting)
-		}
 	}
 }
 
@@ -436,7 +554,7 @@ func (a *app) openSession(cfg settings.Settings, asMeeting bool) {
 	// and a pre-roll written afterwards would land behind the audio it comes
 	// before.
 	if len(preroll) > 0 {
-		sess.writeMic(preroll, false)
+		sess.writeMic(preroll)
 	}
 
 	a.listen.mu.Lock()
@@ -501,14 +619,16 @@ func (a *app) syncTap(cfg settings.Settings) {
 	}
 }
 
-// startTap opens the system-audio tap and its own voice-activity gate.
+// startTap opens the system-audio tap and its own voice-activity gate. The
+// gate is handed to the worker rather than kept here: one goroutine owns
+// every gate, which is what makes them lock-free.
 func (a *app) startTap() {
 	a.listen.mu.Lock()
-	if a.listen.tapRunning {
-		a.listen.mu.Unlock()
+	running, listening := a.listen.tapRunning, a.listen.listening
+	a.listen.mu.Unlock()
+	if running || !listening {
 		return
 	}
-	a.listen.mu.Unlock()
 
 	gate, err := vad.New(asr.ModelDir(a.modelsDir, vad.Spec), vad.DefaultConfig())
 	if err != nil {
@@ -516,30 +636,80 @@ func (a *app) startTap() {
 		return
 	}
 	if err := systemaudio.Start(a.onFarEndChunk); err != nil {
-		// Expected on a machine without the permission; the microphone side
-		// carries on alone.
-		log.Printf("always-on: system audio: %v", err)
 		gate.Close()
+		a.noteSystemAudioFailure(err)
 		return
 	}
+
 	a.listen.mu.Lock()
-	a.listen.farGate, a.listen.tapRunning = gate, true
+	a.listen.tapRunning = true
+	a.listen.sendToWorkerLocked(listenMsg{kind: msgFarGateOpen, gate: gate})
+	handed := a.listen.work != nil
 	a.listen.mu.Unlock()
+	if !handed {
+		// Listening stopped underneath us; nobody will ever close it.
+		gate.Close()
+	}
+	a.clearSystemAudioFailure()
 }
 
 func (a *app) stopTap() {
 	a.listen.mu.Lock()
-	gate, running := a.listen.farGate, a.listen.tapRunning
-	a.listen.farGate, a.listen.tapRunning = nil, false
+	running := a.listen.tapRunning
+	a.listen.tapRunning = false
 	a.listen.farPreroll = nil
+	a.listen.sendToWorkerLocked(listenMsg{kind: msgFarGateClose})
 	a.listen.mu.Unlock()
 	if !running {
 		return
 	}
 	systemaudio.Stop()
-	if gate != nil {
-		gate.Close()
+}
+
+// System audio failing is a silent feature: the tap simply never delivers,
+// and until now the only trace was a log line. It fails for exactly one
+// reason in practice -- the Screen Recording permission, which macOS drops
+// every time the app is signed with a different key -- so it is worth
+// saying out loud, once, and worth showing in Settings for as long as it
+// lasts.
+var (
+	sysAudioMu     sync.Mutex
+	sysAudioErr    string
+	sysAudioToldAt bool
+)
+
+func (a *app) noteSystemAudioFailure(err error) {
+	sysAudioMu.Lock()
+	first := sysAudioErr == ""
+	sysAudioErr = err.Error()
+	tell := !sysAudioToldAt
+	sysAudioToldAt = true
+	sysAudioMu.Unlock()
+
+	if first {
+		log.Printf("always-on: system audio: %v", err)
 	}
+	if tell {
+		notifyPane("Voxlog cannot hear system audio. Grant Screen Recording in Settings.", "settings")
+	}
+}
+
+func (a *app) clearSystemAudioFailure() {
+	sysAudioMu.Lock()
+	had := sysAudioErr != ""
+	sysAudioErr = ""
+	sysAudioMu.Unlock()
+	if had {
+		log.Print("always-on: system audio working again")
+	}
+}
+
+// SystemAudioError is what Settings shows, or "" when the tap is fine. Read
+// by the permissions poll the Settings pane already runs.
+func SystemAudioError() string {
+	sysAudioMu.Lock()
+	defer sysAudioMu.Unlock()
+	return sysAudioErr
 }
 
 // noteSessionKind records an escalation for the supervisor, which reads the
@@ -664,29 +834,55 @@ func (a *app) fileAutoNote(sess *session, micPath, sysPath string, seconds float
 	// taken it, so the file is only ever silence here.
 	removeQuietly(sysPath)
 
-	a.queue.submit("Note, "+sess.start.Format("15:04"), "", seconds, func(yield func()) {
+	// The row is written BEFORE the decode, not after it, for the same
+	// reason a meeting's is: a transcript can take minutes, the app can be
+	// quit in the middle of one, and a recording that exists only as a file
+	// on disk is one the orphan sweep will adopt as a meeting. Written now,
+	// it shows up in History the moment the recording ends, marked as
+	// transcribing, and the text lands in it later.
+	at := sess.start
+	if err := a.hist.Append(history.Entry{
+		Timestamp:        at,
+		Text:             "",
+		RecordingSeconds: seconds,
+		AudioPath:        micPath,
+		AutoStarted:      true,
+	}); err != nil {
+		log.Printf("always-on: history append: %v", err)
+		return
+	}
+	ui.RefreshMainWindowIfOpen(a.hist, a.meetings, a.tasks)
+
+	key := at.Format(time.RFC3339Nano)
+	a.queue.submit("Note, "+at.Format("15:04"), key, seconds, func(yield func()) {
 		started := time.Now()
 		text := a.transcribeWholeFile(sess.spec, sess.language, micPath, yield)
 		if text == "" {
+			// The row stays: it is the only evidence the machine recorded
+			// something here, and a silent deletion is exactly the behaviour
+			// that makes an always-on feature impossible to trust. The audio
+			// goes, because nothing will ever be got out of it.
 			log.Printf("always-on: nothing transcribed from %s", micPath)
 			removeQuietly(micPath)
+			if err := a.hist.Update(at, func(e *history.Entry) {
+				e.AudioPath = ""
+				e.DurationSeconds = time.Since(started).Seconds()
+			}); err != nil {
+				log.Printf("always-on: history update: %v", err)
+			}
+			ui.RefreshMainWindowIfOpen(a.hist, a.meetings, a.tasks)
 			return
 		}
-		ts := time.Now()
-		if err := a.hist.Append(history.Entry{
-			Timestamp:        ts,
-			DurationSeconds:  time.Since(started).Seconds(),
-			Text:             text,
-			RecordingSeconds: seconds,
-			AudioPath:        micPath,
-			AutoStarted:      true,
+		if err := a.hist.Update(at, func(e *history.Entry) {
+			e.Text = text
+			e.DurationSeconds = time.Since(started).Seconds()
 		}); err != nil {
-			log.Printf("always-on: history append: %v", err)
+			log.Printf("always-on: history update: %v", err)
 			return
 		}
 		ui.RefreshMainWindowIfOpen(a.hist, a.meetings, a.tasks)
 		notifyPane("Noted something you said.", "history")
-		go a.classifyForTasks(history.KindDictation, ts.Format(time.RFC3339Nano), text)
+		go a.classifyForTasks(history.KindDictation, key, text)
 	})
 }
 

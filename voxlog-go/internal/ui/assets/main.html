@@ -154,6 +154,40 @@
      <body>. */
   #settings-pane { display: flex; height: 100%; }
 
+  /* Pinned to the bottom of the sidebar: margin-top:auto against the nav's
+     column layout, which is what turns the empty space under the items into
+     the queue's home. */
+  .queue {
+    margin-top: auto;
+    padding: 8px 4px 2px;
+    border-top: 0.5px solid var(--separator);
+  }
+  .queue-title {
+    font-size: 10px; text-transform: uppercase; letter-spacing: 0.05em;
+    color: var(--tertiary); padding: 0 5px 5px;
+  }
+  .queue-row {
+    display: flex; align-items: center; gap: 7px;
+    padding: 3px 5px; border-radius: 6px;
+    font-size: 11px; color: var(--secondary);
+    cursor: default;
+  }
+  .queue-row:hover { background: color-mix(in srgb, var(--accent) 10%, transparent); color: var(--label); }
+  .queue-row .what { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  /* Running spins, waiting is a still dot: the difference has to read
+     without the words, because the words are truncated. */
+  .queue-mark { width: 9px; height: 9px; border-radius: 50%; flex: none; }
+  .queue-row.running .queue-mark {
+    border: 1.5px solid color-mix(in srgb, var(--accent) 30%, transparent);
+    border-top-color: var(--accent);
+    animation: queue-spin 0.9s linear infinite;
+  }
+  .queue-row.waiting .queue-mark { background: var(--separator); }
+  .queue-row.llm .queue-mark { border-top-color: var(--purple, #af52de); }
+  @keyframes queue-spin { to { transform: rotate(360deg); } }
+  @media (prefers-reduced-motion: reduce) { .queue-row.running .queue-mark { animation: none; } }
+  .queue-more { font-size: 10.5px; color: var(--tertiary); padding: 2px 5px 0; }
+
   .navitem {
     display: flex;
     align-items: center;
@@ -317,23 +351,6 @@
      same glass card and left rule, accent instead of red, and a spinner
      rather than a pulse -- recording is happening to you, decoding is
      happening for you. */
-  .live.decoding {
-    background: linear-gradient(135deg, color-mix(in srgb, var(--accent) 14%, transparent), transparent), var(--card);
-    border-left-color: var(--accent);
-  }
-  .live.decoding .pulse {
-    border-radius: 50%;
-    background: none;
-    border: 2px solid color-mix(in srgb, var(--accent) 30%, transparent);
-    border-top-color: var(--accent);
-    width: 12px; height: 12px;
-    animation: decode-spin 0.9s linear infinite;
-  }
-  @keyframes decode-spin { to { transform: rotate(360deg); } }
-  @media (prefers-reduced-motion: reduce) { .live.decoding .pulse { animation: none; } }
-  .live .queued { font-size: 11px; color: var(--secondary); }
-  /* Transcribing is a live state, not the absence of one: distinct from
-     .tag.pending ("Not transcribed"), which is a row nobody has queued. */
   .tag.transcribing {
     color: var(--accent);
     background: color-mix(in srgb, var(--accent) 15%, transparent);
@@ -566,11 +583,17 @@
       <button type="button" class="navitem" role="tab" data-pane="settings" aria-selected="false">
         <span class="glyph" style="--tint:#8e8e93"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 3v3M12 18v3M3 12h3M18 12h3M5.6 5.6l2.1 2.1M16.3 16.3l2.1 2.1M18.4 5.6l-2.1 2.1M7.7 16.3l-2.1 2.1"/></svg></span>Settings
       </button>
+      <!-- The queue lives at the foot of the sidebar, in the space the nav
+           items leave empty. Minimal on purpose: it is a status light, not a
+           screen -- one line per job, and the detail on hover. -->
+      <div class="queue" id="sidebar-queue" hidden>
+        <div class="queue-title" id="queue-title"></div>
+        <div id="queue-rows"></div>
+      </div>
     </nav>
     <main class="content" id="shell-content">
       <div class="pane on" data-pane="overview">
         <div id="overview-live"></div>
-        <div class="decode-banner-slot" id="overview-decode"></div>
         <div class="group-title day">Today</div>
         <div class="tiles" id="overview-tiles"></div>
         <div class="group-title day">Last 14 days</div>
@@ -596,7 +619,6 @@
         <div id="people-pane" hidden></div>
       </div>
       <div class="pane" data-pane="tasks">
-        <div class="decode-banner-slot" id="tasks-decode"></div>
         <div class="task-summary" id="task-summary"></div>
         <div class="pane-filters" id="task-filters"></div>
         <div id="task-groups"></div>
@@ -699,6 +721,9 @@
             // Always-on wrote this one; nobody pressed a key for it, and the
             // row should not pretend otherwise.
             (e.auto_started ? '<span class="tag">Heard automatically</span>' : '') +
+            // A note exists as a row before its transcript does, so it has to
+            // be able to say it is still being read.
+            (e.text ? '' : noteStateTagHTML(e)) +
           '</div>' +
           hint.html +
         '</div>' +
@@ -1951,6 +1976,20 @@
       return e.text ? '' : '<span class="tag pending">Not transcribed</span>';
     }
 
+    // A note without text is one of three things, and they are not the same:
+    // still in the queue, being read right now, or read and empty. The last
+    // one keeps its row on purpose -- a recording that produced nothing is
+    // still evidence the machine was listening at that minute.
+    function noteStateTagHTML(e) {
+      var state = decodeKeys()[e.id];
+      if (state) {
+        return '<span class="tag transcribing">' +
+          (state === 'running' ? 'Transcribing…' : 'Queued') + '</span>';
+      }
+      if (!e.has_audio) return '<span class="tag pending">Nothing was said</span>';
+      return '<span class="tag pending">Not transcribed</span>';
+    }
+
     function meetingRecentRowHTML(e, gi, ei) {
       var body = e.summary || e.text || (e.has_audio ? 'Not transcribed yet' : 'No transcript');
       return '<div class="entry" data-day="' + gi + '" data-entry="' + ei + '">' +
@@ -2015,26 +2054,47 @@
       return out;
     }
 
+    // The queue has one home: the foot of the sidebar. It used to also draw a
+    // banner in Overview and in Tasks, which meant the same three words in
+    // three places and a banner that pushed the page around every time
+    // something started decoding.
+    var QUEUE_ROWS = 4;
+
+    function queueRowTitle(d) {
+      var lines = [d.label];
+      lines.push(d.kind === 'llm'
+        ? (d.stage || 'Working') + (d.running ? '' : ' · waiting')
+        : (d.running ? 'Transcribing' : 'Waiting to be transcribed'));
+      if (d.seconds) lines.push('Recording is ' + duration(d.seconds) + ' long');
+      if (d.queued_at_ms) {
+        var waited = Math.max(0, Math.round((Date.now() - d.queued_at_ms) / 1000));
+        if (waited >= 2) lines.push('In the queue for ' + duration(waited));
+      }
+      return lines.join('\n');
+    }
+
     function renderDecodeBanners() {
+      var root = document.getElementById('sidebar-queue');
+      if (!root) return;
       var q = decodeQueue();
-      ['overview-decode', 'tasks-decode'].forEach(function (id) {
-        var el = document.getElementById(id);
-        if (!el) return;
-        if (!q.length) { el.innerHTML = ''; return; }
-        var running = q.filter(function (d) { return d.running; });
-        var waiting = q.length - running.length;
-        var what = running.length
-          ? escapeHtml(running[running.length - 1].label)
-          : escapeHtml(q[0].label);
-        el.innerHTML =
-          '<div class="live decoding"><span class="pulse"></span>' +
-            '<div><div class="what">Transcribing ' + what + '</div>' +
-              '<div class="sub">Recording and dictation keep working while this runs</div></div>' +
-            (waiting
-              ? '<div class="queued">' + waiting + ' waiting</div>'
-              : '') +
+      root.hidden = !q.length;
+      if (!q.length) return;
+
+      var running = q.filter(function (d) { return d.running; }).length;
+      document.getElementById('queue-title').textContent =
+        running ? 'Working · ' + q.length : q.length + ' waiting';
+
+      document.getElementById('queue-rows').innerHTML =
+        q.slice(0, QUEUE_ROWS).map(function (d) {
+          var cls = 'queue-row ' + (d.running ? 'running' : 'waiting') + (d.kind === 'llm' ? ' llm' : '');
+          return '<div class="' + cls + '" title="' + escapeHtml(queueRowTitle(d)) + '">' +
+            '<span class="queue-mark"></span>' +
+            '<span class="what">' + escapeHtml(d.kind === 'llm' ? (d.stage || 'Working') + ' · ' + d.label : d.label) + '</span>' +
           '</div>';
-      });
+        }).join('') +
+        (q.length > QUEUE_ROWS
+          ? '<div class="queue-more">and ' + (q.length - QUEUE_ROWS) + ' more</div>'
+          : '');
     }
 
     window.voxlog = window.voxlog || {};

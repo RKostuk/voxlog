@@ -75,11 +75,79 @@ func newApp(store *settings.Store, hist *history.Store, meetings *history.Meetin
 		a.tray.setDecoding(len(list))
 		out := make([]ui.DecodeStatus, 0, len(list))
 		for _, st := range list {
-			out = append(out, ui.DecodeStatus{Label: st.Label, Key: st.Key, Seconds: st.Seconds, Running: st.Running})
+			out = append(out, ui.DecodeStatus{
+				Label:      st.Label,
+				Kind:       st.Kind,
+				Stage:      st.Stage,
+				Key:        st.Key,
+				Seconds:    st.Seconds,
+				Running:    st.Running,
+				QueuedAtMS: st.QueuedAtMS,
+			})
 		}
-		ui.PublishDecodeQueue(out)
+		ui.PublishDecodeQueue(append(out, currentLLMJobs()...))
 	})
+	// The LLM jobs republish through the same path, so a summary starting
+	// while nothing is decoding still reaches the window.
+	llmJobMu.Lock()
+	llmPublish = func() { a.queue.republish() }
+	llmJobMu.Unlock()
 	return a
+}
+
+// LLM work runs as fire-and-forget goroutines, outside the decode queue, and
+// until now reported nothing at all -- so a machine busy summarising a
+// meeting looked idle. These two functions publish those jobs into the same
+// list the transcription queue feeds, which is what makes "what is Voxlog
+// doing right now" one question with one answer.
+var (
+	llmJobMu   sync.Mutex
+	llmJobs    []ui.DecodeStatus
+	llmPublish func()
+)
+
+// trackLLM adds a job to the list and returns the function that removes it.
+// Always call the returned function, deferred: a job that never clears is a
+// spinner that never stops.
+func trackLLM(label, stage string) func() {
+	job := ui.DecodeStatus{
+		Label:      label,
+		Kind:       "llm",
+		Stage:      stage,
+		Running:    true,
+		QueuedAtMS: time.Now().UnixMilli(),
+	}
+	llmJobMu.Lock()
+	llmJobs = append(llmJobs, job)
+	publish := llmPublish
+	llmJobMu.Unlock()
+	if publish != nil {
+		publish()
+	}
+
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			llmJobMu.Lock()
+			for i := range llmJobs {
+				if llmJobs[i].QueuedAtMS == job.QueuedAtMS && llmJobs[i].Label == job.Label {
+					llmJobs = append(llmJobs[:i], llmJobs[i+1:]...)
+					break
+				}
+			}
+			publish := llmPublish
+			llmJobMu.Unlock()
+			if publish != nil {
+				publish()
+			}
+		})
+	}
+}
+
+func currentLLMJobs() []ui.DecodeStatus {
+	llmJobMu.Lock()
+	defer llmJobMu.Unlock()
+	return append([]ui.DecodeStatus(nil), llmJobs...)
 }
 
 // classifyForTasks runs Task Hub's classifier over a finished transcript in
@@ -96,6 +164,12 @@ func (a *app) classifyForTasks(sourceKind, sourceKey, text string) {
 	if !asr.IsDownloaded(a.modelsDir, llm.Spec) {
 		return
 	}
+	label := "Dictation"
+	if sourceKind == history.KindMeeting {
+		label = "Meeting"
+	}
+	defer trackLLM(label, "Finding tasks")()
+
 	entities := a.entityNames(cfg)
 	rejected, err := a.tasks.LoadRejected()
 	if err != nil {
@@ -144,6 +218,8 @@ func (a *app) summarizeMeeting(start time.Time, text string) {
 	if !asr.IsDownloaded(a.modelsDir, llm.Spec) {
 		return
 	}
+	defer trackLLM("Meeting, "+start.Format("15:04"), "Summarising")()
+
 	entities := a.entityNames(cfg)
 	modelDir := asr.ModelDir(a.modelsDir, llm.Spec)
 	summary, err := a.llm.Summarize(modelDir, text, entities)

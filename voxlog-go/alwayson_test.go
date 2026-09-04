@@ -7,8 +7,10 @@ import (
 	"time"
 
 	"voxlog-go/internal/asr"
+	"voxlog-go/internal/audio"
 	"voxlog-go/internal/history"
 	"voxlog-go/internal/settings"
+	"voxlog-go/internal/vad"
 	"voxlog-go/internal/voiceid"
 )
 
@@ -73,14 +75,51 @@ func TestPendingIsConsumedOnce(t *testing.T) {
 	}
 }
 
-// A listener with no gate is the state between "the setting was turned on"
-// and "the model finished downloading". Audio still arrives; nothing may be
-// kept, and nothing may crash.
-func TestChunksWithoutAGateAreDropped(t *testing.T) {
+// The capture callback runs on miniaudio's realtime thread. It must never
+// block, and it must survive there being no worker to hand audio to (the
+// window between the recorder being stopped and the callback draining).
+func TestTheCaptureCallbackNeverBlocks(t *testing.T) {
 	a := &app{}
-	a.onListenChunk(make([]float32, 1000))
-	if len(a.listen.preroll) != 0 {
-		t.Fatalf("kept %d samples with no gate open", len(a.listen.preroll))
+	a.onListenChunk(make([]float32, 1000)) // no worker at all
+	if len(a.listen.preroll) != 1000 {
+		t.Fatalf("pre-roll = %d samples, want the chunk buffered for a session to start from", len(a.listen.preroll))
+	}
+
+	// A worker that has stopped consuming must cost the audio thread
+	// nothing: the queue fills, and everything after that is dropped.
+	a.listen.work = make(chan listenMsg, 2)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for i := 0; i < 50; i++ {
+			a.onListenChunk(make([]float32, 160))
+		}
+	}()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("the capture callback blocked on a full worker queue")
+	}
+	if !a.listen.droppedOnce {
+		t.Fatal("dropping audio from the gate must be reported, once")
+	}
+}
+
+// Losing the far-end gate mid-flight (the tap stopped while a chunk was in
+// the queue) must not take the worker down with it.
+func TestFarEndChunksWithoutAGateAreIgnored(t *testing.T) {
+	a := &app{}
+	work := make(chan listenMsg, 4)
+	done := make(chan struct{})
+	gate := &vad.Gate{} // never fed: msgMic is not sent below
+	go a.listenWorker(gate, work, done)
+	work <- listenMsg{kind: msgFar, samples: make([]float32, 160)}
+	work <- listenMsg{kind: msgFarGateClose}
+	close(work)
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("the worker did not exit when its queue was closed")
 	}
 }
 
@@ -274,5 +313,142 @@ func TestSilenceThresholdsDependOnWhatIsBeingRecorded(t *testing.T) {
 	s.AlwaysOnSplitMinutes = 10
 	if noteGapSeconds(s) != 25 || splitMinutes(s) != 10 {
 		t.Fatal("configured gaps are not honoured")
+	}
+}
+
+func TestLoudNoiseDoesNotKeepASessionAlive(t *testing.T) {
+	// The bug this replaces: the silence timer ran on audio.Level, so a fan
+	// or a keyboard held a session open for minutes and produced a long
+	// recording with nothing said in it. Only speech the gate confirmed may
+	// touch the timer.
+	s := newTestSession(t)
+	s.mu.Lock()
+	s.lastVoiced = time.Now().Add(-5 * time.Minute)
+	s.mu.Unlock()
+
+	loud := make([]float32, 1600)
+	for i := range loud {
+		loud[i] = 0.9
+	}
+	s.writeMic(loud)
+	s.writeSystem(loud, 1.0)
+
+	if s.quietFor() < 4*time.Minute {
+		t.Fatalf("loud non-speech reset the silence timer: quiet for %v", s.quietFor())
+	}
+	// Far-end *speech* does count -- that is the gate's verdict, not a level.
+	s.noteFarEnd(1)
+	if s.quietFor() > time.Second {
+		t.Fatalf("confirmed far-end speech did not reset the timer: quiet for %v", s.quietFor())
+	}
+}
+
+func TestConfirmedSpeechKeepsASessionAlive(t *testing.T) {
+	s := newTestSession(t)
+	s.mu.Lock()
+	s.lastVoiced = time.Now().Add(-5 * time.Minute)
+	s.mu.Unlock()
+	s.noteVoice(unitVec(64, 0, 0.01), 3)
+	if s.quietFor() > time.Second {
+		t.Fatalf("a confirmed reply did not reset the timer: quiet for %v", s.quietFor())
+	}
+}
+
+func TestSystemLevelStillCountsTowardsASecondParty(t *testing.T) {
+	// sysVoiced answers a different question from the timer -- "did anything
+	// at all come out of the far end" -- and still runs on level.
+	s := newTestSession(t)
+	loud := make([]float32, audio.SampleRate)
+	for i := range loud {
+		loud[i] = 0.9
+	}
+	s.writeSystem(loud, 1.0)
+	s.mu.Lock()
+	got := s.sysVoiced
+	s.mu.Unlock()
+	if got < 0.9 {
+		t.Fatalf("sysVoiced = %v, want about a second", got)
+	}
+}
+
+// writeSilentWAV lays down a real recording of n seconds, so the orphan
+// sweep's own audio.OpenWAV can read it.
+func writeSilentWAV(t *testing.T, path string, seconds float64) {
+	t.Helper()
+	w, err := audio.NewWAVWriter(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Write(make([]float32, int(seconds*audio.SampleRate))); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Close(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestOrphanSweepLeavesNoteAudioAlone(t *testing.T) {
+	// A note whose transcript was still queued when the app quit used to be
+	// adopted as a meeting on the next launch -- the recording of a thought
+	// said to nobody turned up in Meetings with a speaker bar.
+	dir := t.TempDir()
+	hist := history.NewStore(dir)
+	meetings := history.NewMeetingStore(filepath.Join(dir, "Meetings"))
+
+	recordings := filepath.Join(dir, meetingsDirName)
+	if err := os.MkdirAll(recordings, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	at := time.Now().Add(-time.Hour).Truncate(time.Second)
+	notePath := filepath.Join(recordings, at.Format("2006-01-02-150405")+"-mic.wav")
+	writeSilentWAV(t, notePath, 5)
+
+	if err := hist.Append(history.Entry{
+		Timestamp:        at,
+		RecordingSeconds: 5,
+		AudioPath:        notePath,
+		AutoStarted:      true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	a := &app{hist: hist, meetings: meetings}
+	a.adoptOrphanedMeetings()
+
+	all, err := meetings.All()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(all) != 0 {
+		t.Fatalf("a note was adopted as a meeting: %+v", all)
+	}
+	if _, err := os.Stat(notePath); err != nil {
+		t.Fatalf("the note's audio was removed: %v", err)
+	}
+}
+
+func TestOrphanSweepStillAdoptsAnUnknownRecording(t *testing.T) {
+	// The other half of the same rule: audio nothing knows about is still a
+	// recording that survived a crash, and it must not be lost.
+	dir := t.TempDir()
+	hist := history.NewStore(dir)
+	meetings := history.NewMeetingStore(filepath.Join(dir, "Meetings"))
+
+	recordings := filepath.Join(dir, meetingsDirName)
+	if err := os.MkdirAll(recordings, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	at := time.Now().Add(-time.Hour).Truncate(time.Second)
+	writeSilentWAV(t, filepath.Join(recordings, at.Format("2006-01-02-150405")+"-mic.wav"), 5)
+
+	a := &app{hist: hist, meetings: meetings}
+	a.adoptOrphanedMeetings()
+
+	all, err := meetings.All()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(all) != 1 {
+		t.Fatalf("got %d meetings, want the orphan adopted", len(all))
 	}
 }

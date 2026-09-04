@@ -188,3 +188,35 @@ func TestEntityDictionarySeedingFlagRoundTrips(t *testing.T) {
 		t.Fatalf("EntityDictionary = %v, want [Voxlog]", got.EntityDictionary)
 	}
 }
+
+func TestTapDefaultMigratesToAlways(t *testing.T) {
+	// A file written before settings_version existed holds the old default,
+	// which cannot notice a call the user listens to in silence. It moves on;
+	// the version stamp stops it from happening twice.
+	path := filepath.Join(t.TempDir(), "settings.json")
+	if err := os.WriteFile(path, []byte(`{"always_on_system_audio":"session"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	got := NewStore(path).Get()
+	if got.AlwaysOnSystemAudio != AlwaysOnTapAlways {
+		t.Fatalf("always_on_system_audio = %q, want %q", got.AlwaysOnSystemAudio, AlwaysOnTapAlways)
+	}
+	if got.Version != currentSettingsVersion {
+		t.Fatalf("Version = %d, want %d", got.Version, currentSettingsVersion)
+	}
+}
+
+func TestTapChoiceSurvivesOnceTheFileIsVersioned(t *testing.T) {
+	// Having migrated once, "only while recording" is a choice again and must
+	// not be overridden on every launch.
+	path := filepath.Join(t.TempDir(), "settings.json")
+	s := NewStore(path)
+	v := s.Get()
+	v.AlwaysOnSystemAudio = AlwaysOnTapSession
+	if err := s.Set(v); err != nil {
+		t.Fatal(err)
+	}
+	if got := NewStore(path).Get(); got.AlwaysOnSystemAudio != AlwaysOnTapSession {
+		t.Fatalf("always_on_system_audio = %q, want the stored choice %q", got.AlwaysOnSystemAudio, AlwaysOnTapSession)
+	}
+}

@@ -85,6 +85,29 @@ func SetNotifier(fn func(string)) {
 	winMu.Unlock()
 }
 
+// systemAudioErrFn reports why the system-audio tap is not delivering, or ""
+// when it is fine. Installed by the app: the tap lives in package main's
+// always-on supervisor, and a failure there is invisible to the user unless
+// Settings can ask about it.
+var systemAudioErrFn func() string
+
+// SetSystemAudioErrorFunc installs the callback above.
+func SetSystemAudioErrorFunc(fn func() string) {
+	winMu.Lock()
+	systemAudioErrFn = fn
+	winMu.Unlock()
+}
+
+func systemAudioError() string {
+	winMu.Lock()
+	fn := systemAudioErrFn
+	winMu.Unlock()
+	if fn == nil {
+		return ""
+	}
+	return fn()
+}
+
 // sweepHandler is what the freeUpSpace binding runs. Set once at startup by
 // the app (see SetSweepHandler) -- this package has no way to know which
 // recording, if any, a live meeting is still writing to, so it cannot run
@@ -1146,6 +1169,8 @@ func runMainWindow(pane string, store *history.Store, meetings *history.MeetingS
 			"accessibility":   accessibilityStatus(),
 			"microphone":      string(permissions.Microphone()),
 			"screenrecording": screenRecordingStatus(),
+			// "" when the tap is working or has not been asked to run.
+			"systemaudio": systemAudioError(),
 		}, nil
 	})
 

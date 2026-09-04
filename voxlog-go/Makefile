@@ -11,8 +11,13 @@ BIN := voxlog-go
 # ad-hoc signature changes on every build -- so every rebuild looked like a
 # brand-new app and silently dropped every permission the user had granted.
 # Falls back to ad-hoc if the certificate isn't present on this machine.
-SIGN_ID ?= $(shell security find-identity -v -p codesigning 2>/dev/null | \
-             grep -o '"[^"]*"' | head -1 | tr -d '"' || echo -)
+#
+# The fallback has to test the RESULT, not the exit status: the pipeline ends
+# in `tr`, which succeeds even when there is no identity to print, so an
+# `|| echo -` here never fired and the build died on `codesign --sign ""`.
+SIGN_ID ?= $(shell id=$$(security find-identity -v -p codesigning 2>/dev/null | \
+             grep -o '"[^"]*"' | head -1 | tr -d '"'); \
+             if [ -n "$$id" ]; then echo "$$id"; else echo -; fi)
 
 # sherpa-onnx ships prebuilt dylibs inside its Go module, and the linker
 # records an rpath pointing straight at the module cache on THIS machine.

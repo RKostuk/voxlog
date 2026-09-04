@@ -670,6 +670,14 @@ func bindingsFor(cfg settings.Settings) (dictate, hist, meeting, tasks hotkey.Bi
 	hist = hotkey.ParseBinding(cfg.HistoryKeyID)
 	meeting = hotkey.ParseBinding(cfg.MeetingKeyID)
 	tasks = hotkey.ParseBinding(cfg.TasksKeyID)
+	// Always-on listening owns the microphone and decides for itself when a
+	// conversation is happening. A key that starts a second recorder behind
+	// that gate can only produce two recordings of one room, so it is not
+	// registered at all while listening is on.
+	if cfg.AlwaysOn && !meeting.IsZero() {
+		log.Print("meeting key ignored: always-on listening records conversations by itself")
+		meeting = hotkey.Binding{}
+	}
 	if !meeting.IsZero() && (meeting.String() == dictate.String() || meeting.String() == hist.String()) {
 		log.Printf("meeting key %s is already bound elsewhere; ignoring it", meeting.Label())
 		meeting = hotkey.Binding{}
@@ -823,10 +831,26 @@ func onReady(store *settings.Store, histStore *history.Store, meetStore *history
 	systray.AddSeparator()
 	mQuit := systray.AddMenuItem("Quit", "Quit Voxlog")
 
-	stopMeetingBlink := make(chan struct{})
-	a.onMeetingState = func(running bool) {
+	// applyMeetingItems draws the meeting section of the menu.
+	//
+	// While always-on listening is on there is no meeting section at all:
+	// the app decides for itself when a conversation is happening, so an
+	// item that starts one by hand is a second way to do the thing that is
+	// already being done -- and two recorders on one microphone is the bug
+	// it invites. The Meetings pane stays; only the recorder goes.
+	applyMeetingItems := func(recording bool) {
+		listening := a.store.Get().AlwaysOn
 		ui.RunOnMain(func() {
-			if running {
+			if listening {
+				mMeetingHeader.Hide()
+				mMeetingStatus.Hide()
+				mStartMeeting.Hide()
+				mMuteMic.Hide()
+				mStopMeeting.Hide()
+				return
+			}
+			mMeetingHeader.Show()
+			if recording {
 				mMeetingStatus.Show()
 				mMuteMic.SetTitle(muteMicLabel(false)) // this recording starts unmuted
 				mMuteMic.Show()
@@ -839,6 +863,11 @@ func onReady(store *settings.Store, histStore *history.Store, meetStore *history
 			mStopMeeting.Hide()
 			mStartMeeting.Show()
 		})
+	}
+
+	stopMeetingBlink := make(chan struct{})
+	a.onMeetingState = func(running bool) {
+		applyMeetingItems(running)
 		if running {
 			stopMeetingBlink = make(chan struct{})
 			go blinkStatus(mMeetingStatus, stopMeetingBlink, "Meeting", func() (bool, time.Duration, bool) {
@@ -944,12 +973,11 @@ func onReady(store *settings.Store, histStore *history.Store, meetStore *history
 	// time -- ui cannot reach a.meeting itself, the same reason
 	// SetTranscribeHandler exists.
 	ui.SetMeetingStatusHandler(func() (bool, float64) {
-		a.mu.Lock()
-		defer a.mu.Unlock()
-		if a.meeting == nil {
-			return false, 0
-		}
-		return true, time.Since(a.meeting.start).Seconds()
+		// One question -- "is anything being recorded right now" -- answered
+		// in one place, so the banner covers an always-on session as well as
+		// a meeting the user started (see meetingElapsed).
+		running, elapsed := a.meetingElapsed()
+		return running, elapsed.Seconds()
 	})
 	// The banner's Stop button goes through the same method the tray menu's
 	// "Stop meeting recording" item and the meeting hotkey already use.
@@ -958,6 +986,8 @@ func onReady(store *settings.Store, histStore *history.Store, meetStore *history
 	// ui cannot call notify directly (it would import main); give it the
 	// same banner every other user-visible failure in this file uses.
 	ui.SetNotifier(notify)
+	// Settings asks this to explain a silent far end (see noteSystemAudioFailure).
+	ui.SetSystemAudioErrorFunc(SystemAudioError)
 
 	// The Free up space button in Settings runs the same sweep this file
 	// already runs at startup and after each recording -- ui cannot decide
@@ -1057,6 +1087,10 @@ func onReady(store *settings.Store, histStore *history.Store, meetStore *history
 	// the setting, the pause switch, the frontmost app and whatever else is
 	// already recording all get a say (see alwayson.go).
 	a.startAlwaysOn()
+	// The menu follows the setting without a restart: turning listening on
+	// takes the meeting recorder out of the menu, turning it off puts it
+	// back. Same poll as the supervisor, so the two never disagree for more
+	// than a tick.
 	go func() {
 		for {
 			listening := a.store.Get().AlwaysOn
@@ -1067,6 +1101,8 @@ func onReady(store *settings.Store, histStore *history.Store, meetStore *history
 					mListenPause.Hide()
 				}
 			})
+			recording, _ := a.meetingElapsed()
+			applyMeetingItems(recording)
 			time.Sleep(listenPollInterval)
 		}
 	}()

@@ -122,6 +122,13 @@ type Settings struct {
 	// way to notice a call where the other side speaks first and the user
 	// says nothing for two minutes.
 	AlwaysOnSystemAudio string `json:"always_on_system_audio"`
+	// Version is the settings-file version, for migrating a default that
+	// turned out to be wrong (see migrate). Same idea as the database's
+	// PRAGMA user_version, and for the same reason: "this field is at its
+	// default" and "the user chose this value" are indistinguishable
+	// otherwise, so changing a default silently overrides a deliberate
+	// choice or silently fails to reach anyone.
+	Version int `json:"settings_version"`
 	// AlwaysOnRetentionHours is how long an auto-started recording that
 	// never produced a transcript is kept. Retention stops being optional
 	// once the app is listening all day: the failed guesses are the bulk of
@@ -193,6 +200,11 @@ type Settings struct {
 	EntityDictionarySeeded bool `json:"entity_dictionary_seeded"`
 }
 
+// currentSettingsVersion is what a freshly written file carries. Bump it and
+// add a step to migrate when a default changes in a way that has to reach
+// files already on disk.
+const currentSettingsVersion = 1
+
 // When always-on opens the system-audio tap.
 const (
 	// AlwaysOnTapSession opens the tap when a recording starts and closes it
@@ -259,7 +271,8 @@ func DefaultSettings() Settings {
 		AlwaysOn:               false,
 		AlwaysOnSplitMinutes:   5,
 		AlwaysOnNoteGapSeconds: 60,
-		AlwaysOnSystemAudio:    AlwaysOnTapSession,
+		AlwaysOnSystemAudio:    AlwaysOnTapAlways,
+		Version:                currentSettingsVersion,
 		AlwaysOnRetentionHours: 24,
 		TasksKeyID:             "",
 		TasksDrawerPlacement:   "top_centre",
@@ -333,8 +346,35 @@ func (s *Store) Load() error {
 		merged.KeepMeetingAudio = false
 	}
 
+	// The version has to come off the raw file, not off merged: merged starts
+	// from the defaults, which carry the current version, so a file with no
+	// version at all would look up to date.
+	var stamp struct {
+		Version *int `json:"settings_version"`
+	}
+	fileVersion := 0
+	if err := json.Unmarshal(raw, &stamp); err == nil && stamp.Version != nil {
+		fileVersion = *stamp.Version
+	}
+	migrate(&merged, fileVersion)
 	s.values = merged
 	return nil
+}
+
+// migrate brings a settings file forward to currentSettingsVersion.
+//
+// Version 1: the system-audio tap defaulted to opening only while recording,
+// which cannot notice a call the user is listening to in silence -- the far
+// end speaks first, nothing is recorded, and the meeting is missed entirely.
+// Files written before this carry no version at all, and the value they hold
+// is the old default rather than a choice, so it is moved on.
+func migrate(v *Settings, fileVersion int) {
+	if fileVersion < 1 {
+		if v.AlwaysOnSystemAudio == "" || v.AlwaysOnSystemAudio == AlwaysOnTapSession {
+			v.AlwaysOnSystemAudio = AlwaysOnTapAlways
+		}
+	}
+	v.Version = currentSettingsVersion
 }
 
 func (s *Store) Save() error {

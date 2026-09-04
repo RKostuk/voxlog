@@ -13,6 +13,9 @@ type DecodeStatus struct {
 	// Label names the recording ("Dictation, 14:32"), so a row in History or
 	// Meetings can be matched to its queue entry by eye.
 	Label string `json:"label"`
+	// Kind is "transcribe" or "llm"; Stage is what an LLM job is doing.
+	Kind  string `json:"kind"`
+	Stage string `json:"stage,omitempty"`
 	// Key is the id of the row this take belongs to (a meeting's start, in
 	// RFC3339Nano) so the list can mark it as transcribing. "" when there is
 	// no row yet -- a dictation's history entry is written after the decode.
@@ -24,6 +27,8 @@ type DecodeStatus struct {
 	// Running marks the take actually being decoded. Everything else in the
 	// slice is waiting.
 	Running bool `json:"running"`
+	// QueuedAtMS is when the job was submitted, in Unix milliseconds.
+	QueuedAtMS int64 `json:"queued_at_ms"`
 }
 
 // decodeQueueMu guards the snapshot below. Separate from winMu: the queue

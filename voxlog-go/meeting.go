@@ -412,11 +412,23 @@ func (a *app) toggleMeeting() {
 // and false when there is none.
 func (a *app) meetingElapsed() (bool, time.Duration) {
 	a.mu.Lock()
-	defer a.mu.Unlock()
-	if a.meeting == nil {
+	m := a.meeting
+	a.mu.Unlock()
+	if m != nil {
+		return true, time.Since(m.start)
+	}
+
+	// A recording always-on opened counts as well. With the manual recorder
+	// hidden while listening is on, this banner is the only "recording now"
+	// control left on screen, and it must not go blank the moment the
+	// feature that does the recording is the one doing it.
+	a.listen.mu.Lock()
+	sess := a.listen.sess
+	a.listen.mu.Unlock()
+	if sess == nil {
 		return false, 0
 	}
-	return true, time.Since(a.meeting.start)
+	return true, time.Since(sess.start)
 }
 
 // meetingMuted reports whether the meeting being recorded has its microphone
@@ -484,6 +496,20 @@ func (a *app) adoptOrphanedMeetings() {
 	for _, m := range meetings {
 		if m.AudioPath != "" {
 			known[m.AudioPath] = true
+		}
+	}
+	// Notes recorded by always-on live in the same folder and are named the
+	// same way, but they are history entries, not meetings. Without this
+	// they get adopted as meetings on the next launch -- which is exactly
+	// what happened to the first two notes the feature ever recorded.
+	entries, err := a.hist.AllEntries()
+	if err != nil {
+		log.Printf("meeting: cannot check notes for orphaned recordings: %v", err)
+		return
+	}
+	for _, e := range entries {
+		if e.AudioPath != "" {
+			known[e.AudioPath] = true
 		}
 	}
 

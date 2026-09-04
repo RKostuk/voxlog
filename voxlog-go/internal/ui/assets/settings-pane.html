@@ -377,7 +377,12 @@
          meeting is running. -->
     <div class="group">
       <div class="card">
-        <div class="item">
+        <!-- Hidden while always-on listening is on: the app decides for
+             itself when a conversation is happening, so a key that starts
+             one by hand is a second recorder on the same microphone. The
+             rest of this pane still applies -- it governs the recordings
+             listening makes too. -->
+        <div class="item" id="meeting-key-row">
           <div class="title">Start and stop a meeting
             <div class="subtext">Records the whole call &middot; goes to history only, never pasted</div>
           </div>
@@ -509,6 +514,12 @@
             <option value="72">3 days</option>
             <option value="0">Never delete</option>
           </select>
+        </div>
+        <div class="item always-on-only" id="system-audio-warning" hidden>
+          <div class="title">System audio is not being captured
+            <div class="subtext" id="system-audio-warning-detail"></div>
+          </div>
+          <button type="button" id="grant-screenrecording-listening">Grant&hellip;</button>
         </div>
         <div class="item always-on-only">
           <div class="title">Listen to system audio
@@ -890,6 +901,27 @@
     function syncAlwaysOnRows() {
       var on = document.getElementById('always_on').checked;
       document.querySelectorAll('.always-on-only').forEach(function (row) { row.hidden = !on; });
+      // The warning has a second condition of its own; never un-hide it here.
+      syncSystemAudioWarning(lastSystemAudioError);
+      var meetingRow = document.getElementById('meeting-key-row');
+      if (meetingRow) meetingRow.hidden = on;
+    }
+
+    // The tap failing is silent by nature -- audio simply never arrives --
+    // and in practice it fails for one reason: the Screen Recording
+    // permission, which macOS drops whenever the app is signed with a
+    // different key.
+    var lastSystemAudioError = '';
+    function syncSystemAudioWarning(err) {
+      lastSystemAudioError = err || '';
+      var row = document.getElementById('system-audio-warning');
+      if (!row) return;
+      var on = document.getElementById('always_on').checked;
+      row.hidden = !(on && lastSystemAudioError);
+      if (!row.hidden) {
+        document.getElementById('system-audio-warning-detail').textContent =
+          lastSystemAudioError + ' -- the microphone side is still recorded.';
+      }
     }
     document.getElementById('always_on').addEventListener('change', syncAlwaysOnRows);
 
@@ -1689,6 +1721,7 @@
         var accessOK = p.accessibility === 'granted';
         var micOK = p.microphone === 'authorized';
         var screenOK = p.screenrecording === 'granted';
+        syncSystemAudioWarning(p.systemaudio);
         renderPermStatus('perm-accessibility-status', accessOK);
         renderPermStatus('perm-microphone-status', micOK);
         var screenEl = document.getElementById('perm-screenrecording-status');
@@ -1760,13 +1793,17 @@
         setTimeout(refreshPermissions, 800);
       });
     });
-    document.getElementById('perm-screenrecording-btn').addEventListener('click', function () {
+    function askForScreenRecording() {
       window.requestPermission('screenrecording').then(function () {
         document.getElementById('status').textContent =
           'Grant access in System Settings, then restart Voxlog.';
         setTimeout(refreshPermissions, 500);
       });
-    });
+    }
+    document.getElementById('perm-screenrecording-btn').addEventListener('click', askForScreenRecording);
+    // Same prompt, reachable from where the problem is actually noticed.
+    document.getElementById('grant-screenrecording-listening')
+      .addEventListener('click', askForScreenRecording);
 
     // Scoped to the fragment: the shell splices this in after its own
     // DOMContentLoaded has already fired, so nothing would ever call a

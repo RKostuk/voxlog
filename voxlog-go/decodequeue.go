@@ -44,6 +44,13 @@ type decodeQueue struct {
 // there is no difference -- neither is producing a transcript yet.
 type decodeStatus struct {
 	Label string `json:"label"`
+	// Kind separates transcription from the LLM work that follows it, so one
+	// list can show everything the app is chewing on without the two reading
+	// as the same job.
+	Kind string `json:"kind"`
+	// Stage is what an LLM job is doing right now ("Summarising", "Finding
+	// tasks"). Empty for transcription, whose stage is its label.
+	Stage string `json:"stage,omitempty"`
 	// Key identifies the row this take belongs to, so a list can mark it
 	// "Transcribing...". It is the meeting's start in RFC3339Nano -- the same
 	// id meetingsJSON gives the row. Empty for a dictation: its history entry
@@ -51,7 +58,19 @@ type decodeStatus struct {
 	Key     string  `json:"key"`
 	Seconds float64 `json:"seconds"`
 	Running bool    `json:"running"`
+	// QueuedAtMS is when the job was submitted, in Unix milliseconds, so the
+	// page can say how long something has been waiting without a second
+	// clock of its own.
+	QueuedAtMS int64 `json:"queued_at_ms"`
 }
+
+// The two kinds of work the queue view shows. Transcription is this queue's
+// own; the LLM jobs are goroutines elsewhere that report into the same list
+// (see app.trackLLM) so "what is the machine busy with" has one answer.
+const (
+	kindTranscribe = "transcribe"
+	kindLLM        = "llm"
+)
 
 // decodeJob is one take's worth of work. run does the actual decoding and is
 // handed a yield to call between blocks; everything about models, diarization
@@ -109,17 +128,25 @@ func (q *decodeQueue) statusesLocked() []decodeStatus {
 	out := make([]decodeStatus, 0, len(q.active)+len(q.pending))
 	for i, job := range q.active {
 		out = append(out, decodeStatus{
-			Label:   job.label,
-			Key:     job.key,
-			Seconds: job.seconds,
-			Running: i == len(q.active)-1,
+			Label:      job.label,
+			Kind:       kindTranscribe,
+			Key:        job.key,
+			Seconds:    job.seconds,
+			Running:    i == len(q.active)-1,
+			QueuedAtMS: job.queuedAt.UnixMilli(),
 		})
 	}
 	rest := make([]*decodeJob, len(q.pending))
 	copy(rest, q.pending)
 	sort.SliceStable(rest, func(i, j int) bool { return rest[i].seconds < rest[j].seconds })
 	for _, job := range rest {
-		out = append(out, decodeStatus{Label: job.label, Key: job.key, Seconds: job.seconds})
+		out = append(out, decodeStatus{
+			Label:      job.label,
+			Kind:       kindTranscribe,
+			Key:        job.key,
+			Seconds:    job.seconds,
+			QueuedAtMS: job.queuedAt.UnixMilli(),
+		})
 	}
 	return out
 }
@@ -208,6 +235,16 @@ func (q *decodeQueue) yield(seconds float64) {
 		}
 		q.execute(job)
 	}
+}
+
+// republish re-sends the current queue without anything having changed in
+// it. The LLM jobs live outside this queue but ride the same notification
+// (see app.trackLLM), and this is how they get one.
+func (q *decodeQueue) republish() {
+	q.mu.Lock()
+	statuses := q.statusesLocked()
+	q.mu.Unlock()
+	q.notify(statuses)
 }
 
 // outstanding is how many takes are queued or running. The background

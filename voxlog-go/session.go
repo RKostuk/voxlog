@@ -105,14 +105,15 @@ func newSession(dir string, at time.Time, spec asr.ModelSpec, language string, a
 	}, nil
 }
 
-// writeMic appends microphone audio. voiced marks the chunk as carrying
-// speech, which is what the silence timer runs on.
-func (s *session) writeMic(chunk []float32, voiced bool) {
+// writeMic appends microphone audio. It does NOT touch the silence timer:
+// only noteVoice does, and only for a stretch the voice-activity gate has
+// confirmed. Loudness is not speech -- a fan, a keyboard and a passing truck
+// all clear any level threshold worth having, and a timer driven by them
+// never expires, which is how a recording ends up three minutes long with
+// nothing said in it.
+func (s *session) writeMic(chunk []float32) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if voiced {
-		s.lastVoiced = time.Now()
-	}
 	if s.micWAV == nil {
 		return
 	}
@@ -123,12 +124,15 @@ func (s *session) writeMic(chunk []float32, voiced bool) {
 
 // writeSystem appends the other side of a call, if the tap is running for
 // this session.
+//
+// sysVoiced still accumulates on level, because all it feeds is the "was
+// there a second party at all" test at close time -- a much cruder question
+// than "has the room gone quiet", which noteFarEnd answers from the gate.
 func (s *session) writeSystem(chunk []float32, level float64) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if level >= systemVoicedThreshold {
 		s.sysVoiced += float64(len(chunk)) / audio.SampleRate
-		s.lastVoiced = time.Now()
 	}
 	if s.sysWAV == nil {
 		return
