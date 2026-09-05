@@ -103,6 +103,45 @@ static VoxlogAudioTap *gTap = nil;
     return;
   }
 
+  // Every system-audio recording this app has ever made came back as
+  // digital silence -- samples arrive, and every one of them is zero. The
+  // configuration asks for exactly what the API documents, so the next
+  // question is what actually turns up: the format the system chose, how
+  // many buffers it filled, and whether ANY of them carries signal. Logged
+  // once for the shape, and once more the first time real audio appears, so
+  // the difference between "the tap is silent" and "nothing was playing" is
+  // answerable from the log instead of by guesswork.
+  {
+    static BOOL describedFormat = NO;
+    if (!describedFormat) {
+      describedFormat = YES;
+      NSLog(@"voxlog: system audio format %.0f Hz, %u ch, flags 0x%x, %u buffer(s), %u bytes in buffer 0",
+            asbd->mSampleRate, (unsigned)asbd->mChannelsPerFrame,
+            (unsigned)asbd->mFormatFlags, (unsigned)abl->mNumberBuffers,
+            (unsigned)abl->mBuffers[0].mDataByteSize);
+    }
+
+    static BOOL sawSignal = NO;
+    if (!sawSignal) {
+      float peak = 0;
+      unsigned loudest = 0;
+      for (unsigned b = 0; b < abl->mNumberBuffers; b++) {
+        const float *samples = (const float *)abl->mBuffers[b].mData;
+        int count = (int)(abl->mBuffers[b].mDataByteSize / sizeof(float));
+        if (samples == NULL) continue;
+        for (int i = 0; i < count; i++) {
+          float v = fabsf(samples[i]);
+          if (v > peak) { peak = v; loudest = b; }
+        }
+      }
+      if (peak > 0.0005f) {
+        sawSignal = YES;
+        NSLog(@"voxlog: system audio carrying signal (peak %.3f, in buffer %u of %u)",
+              peak, loudest, (unsigned)abl->mNumberBuffers);
+      }
+    }
+  }
+
   // ScreenCaptureKit delivers non-interleaved float32; buffer 0 is the left
   // (or only) channel, which is all a speech recognizer needs.
   const float *src = (const float *)abl->mBuffers[0].mData;
