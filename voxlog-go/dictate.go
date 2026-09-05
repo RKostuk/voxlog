@@ -335,6 +335,7 @@ func (a *app) abandon(d *dictation) {
 func (a *app) stopDictation() {
 	d := a.dictation
 	a.dictation = nil
+	a.reclaimMic()
 	cfg := a.store.Get()
 
 	samples := d.take()
@@ -500,20 +501,47 @@ func (a *app) finishRecording(cfg settings.Settings, decoding bool) {
 // toggleDictate is the tap-to-start, tap-to-stop behaviour of the dictate key.
 func (a *app) toggleDictate() {
 	a.mu.Lock()
-	defer a.mu.Unlock()
+	running := a.dictation != nil
+	a.mu.Unlock()
 
-	if a.dictation == nil {
-		a.startDictation()
+	if running {
+		a.mu.Lock()
+		defer a.mu.Unlock()
+		if a.dictation != nil {
+			a.stopDictation()
+		}
 		return
 	}
-	a.stopDictation()
+
+	// Always-on gives up the microphone first, and outside the lock: a
+	// dictation is the one case where the user is talking TO the machine,
+	// and the gate reacting to those same words is the one thing it must
+	// never do.
+	a.yieldMicToUser()
+
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.dictation != nil {
+		// Raced with another press; the second one is the stop.
+		a.stopDictation()
+		return
+	}
+	a.startDictation()
 }
 
 // holdDictate starts a take when the dictate key goes down in hold mode.
 func (a *app) holdDictate() {
 	a.mu.Lock()
-	defer a.mu.Unlock()
+	running := a.dictation != nil
+	a.mu.Unlock()
+	if running {
+		return
+	}
 
+	a.yieldMicToUser()
+
+	a.mu.Lock()
+	defer a.mu.Unlock()
 	if a.dictation == nil {
 		a.startDictation()
 	}
@@ -552,6 +580,7 @@ func (a *app) cancelDictationLocked() {
 		return
 	}
 	a.dictation = nil
+	a.reclaimMic()
 
 	d.take() // discard whatever was captured
 	if d.sysRunning {

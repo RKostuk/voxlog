@@ -136,6 +136,12 @@ type alwaysOn struct {
 	// on every tick.
 	sessKind string
 
+	// yielded is set while a dictation owns the microphone. It exists so the
+	// worker never has to ask the app whether the user is recording:
+	// answering that takes a.mu, and a.mu is held by the very hotkey path
+	// that waits for the worker to drain -- which deadlocks. This flag lives
+	// under listen.mu with everything else the worker touches.
+	yielded bool
 	// fetching guards the one-at-a-time download of the VAD model.
 	fetching bool
 	// sweptAt is when retention last ran over auto recordings.
@@ -192,7 +198,7 @@ func (a *app) tickAlwaysOn() {
 
 	// A dictation or a meeting the user started by hand owns the microphone
 	// and the subject; always-on steps aside entirely.
-	if a.userRecordingInProgress() {
+	if a.listen.isYielded() || a.userRecordingInProgress() {
 		a.closeSession()
 		a.stopListening()
 		return
@@ -540,7 +546,7 @@ func (a *app) openSessionIfIdle(asMeeting bool) *session {
 		}
 		return sess
 	}
-	if !listening || a.userRecordingInProgress() {
+	if !listening || a.listen.isYielded() {
 		return nil
 	}
 
@@ -1041,6 +1047,40 @@ func (a *app) sweepAutoRecordings() {
 		log.Printf("always-on sweep: dropped the audio of %s, never transcribed",
 			m.Start.Format(time.RFC3339))
 	}
+}
+
+// yieldMicToUser hands the microphone to a dictation, at once rather than on
+// the supervisor's next tick: two seconds of the gate still listening is two
+// seconds of it reacting to the very words being dictated.
+//
+// MUST NOT be called with a.mu held. It waits for the worker to drain, and
+// the worker is not allowed to want a.mu for exactly that reason (see the
+// yielded flag).
+func (a *app) yieldMicToUser() {
+	a.listen.mu.Lock()
+	already := a.listen.yielded
+	a.listen.yielded = true
+	a.listen.mu.Unlock()
+	if already {
+		return
+	}
+	a.closeSession()
+	a.stopListening()
+}
+
+// reclaimMic lets always-on have the microphone back. Listening resumes on
+// the supervisor's next tick rather than here: the dictation's own recorder
+// is still being torn down, and racing it for the device buys nothing.
+func (a *app) reclaimMic() {
+	a.listen.mu.Lock()
+	a.listen.yielded = false
+	a.listen.mu.Unlock()
+}
+
+func (l *alwaysOn) isYielded() bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.yielded
 }
 
 // Pause and its state are read by the menu item and by the supervisor.

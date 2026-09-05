@@ -502,3 +502,37 @@ func TestFarEndSpeechAlsoConfirms(t *testing.T) {
 		t.Fatal("far-end speech must confirm the recording too")
 	}
 }
+
+func TestYieldingTheMicIsIdempotentAndReversible(t *testing.T) {
+	// A dictation takes the microphone at once rather than on the
+	// supervisor's next tick, because two seconds of the gate still
+	// listening is two seconds of it reacting to the words being dictated.
+	a := &app{}
+	if a.listen.isYielded() {
+		t.Fatal("the microphone starts with always-on")
+	}
+	a.yieldMicToUser()
+	if !a.listen.isYielded() {
+		t.Fatal("yielding did not stick")
+	}
+	// Twice in a row is what a double press looks like, and must not wait on
+	// a worker that is already gone.
+	a.yieldMicToUser()
+
+	a.reclaimMic()
+	if a.listen.isYielded() {
+		t.Fatal("the microphone was not given back")
+	}
+}
+
+func TestAYieldedMicOpensNoSession(t *testing.T) {
+	// The worker decides this on its own, without asking the app whether a
+	// dictation is running: that question takes a.mu, which the hotkey path
+	// holds while waiting for the worker to drain.
+	a := &app{}
+	a.listen.listening = true
+	a.listen.yielded = true
+	if sess := a.openSessionIfIdle(false); sess != nil {
+		t.Fatal("a session opened while the user had the microphone")
+	}
+}
