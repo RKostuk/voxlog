@@ -9,6 +9,7 @@ import (
 	"voxlog-go/internal/asr"
 	"voxlog-go/internal/diarize"
 	"voxlog-go/internal/history"
+	"voxlog-go/internal/llm"
 	"voxlog-go/internal/output"
 	"voxlog-go/internal/settings"
 )
@@ -634,5 +635,43 @@ func TestKnownModelsAllHaveAnEngine(t *testing.T) {
 		if !asr.HasEngine(m.Family) {
 			t.Errorf("%s/%s is offered for download, but asr has no engine for family %q", m.Family, m.Variant, m.Family)
 		}
+	}
+}
+
+// A task the classifier could not place, out of a meeting that has been
+// placed, belongs to the meeting's project -- Unfiltered is for a task with
+// nothing to inherit from.
+func TestTaskFromAMeetingInheritsTheMeetingsProject(t *testing.T) {
+	dir := t.TempDir()
+	a := &app{meetings: history.NewMeetingStore(dir)}
+	start := time.Date(2026, 9, 23, 14, 0, 0, 0, time.Local)
+	if err := a.meetings.Append(history.Meeting{Start: start, RecordingSeconds: 60}); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.meetings.SetEntity(start, "Northwind"); err != nil {
+		t.Fatal(err)
+	}
+	key := start.Format(time.RFC3339Nano)
+
+	if got := a.taskEntity(history.KindMeeting, key, llm.UnfilteredEntity); got != "Northwind" {
+		t.Errorf("unplaced task got %q, want the meeting's Northwind", got)
+	}
+	// The classifier's own answer is the better one: it read the sentence the
+	// task came out of, not the whole call.
+	if got := a.taskEntity(history.KindMeeting, key, "Contoso"); got != "Contoso" {
+		t.Errorf("placed task got %q, want Contoso", got)
+	}
+	// A dictation has no meeting to inherit from, and neither does a meeting
+	// nothing has filed yet.
+	if got := a.taskEntity(history.KindDictation, key, llm.UnfilteredEntity); got != llm.UnfilteredEntity {
+		t.Errorf("dictation got %q, want Unfiltered", got)
+	}
+	unfiled := start.Add(time.Hour)
+	if err := a.meetings.Append(history.Meeting{Start: unfiled, RecordingSeconds: 60}); err != nil {
+		t.Fatal(err)
+	}
+	got := a.taskEntity(history.KindMeeting, unfiled.Format(time.RFC3339Nano), llm.UnfilteredEntity)
+	if got != llm.UnfilteredEntity {
+		t.Errorf("task from an unfiled meeting got %q, want Unfiltered", got)
 	}
 }

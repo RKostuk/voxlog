@@ -136,6 +136,17 @@ var schemaSteps = []string{
 	`
 	ALTER TABLE meetings ADD COLUMN auto_started INTEGER NOT NULL DEFAULT 0;
 	`,
+	// Step 4 -- who chose the project.
+	//
+	// entity used to only ever be set by hand, so there was nothing to
+	// distinguish. Summarization now picks a project for a meeting by itself,
+	// and a guess must never overwrite the answer the user typed: everything
+	// already in the table was set by hand, hence the backfill to 1 for rows
+	// that carry an entity at all.
+	`
+	ALTER TABLE meetings ADD COLUMN entity_manual INTEGER NOT NULL DEFAULT 0;
+	UPDATE meetings SET entity_manual = 1 WHERE entity <> '';
+	`,
 }
 
 func (d *DB) migrateSchema() error {

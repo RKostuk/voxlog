@@ -65,3 +65,57 @@ func TestNoExtraInstructionsAddsNoBlock(t *testing.T) {
 		t.Error("an empty field still announces user instructions")
 	}
 }
+
+func TestParseSummaryTakesTheProjectOffTheLastLine(t *testing.T) {
+	allowed := []string{"Northwind", "Contoso"}
+	summary, entity := parseSummary("They agreed on the price.\n\nPROJECT: northwind\n", allowed)
+	if summary != "They agreed on the price." {
+		t.Errorf("summary = %q, want the sentence with no project line", summary)
+	}
+	// Canonical casing comes from the user's list, not from the model.
+	if entity != "Northwind" {
+		t.Errorf("entity = %q, want Northwind", entity)
+	}
+}
+
+func TestParseSummaryDropsAProjectNobodyConfigured(t *testing.T) {
+	for _, reply := range []string{
+		"They agreed on the price.\nPROJECT: none",
+		"They agreed on the price.\nPROJECT: Something The Model Made Up",
+		`They agreed on the price.
+Project: "Northwind Traders".`,
+	} {
+		summary, entity := parseSummary(reply, []string{"Northwind", "Contoso"})
+		if entity != "" {
+			t.Errorf("reply %q yielded entity %q, want empty", reply, entity)
+		}
+		// The label line is an echo of an instruction, not a sentence about
+		// the meeting, so it goes whether or not its value was usable.
+		if summary != "They agreed on the price." {
+			t.Errorf("reply %q left the project line in the summary: %q", reply, summary)
+		}
+	}
+}
+
+// A small model forgets the last line often enough that losing the summary
+// over it would be the wrong trade.
+func TestParseSummarySurvivesAMissingProjectLine(t *testing.T) {
+	summary, entity := parseSummary("  They agreed on the price.  ", []string{"Northwind"})
+	if summary != "They agreed on the price." {
+		t.Errorf("summary = %q", summary)
+	}
+	if entity != "" {
+		t.Errorf("entity = %q, want empty", entity)
+	}
+}
+
+func TestTheProjectLineIsOnlyAskedForWhenThereAreProjects(t *testing.T) {
+	with := buildSummaryPrompt("we talked", []string{"Northwind"}, SummaryOptions{})
+	if !strings.Contains(with, "PROJECT:") {
+		t.Error("the prompt does not ask for the project line")
+	}
+	without := buildSummaryPrompt("we talked", nil, SummaryOptions{})
+	if strings.Contains(without, "PROJECT:") {
+		t.Error("the prompt asks which project, with no projects to choose from")
+	}
+}

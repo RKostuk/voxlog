@@ -258,3 +258,65 @@ func TestGetOnAMissingMeetingErrors(t *testing.T) {
 		t.Fatal("reading a meeting that was never recorded returned no error")
 	}
 }
+
+// A project the user typed is the answer; a project summarization picked is a
+// guess. The guess must never come back over the top of the answer -- not
+// even a later one, since the transcript can be re-summarized at any time.
+func TestAutoEntityNeverOverwritesAHandSetProject(t *testing.T) {
+	s := NewMeetingStore(t.TempDir())
+	start := time.Date(2026, 9, 23, 9, 0, 0, 0, time.Local)
+	seedMeeting(t, s, start)
+
+	set, err := s.SetEntityAuto(start, "Northwind")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !set {
+		t.Fatal("a meeting nobody has filed by hand refused the automatic project")
+	}
+	if m, _ := s.Get(start); m.Entity != "Northwind" {
+		t.Fatalf("entity = %q, want Northwind", m.Entity)
+	}
+
+	if err := s.SetEntity(start, "Contoso"); err != nil {
+		t.Fatal(err)
+	}
+	set, err = s.SetEntityAuto(start, "Northwind")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if set {
+		t.Error("the automatic project overwrote one set by hand")
+	}
+	if m, _ := s.Get(start); m.Entity != "Contoso" {
+		t.Fatalf("entity = %q, want the hand-set Contoso", m.Entity)
+	}
+}
+
+// "No project" chosen by hand is a choice, and an empty guess is not a reason
+// to clear a project an earlier pass got right.
+func TestAutoEntityLeavesWhatItCannotImproveOn(t *testing.T) {
+	s := NewMeetingStore(t.TempDir())
+	start := time.Date(2026, 9, 23, 10, 0, 0, 0, time.Local)
+	seedMeeting(t, s, start)
+
+	if _, err := s.SetEntityAuto(start, "Northwind"); err != nil {
+		t.Fatal(err)
+	}
+	if set, err := s.SetEntityAuto(start, ""); err != nil || set {
+		t.Fatalf("an empty guess reported set=%v err=%v, want false/nil", set, err)
+	}
+	if m, _ := s.Get(start); m.Entity != "Northwind" {
+		t.Fatalf("entity = %q, want Northwind left alone", m.Entity)
+	}
+
+	if err := s.SetEntity(start, ""); err != nil {
+		t.Fatal(err)
+	}
+	if set, _ := s.SetEntityAuto(start, "Contoso"); set {
+		t.Error("a project cleared by hand was refilled automatically")
+	}
+	if m, _ := s.Get(start); m.Entity != "" {
+		t.Fatalf("entity = %q, want the hand-cleared empty", m.Entity)
+	}
+}

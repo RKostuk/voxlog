@@ -180,12 +180,17 @@ func (s *MeetingStore) Update(start time.Time, mutate func(*Meeting)) error {
 // SetEntity files a meeting under a project by hand. Separate from Update
 // because the window calls it on its own, and because it must not disturb a
 // transcript that may be landing at the same moment.
+//
+// It also marks the meeting as filed by a person, which is what stops
+// SetEntityAuto from ever coming back over the top of it -- including
+// clearing it: "no project" chosen by hand is a choice too.
 func (s *MeetingStore) SetEntity(start time.Time, entity string) error {
 	db, err := s.open()
 	if err != nil {
 		return err
 	}
-	res, err := db.sql.Exec("UPDATE meetings SET entity = ? WHERE start_ns = ?", entity, start.UnixNano())
+	res, err := db.sql.Exec("UPDATE meetings SET entity = ?, entity_manual = 1 WHERE start_ns = ?",
+		entity, start.UnixNano())
 	if err != nil {
 		return fmt.Errorf("history: filing meeting: %w", err)
 	}
@@ -193,6 +198,31 @@ func (s *MeetingStore) SetEntity(start time.Time, entity string) error {
 		return fmt.Errorf("history: no meeting at %s", start.Format(time.RFC3339Nano))
 	}
 	return nil
+}
+
+// SetEntityAuto files a meeting under the project summarization picked for
+// it, and does nothing at all if the user has already filed it themselves.
+// It reports whether the project was written, so the caller can tell a
+// declined guess from a stored one.
+//
+// An empty entity is never written: the model saying "I cannot tell" is not
+// a reason to clear a project an earlier pass got right.
+func (s *MeetingStore) SetEntityAuto(start time.Time, entity string) (bool, error) {
+	if entity == "" {
+		return false, nil
+	}
+	db, err := s.open()
+	if err != nil {
+		return false, err
+	}
+	res, err := db.sql.Exec(
+		"UPDATE meetings SET entity = ? WHERE start_ns = ? AND entity_manual = 0",
+		entity, start.UnixNano())
+	if err != nil {
+		return false, fmt.Errorf("history: filing meeting: %w", err)
+	}
+	n, _ := res.RowsAffected()
+	return n > 0, nil
 }
 
 const selectMeetingSQL = `

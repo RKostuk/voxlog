@@ -199,7 +199,7 @@ func (a *app) classifyForTasks(sourceKind, sourceKey, text string) {
 		SourceKind: sourceKind,
 		SourceKey:  sourceKey,
 		Text:       result.Text,
-		Entity:     result.Entity,
+		Entity:     a.taskEntity(sourceKind, sourceKey, result.Entity),
 		Status:     task.Status(result.Status),
 		Reminder:   result.Reminder,
 		Created:    time.Now(),
@@ -212,6 +212,36 @@ func (a *app) classifyForTasks(sourceKind, sourceKey, text string) {
 		task.ScheduleReminder(t)
 	}
 	ui.RefreshMainWindowIfOpen(a.hist, a.meetings, a.tasks)
+}
+
+// taskEntity is the project a task from this transcript belongs under. The
+// classifier's own answer wins; a task out of a meeting that the classifier
+// could not place inherits the meeting's project instead of landing in
+// Unfiltered, because the meeting has already been placed -- by the user, or
+// by summarization.
+//
+// Read here, at write time, rather than passed in: summarization and
+// classification are separate goroutines over the same transcript (see
+// meeting.go), so the meeting's own project may only have been decided
+// seconds ago. If it has not been decided yet, this is Unfiltered and stays
+// Unfiltered -- the two passes are deliberately not serialized for the sake
+// of one field.
+func (a *app) taskEntity(sourceKind, sourceKey, classified string) string {
+	if classified != "" && classified != llm.UnfilteredEntity {
+		return classified
+	}
+	if sourceKind != history.KindMeeting {
+		return classified
+	}
+	start, err := time.Parse(time.RFC3339Nano, sourceKey)
+	if err != nil {
+		return classified
+	}
+	m, err := a.meetings.Get(start)
+	if err != nil || m.Entity == "" {
+		return classified
+	}
+	return m.Entity
 }
 
 // summarizeMeeting fills in a meeting's Summary after its transcript lands --
@@ -231,7 +261,7 @@ func (a *app) summarizeMeeting(start time.Time, text string) {
 
 	entities := a.entityNames(cfg)
 	modelDir := asr.ModelDir(a.modelsDir, llm.Spec)
-	summary, err := a.llm.Summarize(modelDir, text, entities, llm.SummaryOptions{
+	summary, entity, err := a.llm.Summarize(modelDir, text, entities, llm.SummaryOptions{
 		Length: cfg.SummaryLength,
 		Extra:  cfg.SummaryPromptExtra,
 	})
@@ -239,7 +269,18 @@ func (a *app) summarizeMeeting(start time.Time, text string) {
 		log.Printf("meeting summarize: %v", err)
 		return
 	}
+	// The project is worth storing even when the summary came back empty, and
+	// the other way round: they are two answers, and one of them failing is
+	// not a reason to drop the other.
+	if entity != "" {
+		if _, err := a.meetings.SetEntityAuto(start, entity); err != nil {
+			log.Printf("meeting summarize: filing under %q: %v", entity, err)
+		}
+	}
 	if summary == "" {
+		if entity != "" {
+			ui.RefreshMainWindowIfOpen(a.hist, a.meetings, a.tasks)
+		}
 		return
 	}
 	if err := a.meetings.Update(start, func(m *history.Meeting) { m.Summary = summary }); err != nil {
