@@ -1,11 +1,14 @@
 package task
 
-import "testing"
+import (
+	"fmt"
+	"testing"
+)
 
 func TestAppendRejectedBoundsToMax(t *testing.T) {
 	s := NewStore(t.TempDir())
 	for i := 0; i < maxRejected+3; i++ {
-		if err := s.AppendRejected("example"); err != nil {
+		if err := s.AppendRejected(fmt.Sprintf("example %d", i)); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -80,5 +83,27 @@ func TestGetAndDeleteRoundTrip(t *testing.T) {
 	// Deleting again must not error -- gone is gone.
 	if err := s.Delete(tk.ID); err != nil {
 		t.Fatalf("second Delete: %v", err)
+	}
+}
+
+// The same line rejected twice is one example, moved to the end -- it used to
+// be stored twice, which spent two of the prompt's eight slots saying the same
+// thing.
+func TestRejectingTheSameLineTwiceKeepsOneCopy(t *testing.T) {
+	s := NewStore(t.TempDir())
+	for _, text := range []string{"buy milk", "call back", "buy milk"} {
+		if err := s.AppendRejected(text); err != nil {
+			t.Fatal(err)
+		}
+	}
+	list, err := s.LoadRejected()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(list) != 2 {
+		t.Fatalf("got %v, want two distinct examples", list)
+	}
+	if list[len(list)-1] != "buy milk" {
+		t.Fatalf("got %v, want the re-rejected line last", list)
 	}
 }

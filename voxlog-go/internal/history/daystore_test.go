@@ -1,7 +1,6 @@
 package history
 
 import (
-	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
@@ -91,7 +90,10 @@ func TestAppendMultipleEntriesSameDay(t *testing.T) {
 	}
 }
 
-func TestAllEntriesSkipsCorruptDayFile(t *testing.T) {
+// A leftover day file -- corrupt or otherwise -- is last release's copy of
+// data that now lives in the database. The list must come from the rows and
+// not go looking at it.
+func TestAllEntriesIgnoresLeftoverDayFiles(t *testing.T) {
 	dir := t.TempDir()
 	s := NewStore(dir)
 
@@ -100,7 +102,7 @@ func TestAllEntriesSkipsCorruptDayFile(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Corrupt a sibling day file directly.
+	// A corrupt leftover file beside the database.
 	corruptPath := filepath.Join(dir, "2026-08-13.json")
 	if err := os.WriteFile(corruptPath, []byte("{not valid json"), 0o644); err != nil {
 		t.Fatal(err)
@@ -115,27 +117,22 @@ func TestAllEntriesSkipsCorruptDayFile(t *testing.T) {
 	}
 }
 
-func TestAppendLeavesValidJSONAfterRename(t *testing.T) {
-	s := NewStore(t.TempDir())
-	e := Entry{Timestamp: mustParse(t, "2026-08-12T10:00:00Z"), Text: "atomic"}
-	if err := s.Append(e); err != nil {
+// A dictation has to still be there in the next process. The store used to
+// prove this by rewriting a whole day file atomically through a temp file and
+// a rename; now it is a committed row, and what is worth checking is that a
+// fresh store over the same directory sees it.
+func TestAnAppendSurvivesReopeningTheStore(t *testing.T) {
+	dir := t.TempDir()
+	e := Entry{Timestamp: mustParse(t, "2026-08-12T10:00:00Z"), Text: "durable", RecordingSeconds: 2}
+	if err := NewStore(dir).Append(e); err != nil {
 		t.Fatal(err)
 	}
 
-	raw, err := os.ReadFile(s.dayPath(e.Timestamp))
+	got, err := NewStore(dir).EntriesForDay(e.Timestamp)
 	if err != nil {
 		t.Fatal(err)
 	}
-	var entries []Entry
-	if err := json.Unmarshal(raw, &entries); err != nil {
-		t.Fatalf("day file is not valid JSON after atomic write: %v", err)
-	}
-	if len(entries) != 1 || entries[0].Text != "atomic" {
-		t.Fatalf("got %+v", entries)
-	}
-
-	// No leftover temp file after the rename.
-	if _, err := os.Stat(s.dayPath(e.Timestamp) + ".tmp"); !os.IsNotExist(err) {
-		t.Fatalf("expected no leftover .tmp file, stat err = %v", err)
+	if len(got) != 1 || got[0].Text != "durable" || got[0].RecordingSeconds != 2 {
+		t.Fatalf("got %+v, want the entry a previous store wrote", got)
 	}
 }

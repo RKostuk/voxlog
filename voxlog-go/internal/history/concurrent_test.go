@@ -3,7 +3,6 @@ package history
 import (
 	"os"
 	"path/filepath"
-	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -40,7 +39,7 @@ func TestAppendKeepsEveryConcurrentEntry(t *testing.T) {
 func TestUpdateAttachesATranscriptLater(t *testing.T) {
 	s := NewStore(t.TempDir())
 	at := time.Date(2026, 8, 17, 11, 0, 0, 0, time.UTC)
-	if err := s.Append(Entry{Timestamp: at, Kind: KindMeeting, AudioPath: "/tmp/m.wav"}); err != nil {
+	if err := s.Append(Entry{Timestamp: at, AudioPath: "/tmp/d.wav", RecordingSeconds: 4, AutoStarted: true}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -55,8 +54,8 @@ func TestUpdateAttachesATranscriptLater(t *testing.T) {
 	if len(entries) != 1 || entries[0].Text != "the transcript" {
 		t.Fatalf("got %+v, want the transcript attached", entries)
 	}
-	if entries[0].AudioPath != "/tmp/m.wav" || entries[0].Kind != KindMeeting {
-		t.Fatalf("got %+v, want the meeting's other fields preserved", entries[0])
+	if entries[0].AudioPath != "/tmp/d.wav" || entries[0].RecordingSeconds != 4 || !entries[0].AutoStarted {
+		t.Fatalf("got %+v, want the entry's other fields preserved", entries[0])
 	}
 }
 
@@ -68,16 +67,20 @@ func TestUpdateUnknownEntryIsAnError(t *testing.T) {
 }
 
 func TestOldDayFileReadsAsDictation(t *testing.T) {
-	// A file written before meetings existed has no "kind" field. It must not
-	// suddenly become a meeting, or the History window would offer to
-	// transcribe audio that was never kept.
+	// A day file written before meetings existed has no "kind" field. Imported,
+	// it must not suddenly become a meeting, or the History window would offer
+	// to transcribe audio that was never kept.
 	dir := t.TempDir()
 	raw := `[{"timestamp":"2026-08-01T09:00:00Z","duration_seconds":1.5,"text":"hello","recording_seconds":3}]`
 	if err := os.WriteFile(filepath.Join(dir, "2026-08-01.json"), []byte(raw), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
-	entries, err := NewStore(dir).EntriesForDay(time.Date(2026, 8, 1, 0, 0, 0, 0, time.UTC))
+	s := NewStore(dir)
+	if _, err := MigrateDictations(s, filepath.Join(t.TempDir(), "migrated")); err != nil {
+		t.Fatal(err)
+	}
+	entries, err := s.EntriesForDay(time.Date(2026, 8, 1, 0, 0, 0, 0, time.UTC))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -93,20 +96,27 @@ func TestOldDayFileReadsAsDictation(t *testing.T) {
 }
 
 func TestDictationEntriesCarryNoMeetingFields(t *testing.T) {
-	// omitempty: a dictation's JSON must stay exactly the shape it has today,
-	// so nothing downstream has to learn two formats.
+	// A dictation never had a meeting's fields, and moving into a table it
+	// shares with nothing must not invent them: an audio path that appeared out
+	// of nowhere is a Delete audio button for a file that does not exist.
 	dir := t.TempDir()
 	at := time.Date(2026, 8, 17, 12, 0, 0, 0, time.UTC)
-	if err := NewStore(dir).Append(Entry{Timestamp: at, Text: "x"}); err != nil {
+	s := NewStore(dir)
+	if err := s.Append(Entry{Timestamp: at, Text: "x"}); err != nil {
 		t.Fatal(err)
 	}
-	raw, err := os.ReadFile(filepath.Join(dir, "2026-08-17.json"))
+	entries, err := s.EntriesForDay(at)
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, field := range []string{"kind", "audio_path"} {
-		if strings.Contains(string(raw), field) {
-			t.Fatalf("dictation entry carries %q:\n%s", field, raw)
-		}
+	if len(entries) != 1 {
+		t.Fatalf("got %d entries, want 1", len(entries))
+	}
+	got := entries[0]
+	if got.Kind != "" || got.AudioPath != "" || got.SystemAudioPath != "" || got.AutoStarted {
+		t.Fatalf("got %+v, want a bare dictation", got)
+	}
+	if !got.Timestamp.Equal(at) {
+		t.Fatalf("timestamp came back as %v, want %v", got.Timestamp, at)
 	}
 }

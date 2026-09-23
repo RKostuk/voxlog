@@ -158,3 +158,62 @@ func MigrateJSONMeetingsToDB(meetings *MeetingStore, meetingsDir, sentinelPath s
 
 	return moved, nil
 }
+
+// MigrateDictations copies every dictation still sitting in a day file into
+// the database, once. Same story as MigrateJSONMeetingsToDB, one store over:
+// the day files are the release-before-last's storage, and nothing reads them
+// after this runs.
+//
+// The files are deliberately LEFT ON DISK -- a frozen backup for one release.
+// Deleting the sentinel re-runs the import, which is safe because Append
+// conflicts on ts_ns and re-states rather than duplicating.
+//
+// Entries marked as meetings are skipped: MigrateMeetings owns those, and it
+// runs first for exactly this reason.
+func MigrateDictations(days *Store, sentinelPath string) (int, error) {
+	if _, err := os.Stat(sentinelPath); err == nil {
+		return 0, nil
+	}
+
+	files, err := filepath.Glob(filepath.Join(days.Dir(), "*.json"))
+	if err != nil {
+		return 0, err
+	}
+
+	moved := 0
+	for _, f := range files {
+		entries, err := days.readDay(f)
+		if err != nil {
+			// One unreadable file must not block the import -- and with it the
+			// sentinel -- on every future launch.
+			log.Printf("history: migrate: skipping unreadable day file %s: %v", f, err)
+			continue
+		}
+		for _, e := range entries {
+			if e.Kind == KindMeeting || e.Timestamp.IsZero() {
+				continue
+			}
+			if err := days.Append(e); err != nil {
+				return moved, fmt.Errorf("history: migrate: importing dictation %s from %s: %w",
+					e.Timestamp.Format(time.RFC3339Nano), f, err)
+			}
+			moved++
+		}
+	}
+
+	if err := writeSentinel(sentinelPath, fmt.Sprintf("imported %d dictation(s)", moved)); err != nil {
+		return moved, err
+	}
+	return moved, nil
+}
+
+func writeSentinel(path, what string) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return fmt.Errorf("history: migrate: creating directory for sentinel %s: %w", path, err)
+	}
+	line := fmt.Sprintf("%s %s\n", time.Now().Format(time.RFC3339), what)
+	if err := os.WriteFile(path, []byte(line), 0o644); err != nil {
+		return fmt.Errorf("history: migrate: writing sentinel %s: %w", path, err)
+	}
+	return nil
+}

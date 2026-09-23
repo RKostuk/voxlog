@@ -207,7 +207,7 @@ func main() {
 	store := settings.NewStore("")
 	// NewStore("") falls back to its own default dir, so an unset
 	// TranscriptsDir needs no special case here.
-	histStore := history.NewStore(expandHome(store.Get().TranscriptsDir))
+	transcriptsDir := expandHome(store.Get().TranscriptsDir)
 	// Meetings live beside the day files rather than inside them: a few a
 	// day, each with two audio tracks and a length measured in hours, is not
 	// the shape a per-day list of dictated sentences is good at.
@@ -219,13 +219,17 @@ func main() {
 	// points into iCloud or Dropbox, and SQLite over a syncing filesystem is
 	// a well-known way to lose a database. The recordings and the frozen JSON
 	// backup stay where the user's own backups already cover them.
-	meetingsDir := filepath.Join(histStore.Dir(), "Meetings")
-	meetDB, err := history.OpenDB(filepath.Join(mustUserConfigDir(), "Voxlog", "voxlog.db"))
+	voxDB, err := history.OpenDB(filepath.Join(mustUserConfigDir(), "Voxlog", "voxlog.db"))
 	if err != nil {
-		log.Fatalf("opening the meetings database: %v", err)
+		log.Fatalf("opening the database: %v", err)
 	}
-	meetStore := history.NewMeetingStoreDB(meetingsDir, meetDB)
-	taskStore := task.NewStore("")
+	// One database for all three: dictations and tasks were the last things
+	// still kept as files, which made listing either a directory glob and left
+	// no way to ask a question across them.
+	histStore := history.NewStoreDB(transcriptsDir, voxDB)
+	meetingsDir := filepath.Join(histStore.Dir(), "Meetings")
+	meetStore := history.NewMeetingStoreDB(meetingsDir, voxDB)
+	taskStore := task.NewStoreDB("", voxDB)
 	modelsDir := filepath.Join(mustUserConfigDir(), "Voxlog", "models")
 
 	systray.Run(func() {
@@ -968,6 +972,23 @@ func onReady(store *settings.Store, histStore *history.Store, meetStore *history
 		log.Printf("importing meetings into the database: %v", err)
 	} else if n > 0 {
 		log.Printf("imported %d meetings into the database", n)
+	}
+
+	// And the same again for the two stores that were still files: the day
+	// files of dictations, and one file per task. Both run after the meeting
+	// migrations above -- the first of those rewrites day files, and a
+	// dictation import that ran first would have to be re-run anyway.
+	dictSentinel := filepath.Join(mustUserConfigDir(), "Voxlog", "migrated-dictations")
+	if n, err := history.MigrateDictations(histStore, dictSentinel); err != nil {
+		log.Printf("importing dictations into the database: %v", err)
+	} else if n > 0 {
+		log.Printf("imported %d dictations into the database", n)
+	}
+	taskSentinel := filepath.Join(mustUserConfigDir(), "Voxlog", "migrated-tasks")
+	if n, err := a.tasks.MigrateFiles(taskSentinel); err != nil {
+		log.Printf("importing tasks into the database: %v", err)
+	} else if n > 0 {
+		log.Printf("imported %d tasks into the database", n)
 	}
 
 	// Apply the retention policy once at startup. Doing it here (rather than

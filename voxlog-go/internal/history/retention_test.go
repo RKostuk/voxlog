@@ -47,18 +47,44 @@ func TestPruneUnknownPolicyRemovesNothing(t *testing.T) {
 	}
 }
 
-func TestPruneRemovesOnlyFilesPastCutoff(t *testing.T) {
+func TestPruneRemovesOnlyEntriesPastCutoff(t *testing.T) {
 	dir := t.TempDir()
-	recent := writeDayFile(t, dir, time.Now().AddDate(0, 0, -2))
-	old := writeDayFile(t, dir, time.Now().AddDate(0, 0, -30))
-
 	s := NewStore(dir)
+	recent := time.Now().AddDate(0, 0, -2)
+	old := time.Now().AddDate(0, 0, -30)
+	for _, at := range []time.Time{recent, old} {
+		if err := s.Append(Entry{Timestamp: at, Text: "take"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
 	removed, err := s.Prune(RetentionWeek)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if removed != 1 {
-		t.Fatalf("removed %d files, want 1", removed)
+		t.Fatalf("removed %d entries, want 1", removed)
+	}
+	left, err := s.AllEntries()
+	if err != nil {
+		t.Fatal(err)
+	}
+	// One entry at a time now, not one day at a time: half a day past the
+	// cutoff used to be kept because a day was the unit on disk.
+	if len(left) != 1 || !left[0].Timestamp.Equal(recent) {
+		t.Fatalf("got %+v, want only the two-day-old take", left)
+	}
+}
+
+// Day files are last release's copy of what is now in the database, and the
+// retention setting covers them too.
+func TestPruneAlsoSweepsLeftoverDayFiles(t *testing.T) {
+	dir := t.TempDir()
+	recent := writeDayFile(t, dir, time.Now().AddDate(0, 0, -2))
+	old := writeDayFile(t, dir, time.Now().AddDate(0, 0, -30))
+
+	if _, err := NewStore(dir).Prune(RetentionWeek); err != nil {
+		t.Fatal(err)
 	}
 	if _, err := os.Stat(recent); err != nil {
 		t.Fatalf("recent file should survive a 1-week policy: %v", err)

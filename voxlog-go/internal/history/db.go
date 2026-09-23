@@ -83,3 +83,13 @@ func (d *DB) Close() error {
 	}
 	return d.sql.Close()
 }
+
+// SQL hands out the connection behind this database.
+//
+// It exists for internal/task, which keeps its own tables in this same file:
+// there is one database and one ordered list of schema steps (see schema.go),
+// so a second package with a second database would mean a second migration
+// history, two files to back up, and no way to ever join a task to the
+// meeting it came out of. The alternative -- moving task storage in here --
+// would mean this package importing internal/task, which imports it back.
+func (d *DB) SQL() *sql.DB { return d.sql }

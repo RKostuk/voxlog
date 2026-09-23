@@ -1,6 +1,7 @@
 package history
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"time"
@@ -31,25 +32,39 @@ func RetentionDuration(policy string) (time.Duration, bool) {
 	}
 }
 
-// Prune deletes whole day files older than the given policy allows, and
-// reports how many it removed. A disabled/unknown policy removes nothing.
+// Prune deletes dictations older than the given policy allows and reports how
+// many went. A disabled/unknown policy removes nothing.
 //
-// Whole files only, never individual entries: day files are named for the
-// day they cover, so the cutoff can be decided from the filename without
-// parsing (or rewriting) any of them.
+// One row at a time now that dictations are rows. This used to delete whole
+// day files, because a day was the unit on disk and deleting half of one would
+// have meant rewriting it -- which also meant a transcript was kept up to a
+// day longer than asked for.
+//
+// Old day files still on disk are swept by the same call, by filename as
+// before: they are last release's copy of data that now lives in the database,
+// and the retention setting covers them too.
 func (s *Store) Prune(policy string) (int, error) {
 	maxAge, ok := RetentionDuration(policy)
 	if !ok {
 		return 0, nil
 	}
+	cutoff := time.Now().Add(-maxAge)
 
-	files, err := filepath.Glob(filepath.Join(s.dir, "*.json"))
+	db, err := s.open()
 	if err != nil {
 		return 0, err
 	}
+	res, err := db.sql.Exec("DELETE FROM dictations WHERE ts_ns < ?", cutoff.UnixNano())
+	if err != nil {
+		return 0, fmt.Errorf("history: pruning dictations: %w", err)
+	}
+	n, _ := res.RowsAffected()
+	removed := int(n)
 
-	cutoff := time.Now().Add(-maxAge)
-	removed := 0
+	files, err := filepath.Glob(filepath.Join(s.dir, "*.json"))
+	if err != nil {
+		return removed, err
+	}
 	for _, f := range files {
 		name := filepath.Base(f)
 		day, err := time.ParseInLocation("2006-01-02", name[:len(name)-len(".json")], time.Local)
@@ -62,7 +77,6 @@ func (s *Store) Prune(policy string) (int, error) {
 			if err := os.Remove(f); err != nil {
 				return removed, err
 			}
-			removed++
 		}
 	}
 	return removed, nil

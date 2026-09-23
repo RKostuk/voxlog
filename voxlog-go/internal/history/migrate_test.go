@@ -38,7 +38,9 @@ func TestMigrationMovesMeetingsOutOfADayFile(t *testing.T) {
 		t.Fatalf("got %+v, want every field carried across", got)
 	}
 
-	left, _ := days.AllEntries()
+	// The dictation stays in the day file: this migration only moves meetings,
+	// and MigrateDictations is what imports the rest of it later.
+	left, _ := days.readDay(filepath.Join(dayDir, "2026-08-01.json"))
 	if len(left) != 1 || left[0].Text != "a dictation" {
 		t.Fatalf("got %+v, want the dictation left alone in the day file", left)
 	}
@@ -157,5 +159,78 @@ func TestMigrationHandlesNoHistoryAtAll(t *testing.T) {
 	}
 	if _, err := os.Stat(sentinel); err != nil {
 		t.Error("the sentinel should still be written, so an empty history is not re-scanned every launch")
+	}
+}
+
+func TestMigrateDictationsImportsEveryDayFileOnce(t *testing.T) {
+	dayDir := t.TempDir()
+	writeRawDayFile(t, dayDir, "2026-08-01.json", `[
+	  {"timestamp":"2026-08-01T09:00:00Z","duration_seconds":1.5,"text":"first","recording_seconds":3},
+	  {"timestamp":"2026-08-01T11:00:00Z","kind":"meeting","recording_seconds":2531,"text":"a call"}
+	]`)
+	writeRawDayFile(t, dayDir, "2026-08-02.json", `[
+	  {"timestamp":"2026-08-02T09:00:00Z","text":"second","audio_path":"/tmp/d.wav","auto_started":true}
+	]`)
+	writeRawDayFile(t, dayDir, "2026-08-03.json", `[not json`)
+
+	days := NewStore(dayDir)
+	sentinel := filepath.Join(t.TempDir(), "migrated-dictations")
+
+	n, err := MigrateDictations(days, sentinel)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Two dictations. The meeting is MigrateMeetings' business, and the
+	// unreadable file must not block the sentinel forever.
+	if n != 2 {
+		t.Fatalf("imported %d, want 2", n)
+	}
+	got, err := days.AllEntries()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 || got[0].Text != "first" || got[1].Text != "second" {
+		t.Fatalf("got %+v, want first then second", got)
+	}
+	if got[1].AudioPath != "/tmp/d.wav" || !got[1].AutoStarted {
+		t.Fatalf("got %+v, want every field carried across", got[1])
+	}
+	if _, err := os.Stat(sentinel); err != nil {
+		t.Fatalf("the sentinel was not written: %v", err)
+	}
+
+	// Re-running is a no-op, and the day files are still there -- they are a
+	// frozen backup for one release, not an intermediate to clean up.
+	if n, err := MigrateDictations(days, sentinel); err != nil || n != 0 {
+		t.Fatalf("second run imported %d (err %v), want 0", n, err)
+	}
+	if _, err := os.Stat(filepath.Join(dayDir, "2026-08-01.json")); err != nil {
+		t.Fatalf("the day file was removed: %v", err)
+	}
+	if got, _ := days.AllEntries(); len(got) != 2 {
+		t.Fatalf("got %d entries after a second run, want 2", len(got))
+	}
+}
+
+// Deleting the sentinel is how the import is re-run by hand if the database
+// ever has to be rebuilt, so it has to be safe to run over rows it already
+// wrote.
+func TestMigrateDictationsIsSafeToRunAgain(t *testing.T) {
+	dayDir := t.TempDir()
+	writeRawDayFile(t, dayDir, "2026-08-01.json",
+		`[{"timestamp":"2026-08-01T09:00:00Z","text":"once","recording_seconds":3}]`)
+
+	days := NewStore(dayDir)
+	for i := 0; i < 2; i++ {
+		if _, err := MigrateDictations(days, filepath.Join(t.TempDir(), "migrated")); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got, err := days.AllEntries()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0].Text != "once" {
+		t.Fatalf("got %+v, want exactly one entry", got)
 	}
 }

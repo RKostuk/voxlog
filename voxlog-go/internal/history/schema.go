@@ -147,6 +147,59 @@ var schemaSteps = []string{
 	ALTER TABLE meetings ADD COLUMN entity_manual INTEGER NOT NULL DEFAULT 0;
 	UPDATE meetings SET entity_manual = 1 WHERE entity <> '';
 	`,
+	// Step 5 -- the last two things that were still files.
+	//
+	// Dictations were one JSON file per day and tasks were one JSON file per
+	// task, so listing either meant globbing a directory and parsing
+	// everything in it, and retention meant deleting whole days at a time
+	// because a day was the unit on disk. Meetings stopped working that way
+	// three steps ago; these are the rest of it.
+	`
+	CREATE TABLE dictations (
+		-- Timestamp.UnixNano(), like meetings.start_ns: every caller already
+		-- identifies a dictation by the instant it started (the History
+		-- window round-trips it as RFC3339Nano), and two takes cannot begin
+		-- in the same nanosecond.
+		ts_ns             INTEGER PRIMARY KEY,
+		duration_secs     REAL    NOT NULL DEFAULT 0,
+		recording_secs    REAL    NOT NULL DEFAULT 0,
+		text              TEXT    NOT NULL DEFAULT '',
+		audio_path        TEXT    NOT NULL DEFAULT '',
+		-- system_audio_path is carried for the same reason the Entry field is:
+		-- meetings used to live in these same day files, and the migration
+		-- reads records that still have it.
+		system_audio_path TEXT    NOT NULL DEFAULT '',
+		auto_started      INTEGER NOT NULL DEFAULT 0
+	);
+
+	CREATE TABLE tasks (
+		-- The id is the one task.NewID generates (a sortable timestamp), not
+		-- a rowid: it is already in every task's link back to its source and
+		-- in the window's own markup.
+		id          TEXT    PRIMARY KEY,
+		source_kind TEXT    NOT NULL DEFAULT '',
+		source_key  TEXT    NOT NULL DEFAULT '',
+		text        TEXT    NOT NULL DEFAULT '',
+		entity      TEXT    NOT NULL DEFAULT '',
+		status      TEXT    NOT NULL DEFAULT 'todo',
+		notes       TEXT    NOT NULL DEFAULT '',
+		-- Nanoseconds, NULL for "never": a reminder nobody set and an edit
+		-- nobody made are both absences, and a zero time would read as 1970.
+		reminder_ns INTEGER,
+		created_ns  INTEGER NOT NULL,
+		updated_ns  INTEGER
+	);
+	CREATE INDEX tasks_created ON tasks(created_ns DESC);
+	CREATE INDEX tasks_entity ON tasks(entity);
+
+	-- The "Not a task" list: a handful of short lines the classifier prompt
+	-- is shown as negative examples. seq orders them so the oldest can drop
+	-- off once there are more than maxRejected.
+	CREATE TABLE task_rejected (
+		seq  INTEGER PRIMARY KEY AUTOINCREMENT,
+		text TEXT NOT NULL UNIQUE
+	);
+	`,
 }
 
 func (d *DB) migrateSchema() error {
