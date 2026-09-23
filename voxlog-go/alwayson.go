@@ -715,20 +715,28 @@ func (a *app) openSessionIfIdle(asMeeting bool) *session {
 		sess.promote()
 	}
 
+	// Published under the same lock the pre-roll is taken under, and before
+	// a single byte of it is written. Between those two used to be a window
+	// in which the capture callback saw no session and filed its chunk as
+	// the head of the *next* pre-roll -- so the first fraction of a second
+	// of every recording turned up at the start of the one after it.
+	// Draining the pre-roll, writing it, and publishing the session all
+	// happen in one critical section, and the order inside it matters twice
+	// over. The pre-roll has to be written before any live chunk, or it
+	// lands behind the audio it comes before. And the drain has to be
+	// atomic with the publish: there used to be a window between them where
+	// the capture callback saw no session and filed its chunk as the head of
+	// the *next* pre-roll, so the first moments of every recording turned up
+	// at the start of the one after it.
+	//
+	// The callback is held up for one buffered write while this runs, which
+	// is memory and a flush, not a disk wait.
 	a.listen.mu.Lock()
 	preroll, farPreroll := a.listen.preroll, a.listen.farPreroll
 	a.listen.preroll, a.listen.farPreroll = nil, nil
-	a.listen.mu.Unlock()
-
-	// The pre-roll is written BEFORE the session is published, not after:
-	// the moment the audio callback can see it, live chunks start arriving,
-	// and a pre-roll written afterwards would land behind the audio it comes
-	// before.
 	if len(preroll) > 0 {
 		sess.writeMic(preroll)
 	}
-
-	a.listen.mu.Lock()
 	a.listen.sess = sess
 	a.listen.sessKind = sess.currentKind()
 	a.listen.mu.Unlock()
@@ -961,7 +969,13 @@ func (a *app) closeSession() {
 	}
 
 	micPath, sysPath, sysVoiced := sess.closeFiles()
-	seconds := time.Since(sess.start).Seconds()
+	// The file's own length, not the wall clock: closeFiles has just cut the
+	// silence off the end, and a History row claiming a minute for a
+	// twenty-second recording is a row that disagrees with its own player.
+	seconds := audio.DurationSeconds(micPath)
+	if seconds <= 0 {
+		seconds = time.Since(sess.start).Seconds()
+	}
 	kind := sess.currentKind()
 
 	a.tray.stoppedMeeting()
@@ -1118,6 +1132,18 @@ func (a *app) fileAutoNote(sess *session, micPath, sysPath string, seconds float
 // No diarization: a note is one voice by definition -- that is what made it
 // a note.
 func (a *app) transcribeWholeFile(spec asr.ModelSpec, language, path string, yield func()) string {
+	// Only the speech, where the gate can say where the speech is. Handing
+	// the recognizer the empty room between sentences is what produced both
+	// halves of the complaint this came from: most of what was said missing,
+	// and a paragraph of invented text where nothing was said at all.
+	if spans, ok := a.speechSpans(path); ok {
+		if len(spans) == 0 {
+			log.Printf("always-on: no speech found in %s", path)
+			return ""
+		}
+		return a.transcribeSpans(spec, language, path, spans, yield)
+	}
+
 	var parts []string
 	err := audio.ReadBlocks(path, func(block []float32) error {
 		if text := a.transcribeBlock(spec, language, block, nil, false); text != "" {
@@ -1128,6 +1154,33 @@ func (a *app) transcribeWholeFile(spec asr.ModelSpec, language, path string, yie
 	})
 	if err != nil {
 		log.Printf("always-on: reading %s: %v", path, err)
+	}
+	return strings.TrimSpace(strings.Join(parts, " "))
+}
+
+// transcribeSpans decodes the marked stretches of a recording, in order.
+// Each one is split into blocks of its own, so a long stretch still hands
+// over to a waiting dictation between blocks.
+func (a *app) transcribeSpans(spec asr.ModelSpec, language, path string, spans []speechSpan, yield func()) string {
+	var parts []string
+	for _, span := range spans {
+		samples, err := audio.ReadRange(path,
+			float64(span.start)/audio.SampleRate, float64(span.end)/audio.SampleRate)
+		if err != nil {
+			log.Printf("always-on: reading %s: %v", path, err)
+			continue
+		}
+		for len(samples) > 0 {
+			cut := len(samples)
+			if cut > audio.BlockSamples {
+				cut = audio.CutPoint(samples, audio.BlockSamples)
+			}
+			if text := a.transcribeBlock(spec, language, samples[:cut], nil, false); text != "" {
+				parts = append(parts, text)
+			}
+			samples = samples[cut:]
+			yield()
+		}
 	}
 	return strings.TrimSpace(strings.Join(parts, " "))
 }

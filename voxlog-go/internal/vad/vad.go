@@ -137,6 +137,35 @@ func (g *Gate) Feed(chunk []float32) []Segment {
 	return out
 }
 
+// Flush ends the stretch in progress and hands it back, if there is one.
+//
+// A segment is normally emitted only once the pause after it is long enough,
+// which is the right behaviour live and the wrong one at the end of a
+// finished recording: the last thing said has no pause after it, only the
+// end of the file, and without this it would never come out.
+func (g *Gate) Flush() []Segment {
+	if len(g.pending) > 0 {
+		// A partial window is still audio. Pad it out rather than drop it.
+		padded := make([]float32, windowSize)
+		copy(padded, g.pending)
+		g.impl.AcceptWaveform(padded)
+		g.fed += int64(len(g.pending))
+		g.pending = nil
+	}
+	g.impl.Flush()
+
+	var out []Segment
+	for !g.impl.IsEmpty() {
+		seg := g.impl.Front()
+		g.impl.Pop()
+		if seg == nil || len(seg.Samples) == 0 {
+			continue
+		}
+		out = append(out, Segment{StartSample: int64(seg.Start), Samples: seg.Samples})
+	}
+	return out
+}
+
 // Speaking reports whether the detector currently believes someone is
 // mid-sentence. Used for "has this gone quiet for long enough to stop",
 // where waiting for the segment to be emitted would be waiting for the

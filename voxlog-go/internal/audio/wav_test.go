@@ -220,3 +220,58 @@ func TestReadRangeCutsOutTheMiddle(t *testing.T) {
 		t.Fatalf("backwards: got %d samples, %v", len(got), err)
 	}
 }
+
+// A recording runs on for the whole silence gap after the last word, and
+// that tail is what TruncateWAV takes off.
+func TestTruncateWAVCutsTheTail(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "long.wav")
+	w, err := NewWAVWriter(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Write(make([]float32, 10*SampleRate)); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := TruncateWAV(path, 4*SampleRate); err != nil {
+		t.Fatal(err)
+	}
+	if got := DurationSeconds(path); got != 4 {
+		t.Fatalf("the recording reads back as %.2fs, want 4", got)
+	}
+	// And the file itself shrank, which is half the point.
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := int64(wavHeaderSize + 4*SampleRate*bytesPerSample); info.Size() != want {
+		t.Fatalf("the file is %d bytes, want %d", info.Size(), want)
+	}
+}
+
+// Asking for more than is there is not an error and must not grow the file:
+// the caller worked from a sample count taken while the recording was still
+// being written.
+func TestTruncateWAVLeavesAShortRecordingAlone(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "short.wav")
+	w, err := NewWAVWriter(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Write(make([]float32, 2*SampleRate)); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := TruncateWAV(path, 60*SampleRate); err != nil {
+		t.Fatal(err)
+	}
+	if got := DurationSeconds(path); got != 2 {
+		t.Fatalf("the recording reads back as %.2fs, want the 2 it held", got)
+	}
+}

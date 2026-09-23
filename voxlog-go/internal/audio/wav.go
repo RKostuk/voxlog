@@ -149,6 +149,11 @@ type WAVReader struct {
 	r         *bufio.Reader
 	remaining int64
 	total     int64
+	// dataStart is where the audio begins in the file. Not a constant: the
+	// chunk walk below exists because a WAV written elsewhere can carry
+	// LIST or fact chunks before the data, and anything rewriting the file
+	// in place has to know where it actually landed.
+	dataStart int64
 }
 
 // DurationSeconds is how long the recording at path is, or 0 if it cannot be
@@ -182,6 +187,9 @@ func OpenWAV(path string) (*WAVReader, error) {
 		f.Close()
 		return nil, fmt.Errorf("%s: not a WAV file: %w", path, err)
 	}
+	// Bytes consumed so far, counted rather than seeked: the reader is
+	// buffered, so the file's own offset is ahead of where the walk is.
+	pos := int64(len(riff))
 	if string(riff[0:4]) != "RIFF" || string(riff[8:12]) != "WAVE" {
 		f.Close()
 		return nil, fmt.Errorf("%s: not a WAV file", path)
@@ -198,6 +206,7 @@ func OpenWAV(path string) (*WAVReader, error) {
 		}
 		id := string(head[0:4])
 		size := int64(binary.LittleEndian.Uint32(head[4:8]))
+		pos += int64(len(head))
 
 		switch id {
 		case "fmt ":
@@ -206,6 +215,7 @@ func OpenWAV(path string) (*WAVReader, error) {
 				f.Close()
 				return nil, err
 			}
+			pos += size
 			if len(body) < 16 {
 				f.Close()
 				return nil, fmt.Errorf("%s: truncated fmt chunk", path)
@@ -218,12 +228,14 @@ func OpenWAV(path string) (*WAVReader, error) {
 			}
 		case "data":
 			n := size / bytesPerSample
-			return &WAVReader{f: f, r: r, remaining: n, total: n}, nil
+			return &WAVReader{f: f, r: r, remaining: n, total: n, dataStart: pos}, nil
 		default:
-			if _, err := r.Discard(int(size + size%2)); err != nil { // chunks are word-aligned
+			skip := size + size%2 // chunks are word-aligned
+			if _, err := r.Discard(int(skip)); err != nil {
 				f.Close()
 				return nil, err
 			}
+			pos += skip
 		}
 	}
 }
@@ -258,6 +270,49 @@ func (r *WAVReader) Read(max int) ([]float32, error) {
 }
 
 func (r *WAVReader) Close() error { return r.f.Close() }
+
+// TruncateWAV cuts the recording at path down to its first n samples and
+// fixes the header to match. A file already that short or shorter is left
+// alone.
+//
+// Used to drop the silence a recording ends in: an always-on session runs on
+// for the whole silence gap after the last word, and keeping that costs disk,
+// makes the player sit through a minute of nothing, and -- worse -- is what
+// the recognizer is handed.
+func TruncateWAV(path string, n int64) error {
+	if n < 0 {
+		return fmt.Errorf("audio: cannot truncate %s to %d samples", path, n)
+	}
+	r, err := OpenWAV(path)
+	if err != nil {
+		return err
+	}
+	total, start := r.total, r.dataStart
+	r.Close()
+	if n >= total {
+		return nil
+	}
+
+	f, err := os.OpenFile(path, os.O_RDWR, 0o644)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+
+	dataBytes := uint32(n * bytesPerSample)
+	var sizes [4]byte
+	binary.LittleEndian.PutUint32(sizes[:], 36+dataBytes)
+	if _, err := f.WriteAt(sizes[:], 4); err != nil {
+		return err
+	}
+	binary.LittleEndian.PutUint32(sizes[:], dataBytes)
+	// The data chunk's length field sits four bytes before the audio, wherever
+	// in the file the chunk walk found it.
+	if _, err := f.WriteAt(sizes[:], start-4); err != nil {
+		return err
+	}
+	return f.Truncate(start + int64(dataBytes))
+}
 
 // ReadWAV loads a whole file. Only for recordings known to be short -- a
 // meeting is read through WAVReader a block at a time instead.

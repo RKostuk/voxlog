@@ -19,6 +19,11 @@ import (
 // exactly once -- from a note to a conversation. That is the shape the day
 // actually has: a couple of remarks to yourself, and then somebody starts
 // talking to you.
+// trailingSilenceSeconds is how much of the pause after the last word is
+// kept. Enough that nothing is clipped and the recording does not end the
+// instant somebody stops talking, which sounds like a fault.
+const trailingSilenceSeconds = 1.5
+
 const (
 	// sessionNote is one person thinking out loud. It ends up in History,
 	// beside dictations, because that is what it is -- a dictation nobody
@@ -88,6 +93,12 @@ type session struct {
 	confirmed bool
 	// stopTicker ends the goroutine that keeps the menu bar clock moving.
 	stopTicker chan struct{}
+	// lastVoicedSample is how far into the recording the last speech was,
+	// in samples. The clock cannot answer that: a session runs on for the
+	// whole silence gap after the last word, and the difference between
+	// "when it stopped" and "when the talking stopped" is precisely the
+	// silence that gets trimmed off the end.
+	lastVoicedSample int64
 	// voiced is how much of this recording the gate called speech, in
 	// seconds. Not the same question as confirmed: this is "was anything
 	// said here at all", which is what decides whether the file is worth
@@ -187,6 +198,7 @@ func (s *session) noteVoice(embed []float32, seconds float64) bool {
 	defer s.mu.Unlock()
 
 	s.lastVoiced = time.Now()
+	s.markVoicedHereLocked()
 	s.confirmed = true
 	if len(embed) == 0 {
 		return false
@@ -293,7 +305,16 @@ func (s *session) warnOnce() bool {
 func (s *session) heardVoice() {
 	s.mu.Lock()
 	s.lastVoiced = time.Now()
+	s.markVoicedHereLocked()
 	s.mu.Unlock()
+}
+
+// markVoicedHereLocked notes that the audio written so far ends in speech.
+// Callers hold mu.
+func (s *session) markVoicedHereLocked() {
+	if s.micWAV != nil {
+		s.lastVoicedSample = s.micWAV.Samples()
+	}
 }
 
 // addVoiced records another stretch the gate called speech.
@@ -301,6 +322,7 @@ func (s *session) addVoiced(seconds float64) {
 	s.mu.Lock()
 	s.voiced += seconds
 	s.lastVoiced = time.Now()
+	s.markVoicedHereLocked()
 	s.mu.Unlock()
 }
 
@@ -344,7 +366,9 @@ func (s *session) closeFiles() (micPath, sysPath string, sysVoiced float64) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	written := int64(0)
 	if s.micWAV != nil {
+		written = s.micWAV.Samples()
 		if err := s.micWAV.Close(); err != nil {
 			log.Printf("session: closing the microphone recording: %v", err)
 		}
@@ -359,7 +383,38 @@ func (s *session) closeFiles() (micPath, sysPath string, sysVoiced float64) {
 		// Nothing was ever written to the far-end file, so there is no file.
 		s.sysPath = ""
 	}
+
+	s.trimTrailingSilenceLocked(written)
 	return s.micPath, s.sysPath, s.sysVoiced
+}
+
+// trimTrailingSilenceLocked cuts both tracks back to shortly after the last
+// thing said in them.
+//
+// A recording runs on until the room has been quiet for the whole silence
+// gap -- twenty seconds for a note, minutes for a call -- and all of that is
+// an empty room. Keeping it costs disk, makes playback sit through nothing,
+// and is audio the recognizer has to be protected from.
+//
+// Both tracks are cut at the same sample. transcribeFilesTurns pairs them
+// positionally, so cutting one further than the other would put the far end
+// out of step with the microphone for the whole recording.
+func (s *session) trimTrailingSilenceLocked(written int64) {
+	if s.lastVoicedSample <= 0 || written <= 0 {
+		return
+	}
+	keep := s.lastVoicedSample + int64(trailingSilenceSeconds*audio.SampleRate)
+	if keep >= written {
+		return
+	}
+	for _, path := range []string{s.micPath, s.sysPath} {
+		if path == "" {
+			continue
+		}
+		if err := audio.TruncateWAV(path, keep); err != nil {
+			log.Printf("session: trimming %s: %v", path, err)
+		}
+	}
 }
 
 // paths is what a retention sweep must not delete while this is open.
