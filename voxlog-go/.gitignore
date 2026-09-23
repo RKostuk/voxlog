@@ -1,2 +1,6 @@
 bin/
 voxlog-go
+# `go build ./tools/...` drops its binaries here. Anchored, or the
+# patterns would also swallow tools/mkshots and tools/mkicons themselves.
+/mkshots
+/mkicons
