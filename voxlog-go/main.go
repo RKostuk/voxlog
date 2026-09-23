@@ -21,6 +21,7 @@ import (
 	"voxlog-go/internal/diarize"
 	"voxlog-go/internal/history"
 	"voxlog-go/internal/hotkey"
+	"voxlog-go/internal/keychain"
 	"voxlog-go/internal/permissions"
 	"voxlog-go/internal/settings"
 	"voxlog-go/internal/sfsymbol"
@@ -1121,6 +1122,18 @@ func onReady(store *settings.Store, histStore *history.Store, meetStore *history
 	ui.SetMCPStatusFunc(a.mcpStatus)
 	ui.SetMCPRegenerateFunc(a.regenerateMCPToken)
 	a.applyMCP(store.Get())
+
+	// The LLM pane's key and its "Test connection" button. Installed here
+	// rather than reached for inside internal/ui, which deliberately knows
+	// nothing about the model or the keychain.
+	ui.SetLLMKeyFuncs(
+		func(key string) error { return keychain.Set(keychain.LLMService, keychain.LLMAccount, key) },
+		func() bool {
+			_, err := keychain.Get(keychain.LLMService, keychain.LLMAccount)
+			return err == nil
+		},
+	)
+	ui.SetLLMTestFunc(a.testLLM)
 
 	// Always-on listening. The supervisor runs for the life of the app and
 	// decides on each tick whether the microphone should be open at all --

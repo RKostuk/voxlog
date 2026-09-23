@@ -65,13 +65,13 @@ const maxTranscriptChars = 3000
 // task" (see task.Store.LoadRejected) -- a bounded negative-example nudge,
 // not training, so it stays short enough to not meaningfully grow the
 // prompt.
-func (c *Cache) Classify(modelDir, text string, entities, rejected []string, now time.Time) (Result, error) {
-	base, err := c.baseURL(modelDir)
+func (c *Cache) Classify(modelDir, text string, entities, rejected []string, now time.Time, ep Endpoint) (Result, error) {
+	target, err := c.resolve(modelDir, ep)
 	if err != nil {
 		return Result{}, err
 	}
 
-	content, err := chatCompletion(base, buildPrompt(text, entities, rejected, now))
+	content, err := chatCompletion(target, buildPrompt(text, entities, rejected, now))
 	if err != nil {
 		return Result{}, err
 	}

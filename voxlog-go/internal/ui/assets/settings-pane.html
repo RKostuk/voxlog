@@ -273,6 +273,55 @@
 
       <div class="subpane" data-subpane="llm">
         <div class="subpane-title">LLM model</div>
+    <!-- Where the prompts go. Local is the default and stays the default:
+         the app's first promise is that nothing it hears leaves the machine,
+         and an API breaks that promise for the transcripts it summarizes --
+         so the consequence is spelled out next to the switch, not buried. -->
+    <div class="group">
+      <div class="group-title">Where the model runs</div>
+      <div class="card">
+        <div class="item">
+          <div class="title">Model runs</div>
+          <select id="llm_provider">
+            <option value="local">On this Mac &mdash; the downloaded model</option>
+            <option value="api">Through an API &mdash; your own endpoint and key</option>
+          </select>
+        </div>
+        <div class="item stacked" id="llm-api-warning" style="display:none">
+          <div class="title">What leaves this Mac
+            <div class="subtext warn">With an API selected, the full transcript of every meeting that gets
+              summarized &mdash; and of every dictation Task Hub looks at &mdash; is sent to the endpoint below.
+              Nothing else is: recordings, voices and the rest never leave. Choose "On this Mac" to send nothing
+              at all.</div>
+          </div>
+        </div>
+        <div class="item" id="llm-base-url-row" style="display:none">
+          <div class="title">Base URL
+            <div class="subtext">Without /v1 &mdash; e.g. https://api.openai.com</div>
+          </div>
+          <input type="text" id="llm_base_url" placeholder="https://api.openai.com">
+        </div>
+        <div class="item" id="llm-model-row" style="display:none">
+          <div class="title">Model</div>
+          <input type="text" id="llm_model" placeholder="gpt-4o-mini">
+        </div>
+        <div class="item" id="llm-api-key-row" style="display:none">
+          <div class="title">API key
+            <div class="subtext" id="llm-key-state">Stored in your login keychain, not in Voxlog's settings file.</div>
+          </div>
+          <input type="password" id="llm_api_key" placeholder="sk-…">
+        </div>
+        <div class="item stacked">
+          <div class="title">Test the connection
+            <div class="subtext" id="llm-test-result">Sends one tiny prompt, so a wrong key or address shows up
+              here instead of an hour later with no summary.</div>
+          </div>
+          <div style="display:flex; justify-content:flex-end;">
+            <button type="button" id="llm-test-btn">Test connection</button>
+          </div>
+        </div>
+      </div>
+    </div>
     <div class="group">
       <div class="group-title">Task Hub <span class="badge" style="background:#ff9500">EXPERIMENTAL</span></div>
       <div class="card">
@@ -867,27 +916,33 @@
 
     // renderLLMModel mirrors renderModels' download-button/progress/READY
     // shape (see above), scoped to its own ids so the two downloads' progress
-    // bars can never collide. The task_hub_enabled switch stays disabled
-    // until the model is actually on disk -- there is nothing for it to turn
-    // on otherwise.
+    // bars can never collide.
     function renderLLMModel() {
       var root = document.getElementById('llm-model');
-      var enable = document.getElementById('task_hub_enabled');
       if (llmModel.downloaded) {
         root.innerHTML = '<span class="badge">READY</span>';
-        enable.disabled = false;
       } else {
         root.innerHTML =
           '<span id="stage-llm" class="subtext"></span>' +
           '<progress id="prog-llm" value="0" max="100" style="display:none"></progress>' +
           '<button type="button" id="dl-llm-btn">Download</button>';
-        enable.disabled = true;
-        enable.checked = false;
         document.getElementById('dl-llm-btn').addEventListener('click', function (ev) {
           ev.target.disabled = true;
           window.downloadLLMModel();
         });
       }
+      syncTaskHubAvailable();
+    }
+
+    // Task Hub needs a model to ask, which is either the one on disk or an
+    // API. Gating only on the download -- as this used to -- left the switch
+    // dead for a user who configured an endpoint precisely so they would
+    // never have to download 4.5 GB.
+    function syncTaskHubAvailable() {
+      var enable = document.getElementById('task_hub_enabled');
+      var api = document.getElementById('llm_provider').value === 'api';
+      enable.disabled = !(llmModel.downloaded || api);
+      if (enable.disabled) enable.checked = false;
     }
 
     // renderEntityDict draws the dictionary as removable chips. escapeHtml is
@@ -1422,6 +1477,9 @@
         history_retention: document.getElementById('history_retention').value,
         transcripts_dir: transcriptsDir,
         task_hub_enabled: document.getElementById('task_hub_enabled').checked,
+        llm_provider: document.getElementById('llm_provider').value,
+        llm_base_url: document.getElementById('llm_base_url').value.trim(),
+        llm_model: document.getElementById('llm_model').value.trim(),
         summary_enabled: document.getElementById('summary_enabled').checked,
         summary_length: document.getElementById('summary_length').value,
         summary_prompt_extra: document.getElementById('summary_prompt_extra').value,
@@ -1820,6 +1878,67 @@
       });
     });
 
+    // syncLLMProvider shows the API fields only when an API is selected: a
+    // base URL and a key are meaningless for a model running on this Mac, and
+    // a visible empty key field invites filling one in for nothing.
+    function syncLLMProvider() {
+      var api = document.getElementById('llm_provider').value === 'api';
+      ['llm-api-warning', 'llm-base-url-row', 'llm-model-row', 'llm-api-key-row'].forEach(function (id) {
+        document.getElementById(id).style.display = api ? '' : 'none';
+      });
+      if (api) refreshLLMKeyState();
+      syncTaskHubAvailable();
+    }
+
+    // The window never receives the key, only whether one is stored -- a
+    // field that can be read back is a field that ends up in a screenshot.
+    function refreshLLMKeyState() {
+      window.llmAPIKeyStored().then(function (stored) {
+        document.getElementById('llm-key-state').textContent = stored
+          ? 'A key is stored in your login keychain. Type a new one to replace it.'
+          : 'Stored in your login keychain, not in Voxlog\'s settings file.';
+      }).catch(function () {});
+    }
+
+    document.getElementById('llm_provider').addEventListener('change', syncLLMProvider);
+
+    // The key is handed straight to the keychain rather than carried in the
+    // settings payload, and the field is emptied once it is: nothing in this
+    // window should still be holding it.
+    document.getElementById('llm_api_key').addEventListener('change', function (ev) {
+      var field = ev.target;
+      var key = field.value;
+      if (!key) return;
+      window.setLLMAPIKey(key).then(function () {
+        field.value = '';
+        refreshLLMKeyState();
+      }).catch(function (e) {
+        document.getElementById('llm-key-state').textContent = 'Could not store the key: ' + e;
+      });
+    });
+
+    document.getElementById('llm-test-btn').addEventListener('click', function (ev) {
+      var out = document.getElementById('llm-test-result');
+      ev.target.disabled = true;
+      out.classList.remove('warn');
+      out.textContent = 'Testing…';
+      // Sends what the pane currently shows, unsaved values included: trying
+      // an address before committing to it is the point of the button.
+      window.testLLMConnection(buildPayload()).then(function (problem) {
+        if (problem) {
+          out.classList.add('warn');
+          out.textContent = problem;
+        } else {
+          out.textContent = 'Connected. The model answered.';
+        }
+      }).catch(function (e) {
+        out.classList.add('warn');
+        out.textContent = String(e);
+      }).then(function () {
+        ev.target.disabled = false;
+      });
+    });
+
     // The default is no extra instructions at all, so "reset" is a clear --
     // and a button click fires neither change nor input, hence the save.
     document.getElementById('summary_prompt_reset').addEventListener('click', function () {
@@ -1910,6 +2029,10 @@
       // a file written before these fields existed has no summary_enabled in
       // it, and reading that as "off" would silently stop summarizing for
       // everyone already using it.
+      document.getElementById('llm_provider').value = settings.llm_provider || 'local';
+      document.getElementById('llm_base_url').value = settings.llm_base_url || '';
+      document.getElementById('llm_model').value = settings.llm_model || '';
+      syncLLMProvider();
       document.getElementById('summary_enabled').checked = settings.summary_enabled !== false;
       document.getElementById('summary_length').value = settings.summary_length || 'normal';
       document.getElementById('summary_prompt_extra').value = settings.summary_prompt_extra || '';

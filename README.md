@@ -135,6 +135,13 @@ runtime, installed on first use rather than shipped in the app, and nothing is
 sent anywhere. "Not a task" removes a line and remembers not to suggest it
 again.
 
+The one way to change that is a choice you have to make yourself. Settings →
+LLM model can point this work at an OpenAI-compatible API instead of the local
+model, and then the transcripts it summarizes and reads for tasks are sent to
+whatever endpoint you configured — nothing else is, and the key lives in your
+login keychain rather than in Voxlog's settings file. On this Mac stays the
+default.
+
 ### Letting an LLM read it
 
 Voxlog can serve its notes, meetings and tasks to an LLM client on the same

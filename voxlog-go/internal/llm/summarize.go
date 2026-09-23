@@ -39,12 +39,12 @@ const (
 // answer -- a meeting that is plainly not about any configured project has no
 // project, and inventing "Unfiltered" for it (as task classification does)
 // would file every stray call under one heading.
-func (c *Cache) Summarize(modelDir, text string, entities []string, opts SummaryOptions) (summary, entity string, err error) {
-	base, err := c.baseURL(modelDir)
+func (c *Cache) Summarize(modelDir, text string, entities []string, opts SummaryOptions, ep Endpoint) (summary, entity string, err error) {
+	target, err := c.resolve(modelDir, ep)
 	if err != nil {
 		return "", "", err
 	}
-	content, err := chatCompletion(base, buildSummaryPrompt(text, entities, opts))
+	content, err := chatCompletion(target, buildSummaryPrompt(text, entities, opts))
 	if err != nil {
 		return "", "", err
 	}

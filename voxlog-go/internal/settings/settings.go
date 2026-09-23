@@ -216,6 +216,25 @@ type Settings struct {
 	// misrecognized name here only affects future classification, nothing is
 	// rewritten retroactively.
 	EntityDictionary []string `json:"entity_dictionary"`
+	// LLMProvider is which model answers Task Hub's prompts:
+	// LLMProviderLocal (the downloaded model run by mlx_lm, the default) or
+	// LLMProviderAPI (an OpenAI-compatible endpoint the user configures).
+	//
+	// Local is the default and stays the default. The app's first promise is
+	// that nothing it hears leaves the machine, and the API option breaks
+	// that promise for the transcripts it summarizes -- so it is a thing the
+	// user goes and turns on, with the consequence spelled out beside it.
+	LLMProvider string `json:"llm_provider"`
+	// LLMBaseURL is the endpoint's root, e.g. "https://api.openai.com" --
+	// "/v1/chat/completions" is appended (see llm.Endpoint).
+	LLMBaseURL string `json:"llm_base_url"`
+	// LLMModel is the provider's model id. The local server needs none: it
+	// serves the one model it was started with.
+	LLMModel string `json:"llm_model"`
+	// The API key itself is deliberately not here. settings.json is a plain
+	// file in Application Support that gets opened, copied and synced; the
+	// key lives in the login keychain instead (internal/keychain).
+
 	// SummaryEnabled is whether a finished meeting gets a summary written
 	// for it. Split out of TaskHubEnabled, which used to imply it: finding
 	// tasks and writing a paragraph about the call are separate wants, and a
@@ -258,6 +277,12 @@ const (
 const (
 	ActivationToggle = "toggle"
 	ActivationHold   = "hold"
+)
+
+// Which model answers Task Hub's prompts.
+const (
+	LLMProviderLocal = "local"
+	LLMProviderAPI   = "api"
 )
 
 // How much of a summary to ask the model for.
@@ -338,6 +363,7 @@ func DefaultSettings() Settings {
 		// only gains a switch to turn it off.
 		SummaryEnabled: true,
 		SummaryLength:  SummaryNormal,
+		LLMProvider:    LLMProviderLocal,
 	}
 }
 

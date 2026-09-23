@@ -1064,6 +1064,24 @@ func runMainWindow(pane string, store *history.Store, meetings *history.MeetingS
 		return nil
 	})
 
+	// The API key never travels back to the window: it goes in, and after
+	// that the pane only ever learns whether one is stored. A field that can
+	// be read back is a field that ends up in a screenshot.
+	w.Bind("setLLMAPIKey", func(key string) error { return llmKeySet(key) })
+	w.Bind("llmAPIKeyStored", func() (bool, error) { return llmKeyStored(), nil })
+
+	// testLLMConnection sends one tiny prompt to whatever the pane currently
+	// shows, unsaved values included -- the point is to try a key or an
+	// address before committing to it. Returns the provider's own words on
+	// failure: "401 Unauthorized" and "no route to host" need different
+	// fixes.
+	w.Bind("testLLMConnection", func(v settings.Settings) (string, error) {
+		if err := llmTest(v); err != nil {
+			return err.Error(), nil
+		}
+		return "", nil
+	})
+
 	// revealModels opens the models directory in Finder, so downloaded
 	// models can be inspected or deleted without hunting through
 	// ~/Library/Application Support by hand.

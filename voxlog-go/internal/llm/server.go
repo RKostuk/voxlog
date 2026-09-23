@@ -60,6 +60,29 @@ func PythonPath(baseDir string) (string, error) {
 	return exec.LookPath("python3")
 }
 
+// resolve is where a prompt should go. A remote endpoint is handed straight
+// back: the local subprocess must not be started -- let alone the ~200MB
+// Python runtime installed -- for a user who configured somebody else's API
+// precisely so nothing heavy runs here.
+func (c *Cache) resolve(modelDir string, ep Endpoint) (Endpoint, error) {
+	if ep.Remote() {
+		return ep, nil
+	}
+	base, err := c.baseURL(modelDir)
+	if err != nil {
+		return Endpoint{}, err
+	}
+	return Endpoint{BaseURL: base}, nil
+}
+
+// LocalEndpoint is resolve for a caller that wants the local server
+// specifically -- the settings pane's connection test, which has to be able
+// to check the local model too, and cannot say "local" any other way than by
+// asking for it.
+func (c *Cache) LocalEndpoint(modelDir string) (Endpoint, error) {
+	return c.resolve(modelDir, Endpoint{})
+}
+
 // baseURL returns the running server's address, spawning it first if it
 // isn't already up. Concurrent callers block on mu -- classification runs
 // one at a time, which is fine for a background feature that never blocks a

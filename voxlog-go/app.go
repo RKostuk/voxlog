@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"log"
 	"path/filepath"
 	"strings"
@@ -9,6 +10,7 @@ import (
 
 	"voxlog-go/internal/asr"
 	"voxlog-go/internal/history"
+	"voxlog-go/internal/keychain"
 	"voxlog-go/internal/llm"
 	"voxlog-go/internal/mcp"
 	"voxlog-go/internal/settings"
@@ -159,6 +161,39 @@ func currentLLMJobs() []ui.DecodeStatus {
 	return append([]ui.DecodeStatus(nil), llmJobs...)
 }
 
+// llmEndpoint is where this app's prompts go: the zero Endpoint for the
+// downloaded model (llm starts and owns that server itself), or the API the
+// user configured. The key is read here, per call, rather than held in
+// memory for the life of the process -- it changes in Settings, and the
+// keychain is the one copy of it.
+func (a *app) llmEndpoint(cfg settings.Settings) llm.Endpoint {
+	if cfg.LLMProvider != settings.LLMProviderAPI || strings.TrimSpace(cfg.LLMBaseURL) == "" {
+		return llm.Endpoint{}
+	}
+	key, err := keychain.Get(keychain.LLMService, keychain.LLMAccount)
+	if err != nil && !errors.Is(err, keychain.ErrNotFound) {
+		// Not fatal: an endpoint on the local network may want no key at all,
+		// and a provider that does will say so itself in the reply.
+		log.Printf("llm: reading the API key: %v", err)
+	}
+	return llm.Endpoint{
+		BaseURL: cfg.LLMBaseURL,
+		Model:   cfg.LLMModel,
+		APIKey:  key,
+	}
+}
+
+// llmReady reports whether there is a model to ask at all. With an API
+// configured there is nothing to download -- requiring the 4.5GB local model
+// anyway, as this used to, would mean a remote-only setup silently did
+// nothing.
+func (a *app) llmReady(cfg settings.Settings) bool {
+	if a.llmEndpoint(cfg).Remote() {
+		return true
+	}
+	return asr.IsDownloaded(a.modelsDir, llm.Spec)
+}
+
 // classifyForTasks runs Task Hub's classifier over a finished transcript in
 // the background. Called as a goroutine right after the dictation/meeting
 // store write it's tagging succeeds (see dictate.go/meeting.go) -- never on
@@ -167,10 +202,7 @@ func currentLLMJobs() []ui.DecodeStatus {
 // failure worth a banner.
 func (a *app) classifyForTasks(sourceKind, sourceKey, text string) {
 	cfg := a.store.Get()
-	if !cfg.TaskHubEnabled {
-		return
-	}
-	if !asr.IsDownloaded(a.modelsDir, llm.Spec) {
+	if !cfg.TaskHubEnabled || !a.llmReady(cfg) {
 		return
 	}
 	label := "Dictation"
@@ -185,7 +217,7 @@ func (a *app) classifyForTasks(sourceKind, sourceKey, text string) {
 		log.Printf("task classify: rejected examples: %v", err)
 	}
 	modelDir := asr.ModelDir(a.modelsDir, llm.Spec)
-	result, err := a.llm.Classify(modelDir, text, entities, rejected, time.Now())
+	result, err := a.llm.Classify(modelDir, text, entities, rejected, time.Now(), a.llmEndpoint(cfg))
 	if err != nil {
 		log.Printf("task classify: %v", err)
 		return
@@ -251,10 +283,7 @@ func (a *app) taskEntity(sourceKind, sourceKey, classified string) string {
 // classification, so one failing doesn't hold up the other.
 func (a *app) summarizeMeeting(start time.Time, text string) {
 	cfg := a.store.Get()
-	if !cfg.TaskHubEnabled || !cfg.SummaryEnabled {
-		return
-	}
-	if !asr.IsDownloaded(a.modelsDir, llm.Spec) {
+	if !cfg.TaskHubEnabled || !cfg.SummaryEnabled || !a.llmReady(cfg) {
 		return
 	}
 	defer trackLLM("Meeting, "+start.Format("15:04"), "Summarising")()
@@ -264,7 +293,7 @@ func (a *app) summarizeMeeting(start time.Time, text string) {
 	summary, entity, err := a.llm.Summarize(modelDir, text, entities, llm.SummaryOptions{
 		Length: cfg.SummaryLength,
 		Extra:  cfg.SummaryPromptExtra,
-	})
+	}, a.llmEndpoint(cfg))
 	if err != nil {
 		log.Printf("meeting summarize: %v", err)
 		return
@@ -407,4 +436,24 @@ func (a *app) releaseOverlay() {
 	a.overlay.SetTranscribing(false)
 	a.overlay.ClearText()
 	a.overlay.Hide()
+}
+
+// testLLM answers the settings pane's Test connection button for the values
+// the user is looking at, saved or not. A local provider is checked the
+// expensive way on purpose -- starting the server and loading the model is
+// exactly what fails, and finding that out here beats finding it out from a
+// meeting with no summary.
+func (a *app) testLLM(cfg settings.Settings) error {
+	ep := a.llmEndpoint(cfg)
+	if !ep.Remote() {
+		if !asr.IsDownloaded(a.modelsDir, llm.Spec) {
+			return errors.New("the local model is not downloaded yet")
+		}
+		var err error
+		ep, err = a.llm.LocalEndpoint(asr.ModelDir(a.modelsDir, llm.Spec))
+		if err != nil {
+			return err
+		}
+	}
+	return llm.Ping(ep)
 }

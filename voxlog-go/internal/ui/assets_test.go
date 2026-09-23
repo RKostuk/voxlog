@@ -99,7 +99,8 @@ func TestTaskSettingsLiveInTheTasksPane(t *testing.T) {
 	// Summarization is the other thing that model is for, so its controls
 	// belong beside it rather than in Advanced, where a switch like this
 	// drifts to.
-	for _, id := range []string{`id="summary_enabled"`, `id="summary_length"`, `id="summary_prompt_extra"`, `id="summary_prompt_reset"`} {
+	for _, id := range []string{`id="summary_enabled"`, `id="summary_length"`, `id="summary_prompt_extra"`, `id="summary_prompt_reset"`,
+		`id="llm_provider"`, `id="llm_base_url"`, `id="llm_model"`, `id="llm_api_key"`, `id="llm-test-btn"`} {
 		if !strings.Contains(llm, id) {
 			t.Errorf("%s should live in the LLM pane", id)
 		}
@@ -168,4 +169,27 @@ func TestTheMCPSwitchesAreSavedAndLoaded(t *testing.T) {
 		t.Fatal(err)
 	}
 	assertSwitchRoundTrips(t, string(frag), "mcp_enabled", "mcp_allow_write")
+}
+
+// The API key must not be part of the settings payload: it belongs in the
+// keychain, and settings.json is a plain file that gets opened and synced.
+func TestTheAPIKeyIsNeverPutInTheSettingsPayload(t *testing.T) {
+	frag, err := assets.ReadFile("assets/settings-pane.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := string(frag)
+	payload := body[strings.Index(body, "function buildPayload("):]
+	payload = payload[:strings.Index(payload, "function save(")]
+	if strings.Contains(payload, "llm_api_key") {
+		t.Error("buildPayload carries the API key; it must go to setLLMAPIKey instead")
+	}
+	// The field is a password field, and what is typed into it is handed off
+	// and cleared rather than kept in the window.
+	if !strings.Contains(body, `type="password" id="llm_api_key"`) {
+		t.Error("the API key field is not a password field")
+	}
+	if !strings.Contains(body, "window.setLLMAPIKey(") {
+		t.Error("nothing hands the key to the keychain")
+	}
 }
