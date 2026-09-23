@@ -184,3 +184,44 @@ func TestPeopleAggregatesAcrossMeetings(t *testing.T) {
 		t.Fatalf("LastSeen = %v, want the later meeting %v", got.LastSeen, second)
 	}
 }
+
+// A hit has to say which project it was said in: the pane and the MCP tool
+// both filter by project, and a search that cannot answer it sends the
+// caller back for a second query per row.
+func TestSearchTurnsCarriesTheMeetingsProject(t *testing.T) {
+	s := NewMeetingStore(t.TempDir())
+	filed := time.Date(2026, 9, 3, 10, 0, 0, 0, time.Local)
+	unfiled := time.Date(2026, 9, 4, 10, 0, 0, 0, time.Local)
+	seedMeeting(t, s, filed)
+	seedMeeting(t, s, unfiled)
+	if err := s.SetEntity(filed, "Northwind"); err != nil {
+		t.Fatal(err)
+	}
+
+	speakers := []MeetingSpeaker{{LocalID: YouSpeaker, TalkSecs: 10, TurnCount: 1}}
+	for _, start := range []time.Time{filed, unfiled} {
+		if err := s.ReplaceTurns(start, speakers, []Turn{
+			{Channel: ChannelMic, StartSecs: 1, EndSecs: 5, LocalID: YouSpeaker, Text: "the invoice went out"},
+		}, 1); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	hits, err := s.SearchTurns("invoice")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(hits) != 2 {
+		t.Fatalf("got %d hits, want 2: %+v", len(hits), hits)
+	}
+	byStart := map[time.Time]string{}
+	for _, h := range hits {
+		byStart[h.Start] = h.Entity
+	}
+	if byStart[filed] != "Northwind" {
+		t.Errorf("hit from the filed meeting carries entity %q, want Northwind", byStart[filed])
+	}
+	if byStart[unfiled] != "" {
+		t.Errorf("hit from a meeting with no project carries entity %q, want empty", byStart[unfiled])
+	}
+}

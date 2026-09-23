@@ -192,6 +192,11 @@ type hitJSON struct {
 	StartSecs float64 `json:"start_secs"`
 	Text      string  `json:"text"`
 	Snippet   string  `json:"snippet"`
+	// Entity, like meetingJSON's and taskJSON's, is the project this was
+	// said in. Without it a search result could not be placed: every other
+	// tool here can be filtered by project, and only this one could not say
+	// which one a hit belongs to.
+	Entity string `json:"entity,omitempty"`
 }
 
 type personJSON struct {
@@ -563,6 +568,7 @@ func searchTranscripts(d Deps, args json.RawMessage) (any, error) {
 			StartSecs: h.StartSecs,
 			Text:      h.Text,
 			Snippet:   h.Snippet,
+			Entity:    h.Entity,
 		})
 	}
 	return map[string]any{"hits": out}, nil

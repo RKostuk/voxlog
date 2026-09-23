@@ -540,3 +540,30 @@ func TestLongNotesAreTruncatedInAList(t *testing.T) {
 		t.Fatalf("the preview is %d runes long", len([]rune(first["text"].(string))))
 	}
 }
+
+func TestSearchTranscriptsReportsTheProject(t *testing.T) {
+	srv, deps := testServer(t, false)
+	start := time.Date(2026, 9, 22, 11, 0, 0, 0, time.Local)
+	if err := deps.Meetings.Append(history.Meeting{Start: start, RecordingSeconds: 60}); err != nil {
+		t.Fatal(err)
+	}
+	if err := deps.Meetings.SetEntity(start, "Northwind"); err != nil {
+		t.Fatal(err)
+	}
+	if err := deps.Meetings.ReplaceTurns(start,
+		[]history.MeetingSpeaker{{LocalID: history.YouSpeaker, TalkSecs: 5, TurnCount: 1}},
+		[]history.Turn{{Channel: history.ChannelMic, StartSecs: 0, EndSecs: 5, LocalID: history.YouSpeaker, Text: "send the invoice on Friday"}},
+		1); err != nil {
+		t.Fatal(err)
+	}
+
+	out := payload(t, call(t, srv, "search_transcripts", `{"query":"invoice"}`))
+	hits, _ := out["hits"].([]any)
+	if len(hits) != 1 {
+		t.Fatalf("got %d hits, want 1: %v", len(hits), hits)
+	}
+	hit, _ := hits[0].(map[string]any)
+	if hit["entity"] != "Northwind" {
+		t.Fatalf("hit reports entity %v, want Northwind", hit["entity"])
+	}
+}

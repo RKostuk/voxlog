@@ -19,6 +19,11 @@ type SearchHit struct {
 	LocalID   int
 	Name      string
 	Text      string
+	// Entity is the project the meeting this turn belongs to is filed under,
+	// empty when it has none. It comes off the same row rather than a lookup
+	// per hit: a search is one query, and "which project was this said in"
+	// is half of what a result means.
+	Entity string
 	// Snippet is the matched text with the matching words wrapped in [[ ]].
 	// Markers rather than HTML: the window escapes everything it renders,
 	// and handing it markup to trust would be the one exception.
@@ -52,9 +57,11 @@ func (s *MeetingStore) SearchTurns(query string) ([]SearchHit, error) {
 	rows, err := db.sql.Query(`
 		SELECT t.meeting_ns, t.id, t.seq, t.channel, t.start_secs, t.end_secs,
 		       COALESCE(ms.local_id, ?), COALESCE(v.name, ''), t.text,
-		       snippet(turns_fts, 0, '[[', ']]', '…', 12)
+		       snippet(turns_fts, 0, '[[', ']]', '…', 12),
+		       COALESCE(m.entity, '')
 		FROM turns_fts
 		JOIN turns t ON t.id = turns_fts.rowid
+		LEFT JOIN meetings m ON m.start_ns = t.meeting_ns
 		LEFT JOIN meeting_speakers ms ON ms.id = t.speaker_id
 		LEFT JOIN voices v ON v.id = ms.voice_id
 		WHERE turns_fts MATCH ?
@@ -70,7 +77,7 @@ func (s *MeetingStore) SearchTurns(query string) ([]SearchHit, error) {
 		var h SearchHit
 		var ns int64
 		if err := rows.Scan(&ns, &h.TurnID, &h.Seq, &h.Channel, &h.StartSecs, &h.EndSecs,
-			&h.LocalID, &h.Name, &h.Text, &h.Snippet); err != nil {
+			&h.LocalID, &h.Name, &h.Text, &h.Snippet, &h.Entity); err != nil {
 			return nil, fmt.Errorf("history: searching turns: %w", err)
 		}
 		h.Start = time.Unix(0, ns)
