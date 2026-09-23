@@ -52,6 +52,22 @@ const (
 	// checks the frontmost app, and asks an open session whether the room
 	// has gone quiet. Nothing here is urgent to the second.
 	listenPollInterval = 2 * time.Second
+	// workQueue is how much audio may wait for the worker, in callback
+	// chunks. miniaudio delivers roughly every 10ms, so this is about eight
+	// seconds -- enough to ride out a model call without the audio thread
+	// ever having to throw a chunk away. It used to be 128, which is a
+	// second and a quarter, and a single embedding over a long reply was
+	// enough to overrun it.
+	workQueue = 800
+	// chunkSeconds is roughly how much audio one capture callback carries,
+	// for turning a dropped-chunk count into something a person can read.
+	chunkSeconds = 0.01
+	// embedSeconds caps how much of a reply the voice extractor is given.
+	// It is deciding whether two stretches are the same person, and three
+	// seconds answers that as well as sixty do -- while sixty means the
+	// worker is gone for long enough that the audio behind it is dropped and
+	// the gate stops hearing the conversation it is supposed to be timing.
+	embedSeconds = 3.0
 	// autoSpeechLevel is the second stage's loudness floor, on the same scale
 	// as audio.Level. Well above the "voiced" threshold used inside a
 	// recording already in progress: this one decides whether to start
@@ -116,9 +132,12 @@ type alwaysOn struct {
 	// workerDone closes when the worker has drained work and released its
 	// gates, so stopListening can wait rather than race it.
 	workerDone chan struct{}
-	// droppedOnce keeps the "the worker fell behind" warning to one line per
-	// run; audio must never block on the worker, so a full channel drops.
-	droppedOnce bool
+	// dropped counts chunks the audio thread had to throw away because the
+	// worker was still busy. Audio must never block on the worker, so a full
+	// channel drops -- but this used to be a bool that logged one line per
+	// run, which hid the fact that dropping is what makes the gate lose the
+	// conversation it is timing. Reported when the session it affected ends.
+	dropped int
 	// tapRunning is whether this listener started the system-audio tap.
 	tapRunning bool
 
@@ -280,9 +299,7 @@ func (a *app) startListening(cfg settings.Settings) {
 	// StartUnbuffered: nothing is kept except the rolling pre-roll and
 	// whatever a session is writing. Most of what this hears is thrown away,
 	// which is the point.
-	// workQueue is generous: a second of audio at the callback's chunk size,
-	// so a slow embedding never costs a reply.
-	work := make(chan listenMsg, 128)
+	work := make(chan listenMsg, workQueue)
 	done := make(chan struct{})
 
 	a.listen.mu.Lock()
@@ -341,7 +358,15 @@ func (a *app) listenWorker(gate *vad.Gate, work <-chan listenMsg, done chan<- st
 			// stopped talking -- twenty seconds of "is this thing on?" for
 			// twenty seconds of speech.
 			if gate.Speaking() {
-				a.openSessionIfIdle(false)
+				// Both jobs, and the second one is the one that was
+				// missing: the session that opens here is also the session
+				// whose silence timer has to know the room is still busy.
+				// Leaving that to the confirmed replies alone meant a quiet
+				// speaker had their recording closed underneath them and
+				// the rest of what they said filed as a separate note.
+				if sess := a.openSessionIfIdle(false); sess != nil {
+					sess.heardVoice()
+				}
 			}
 			a.handleMicSegments(segments)
 		case msgFar:
@@ -350,7 +375,9 @@ func (a *app) listenWorker(gate *vad.Gate, work <-chan listenMsg, done chan<- st
 				if farGate.Speaking() {
 					// The other side of a call is a second party by
 					// definition, so this opens straight as a conversation.
-					a.openSessionIfIdle(true)
+					if sess := a.openSessionIfIdle(true); sess != nil {
+						sess.heardVoice()
+					}
 				}
 				a.handleFarSegments(segments)
 			}
@@ -368,7 +395,10 @@ func (a *app) handleMicSegments(segments []vad.Segment) {
 		}
 		sess := a.openSessionIfIdle(false)
 		if sess == nil {
-			return
+			// Nothing to record into -- yielded, or no model. The next
+			// segment may still find a session open, so this drops one
+			// reply rather than the rest of the batch.
+			continue
 		}
 
 		// Live speaker counting: this is what turns a note into a meeting
@@ -395,7 +425,7 @@ func (a *app) handleFarSegments(segments []vad.Segment) {
 		// definition.
 		sess := a.openSessionIfIdle(true)
 		if sess == nil {
-			return
+			continue
 		}
 
 		if sess.noteFarEnd(seg.Seconds()) {
@@ -457,11 +487,7 @@ func (l *alwaysOn) sendToWorkerLocked(msg listenMsg) {
 	select {
 	case l.work <- msg:
 	default:
-		if !l.droppedOnce {
-			l.droppedOnce = true
-			log.Print("always-on: the voice-activity worker fell behind; dropping audio from the gate " +
-				"(the recording itself is unaffected)")
-		}
+		l.dropped++
 	}
 }
 
@@ -582,11 +608,56 @@ func (a *app) confirmSpeech(seg vad.Segment) ([]float32, bool) {
 	if e == nil {
 		return nil, true
 	}
-	embed := e.Compute(seg.Samples)
+	embed := e.Compute(loudestStretch(seg.Samples, embedSeconds))
 	if len(embed) == 0 {
 		return nil, false
 	}
 	return embed, true
+}
+
+// loudestStretch returns at most seconds of samples, centred on the loudest
+// part of what it was given.
+//
+// The voice extractor is asked one question -- is this the same person -- and
+// three seconds answer it as well as sixty. The length matters for a
+// different reason: this runs on the worker, and everything the microphone
+// delivers while it runs is queued behind it. A reply can be a minute long
+// (the gate has no maximum), and a minute-long embedding is a minute of
+// audio arriving with nowhere to go.
+func loudestStretch(samples []float32, seconds float64) []float32 {
+	want := int(seconds * audio.SampleRate)
+	if want <= 0 || len(samples) <= want {
+		return samples
+	}
+	// Loudest by whole windows rather than by sample, so the answer does not
+	// hang on one click. A window is a tenth of what is being kept.
+	window := want / 10
+	if window <= 0 {
+		window = 1
+	}
+	best, bestAt := float32(-1), 0
+	for i := 0; i+window <= len(samples); i += window {
+		var peak float32
+		for _, v := range samples[i : i+window] {
+			if v < 0 {
+				v = -v
+			}
+			if v > peak {
+				peak = v
+			}
+		}
+		if peak > best {
+			best, bestAt = peak, i
+		}
+	}
+	start := bestAt - want/2
+	if start < 0 {
+		start = 0
+	}
+	if start+want > len(samples) {
+		start = len(samples) - want
+	}
+	return samples[start : start+want]
 }
 
 // openSessionIfIdle starts recording unless something already is, and hands
@@ -883,6 +954,18 @@ func (a *app) closeSession() {
 		a.onMeetingState(false)
 	}
 	log.Printf("always-on: %s of %.0fs ended (%.1fs of far-end audio)", kind, seconds, sysVoiced)
+
+	// Reported per recording, not once per run: dropping is how the gate
+	// loses track of a conversation it is in the middle of timing, so the
+	// number belongs beside the recording it cost.
+	a.listen.mu.Lock()
+	dropped := a.listen.dropped
+	a.listen.dropped = 0
+	a.listen.mu.Unlock()
+	if dropped > 0 {
+		log.Printf("always-on: the gate went deaf for %.1fs of this recording -- the worker was behind by %d chunks",
+			float64(dropped)*chunkSeconds, dropped)
+	}
 
 	// Nothing ever passed the second stage, so the gate's first impression
 	// was wrong: a door, a cough, a phrase from a video. Deleted whole --

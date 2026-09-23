@@ -79,8 +79,8 @@ func TestTheCaptureCallbackNeverBlocks(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("the capture callback blocked on a full worker queue")
 	}
-	if !a.listen.droppedOnce {
-		t.Fatal("dropping audio from the gate must be reported, once")
+	if a.listen.dropped == 0 {
+		t.Fatal("dropping audio from the gate must be counted, so the session it cost can report it")
 	}
 }
 
@@ -665,5 +665,60 @@ func TestTheMenuBarShowsEitherMute(t *testing.T) {
 	}
 	if !tr.listenMuted {
 		t.Fatal("always-on's mute must survive a session opening under it")
+	}
+}
+
+// The voice extractor used to be handed a whole reply, and a reply has no
+// maximum length -- so a long monologue meant a long model call on the
+// worker, and everything the microphone delivered meanwhile was dropped.
+func TestTheEmbeddingOnlySeesItsLoudestFewSeconds(t *testing.T) {
+	long := make([]float32, int(30*audio.SampleRate))
+	// One loud burst well into the recording; everything else is quiet.
+	at := int(20 * audio.SampleRate)
+	for i := at; i < at+int(audio.SampleRate); i++ {
+		long[i] = 0.8
+	}
+
+	got := loudestStretch(long, embedSeconds)
+	if want := int(embedSeconds * audio.SampleRate); len(got) != want {
+		t.Fatalf("got %d samples, want %d", len(got), want)
+	}
+	var peak float32
+	for _, v := range got {
+		if v > peak {
+			peak = v
+		}
+	}
+	if peak < 0.5 {
+		t.Fatalf("the stretch kept has peak %.2f -- it missed the loud part entirely", peak)
+	}
+}
+
+// Anything already short enough is handed over untouched: copying it would
+// cost a second allocation per reply for nothing.
+func TestAShortReplyIsEmbeddedWhole(t *testing.T) {
+	short := make([]float32, int(audio.SampleRate))
+	if got := loudestStretch(short, embedSeconds); len(got) != len(short) {
+		t.Fatalf("got %d samples, want the whole %d", len(got), len(short))
+	}
+}
+
+// The silence timer belongs to the gate, not to the confirmed replies. A
+// quiet speaker never clears autoSpeechLevel, and when that was the only
+// thing moving lastVoiced their recording was closed mid-sentence.
+func TestTheGateKeepsTheSilenceTimerAlive(t *testing.T) {
+	sess := &session{lastVoiced: time.Now().Add(-time.Minute)}
+	if sess.quietFor() < 30*time.Second {
+		t.Fatal("the fixture is wrong: the session should look long quiet")
+	}
+
+	sess.heardVoice()
+	if quiet := sess.quietFor(); quiet > time.Second {
+		t.Fatalf("the gate reported speech and the session is still %v quiet", quiet)
+	}
+	// It moves the timer and nothing else: deciding who is talking still
+	// belongs to the second stage.
+	if sess.isConfirmed() {
+		t.Error("the gate alone must not mark a recording as confirmed speech")
 	}
 }

@@ -276,6 +276,21 @@ func (s *session) warnOnce() bool {
 	return true
 }
 
+// heardVoice is the voice-activity gate saying somebody is talking, right
+// now, in this recording. It moves the silence timer and nothing else.
+//
+// Separate from noteVoice because the two answer different questions. This
+// one is "is the room still busy", and the gate is the whole authority on
+// that. noteVoice is "who is talking", which costs a model call and has a
+// loudness floor under it -- and letting that floor hold the silence timer
+// is what cut recordings in half mid-sentence when the speaker was quiet or
+// far from the microphone.
+func (s *session) heardVoice() {
+	s.mu.Lock()
+	s.lastVoiced = time.Now()
+	s.mu.Unlock()
+}
+
 // isConfirmed reports whether anything in this recording has passed the
 // second stage yet.
 func (s *session) isConfirmed() bool {
