@@ -722,3 +722,78 @@ func TestTheGateKeepsTheSilenceTimerAlive(t *testing.T) {
 		t.Error("the gate alone must not mark a recording as confirmed speech")
 	}
 }
+
+// What makes a recording worth keeping is that somebody spoke in it. It used
+// to be that the second stage recognised a voice -- which has a loudness
+// floor under it, so a quiet sentence meant the file, the row and everything
+// said were deleted.
+func TestASessionIsKeptForTheSpeechInIt(t *testing.T) {
+	sess := &session{}
+	if sess.voicedSeconds() != 0 {
+		t.Fatal("a fresh session claims speech nobody has heard")
+	}
+
+	sess.addVoiced(0.6)
+	if sess.voicedSeconds() >= minVoicedToKeep {
+		t.Fatalf("%.1fs of speech should not be enough to keep a recording", sess.voicedSeconds())
+	}
+	sess.addVoiced(0.6)
+	if sess.voicedSeconds() < minVoicedToKeep {
+		t.Fatalf("%.1fs of speech should be enough to keep a recording", sess.voicedSeconds())
+	}
+	// Never confirmed, and that no longer decides anything about keeping it.
+	if sess.isConfirmed() {
+		t.Error("counting speech must not stand in for recognising a voice")
+	}
+}
+
+// Speech also moves the silence timer: the two go together, and a recording
+// the gate is still hearing must not be closed underneath the speaker.
+func TestCountingSpeechKeepsTheRecordingOpen(t *testing.T) {
+	sess := &session{lastVoiced: time.Now().Add(-time.Minute)}
+	sess.addVoiced(1)
+	if quiet := sess.quietFor(); quiet > time.Second {
+		t.Fatalf("the session is %v quiet right after speech was counted in it", quiet)
+	}
+}
+
+// A recording whose Close never ran -- the app was killed mid-sentence --
+// used to claim an empty data chunk and read back as nothing at all. The
+// length is now refreshed as it goes, so what survives is the audio.
+func TestARecordingThatWasNeverClosedStillReadsBack(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "killed.wav")
+	w, err := audio.NewWAVWriter(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Thirty seconds, written in chunks, and then no Close at all.
+	chunk := make([]float32, 1600)
+	for i := 0; i < 300; i++ {
+		if err := w.Write(chunk); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	if got := audio.DurationSeconds(path); got < 20 {
+		t.Fatalf("an unclosed 30s recording reads back as %.1fs", got)
+	}
+}
+
+// And a file with nothing in it is still nothing, which is what keeps an
+// empty row out of History.
+func TestAnEmptyRecordingHasNoDuration(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "empty.wav")
+	w, err := audio.NewWAVWriter(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if got := audio.DurationSeconds(path); got != 0 {
+		t.Fatalf("an empty recording reads back as %.1fs", got)
+	}
+	if got := audio.DurationSeconds(filepath.Join(t.TempDir(), "nope.wav")); got != 0 {
+		t.Fatalf("a missing recording reads back as %.1fs", got)
+	}
+}

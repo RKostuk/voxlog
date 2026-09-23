@@ -88,6 +88,11 @@ type session struct {
 	confirmed bool
 	// stopTicker ends the goroutine that keeps the menu bar clock moving.
 	stopTicker chan struct{}
+	// voiced is how much of this recording the gate called speech, in
+	// seconds. Not the same question as confirmed: this is "was anything
+	// said here at all", which is what decides whether the file is worth
+	// keeping, while confirmed is "do we know who said it".
+	voiced float64
 	// warned is set once the "tell them they are being recorded" banner has
 	// been posted for this session. A session becomes a conversation exactly
 	// once, but promote() is called on every far-end segment, so without this
@@ -289,6 +294,21 @@ func (s *session) heardVoice() {
 	s.mu.Lock()
 	s.lastVoiced = time.Now()
 	s.mu.Unlock()
+}
+
+// addVoiced records another stretch the gate called speech.
+func (s *session) addVoiced(seconds float64) {
+	s.mu.Lock()
+	s.voiced += seconds
+	s.lastVoiced = time.Now()
+	s.mu.Unlock()
+}
+
+// voicedSeconds is how much speech this recording is known to contain.
+func (s *session) voicedSeconds() float64 {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.voiced
 }
 
 // isConfirmed reports whether anything in this recording has passed the

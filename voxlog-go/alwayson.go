@@ -73,6 +73,11 @@ const (
 	// recording already in progress: this one decides whether to start
 	// recording at all, and a false start is worse than a missed one.
 	autoSpeechLevel = 0.08
+	// minVoicedToKeep is how much of a recording has to be speech, by the
+	// gate's own reckoning, before it is worth keeping at all. Below this
+	// the gate's first impression was a door, a cough, or a phrase from a
+	// video.
+	minVoicedToKeep = 1.0
 	// minAutoRecordingSeconds is the shortest session worth keeping. Below
 	// this it is a passing noise that cleared the gate.
 	minAutoRecordingSeconds = 3
@@ -389,6 +394,14 @@ func (a *app) listenWorker(gate *vad.Gate, work <-chan listenMsg, done chan<- st
 // finished. Runs on the worker, so it may take as long as a model needs.
 func (a *app) handleMicSegments(segments []vad.Segment) {
 	for _, seg := range segments {
+		// Counted before anything is decided about it. The gate calling a
+		// stretch speech is what makes the recording worth keeping; who
+		// said it is a separate, stricter question, and answering it in the
+		// negative used to throw the whole recording away.
+		if sess := a.currentSession(); sess != nil {
+			sess.addVoiced(seg.Seconds())
+		}
+
 		embed, ok := a.confirmSpeech(seg)
 		if !ok {
 			continue
@@ -898,10 +911,13 @@ func (a *app) closeSessionIfDone(cfg settings.Settings) {
 	if kind == sessionMeeting {
 		gap = time.Duration(splitMinutes(cfg) * float64(time.Minute))
 	}
-	// A recording nothing has confirmed yet is a guess made on the gate's
-	// first impression. It gets seconds to be justified, not the minute a
-	// real note is given to finish a thought.
-	if !sess.isConfirmed() {
+	// A recording the gate has not yet heard any real speech in is a guess
+	// made on its first impression. It gets seconds to be justified, not
+	// the minute a real note is given to finish a thought. Keyed on what
+	// was heard rather than on who was recognised: recognition has a
+	// loudness floor, and a quiet speaker was being given twelve seconds to
+	// say something the app would then throw away anyway.
+	if sess.voicedSeconds() < minVoicedToKeep {
 		gap = provisionalGrace
 	}
 	if sess.quietFor() < gap && time.Since(sess.start) < maxSessionHours*time.Hour {
@@ -947,7 +963,6 @@ func (a *app) closeSession() {
 	micPath, sysPath, sysVoiced := sess.closeFiles()
 	seconds := time.Since(sess.start).Seconds()
 	kind := sess.currentKind()
-	confirmed := sess.isConfirmed()
 
 	a.tray.stoppedMeeting()
 	if a.onMeetingState != nil {
@@ -967,14 +982,19 @@ func (a *app) closeSession() {
 			float64(dropped)*chunkSeconds, dropped)
 	}
 
-	// Nothing ever passed the second stage, so the gate's first impression
-	// was wrong: a door, a cough, a phrase from a video. Deleted whole --
-	// no row, no audio, no trace. This is the price of opening on live
-	// speech, and it is the right way round: a recording that turns out to
-	// be nothing costs a few seconds of disk, while waiting to be sure cost
-	// the user twenty seconds of wondering whether anything was happening.
-	if !confirmed {
-		log.Printf("always-on: %.0fs never confirmed as speech, discarded", seconds)
+	// Whether this was worth recording is decided by how much speech the
+	// gate heard, not by whether the second stage recognised a voice.
+	//
+	// It used to be the second stage, and that stage has a loudness floor
+	// under it: a quiet sentence, or one said across the room, never
+	// cleared it, and the whole recording -- file, row and all -- was
+	// deleted with nothing said about it. Deleting what somebody actually
+	// said is the worst thing an always-on feature can do, and it is
+	// unrecoverable. The gate is the right authority: it is a speech model,
+	// it has already been asked this question, and where it is wrong the
+	// transcript comes back empty and fileAutoNote drops the audio anyway.
+	if voiced := sess.voicedSeconds(); voiced < minVoicedToKeep {
+		log.Printf("always-on: %.0fs with %.1fs of speech in it, discarded", seconds, voiced)
 		removeQuietly(micPath, sysPath)
 		return
 	}
@@ -982,6 +1002,16 @@ func (a *app) closeSession() {
 	// Too short to be anything: delete rather than file. A three-second file
 	// in History is noise about noise.
 	if seconds < minAutoRecordingSeconds {
+		removeQuietly(micPath, sysPath)
+		return
+	}
+
+	// A file the writer never got anything into -- or never closed, which
+	// looks the same to every reader. Filing it would put a row in History
+	// pointing at silence, and queue a decode that can only come back
+	// empty.
+	if audio.DurationSeconds(micPath) <= 0 {
+		log.Printf("always-on: %s has no audio in it, discarded", micPath)
 		removeQuietly(micPath, sysPath)
 		return
 	}
@@ -1111,6 +1141,15 @@ func removeQuietly(paths ...string) {
 			log.Printf("always-on: removing %s: %v", path, err)
 		}
 	}
+}
+
+// currentSession is the recording in progress, or nil. Unlike
+// openSessionIfIdle it starts nothing: callers that have something to say
+// about a recording, rather than something to record, use this.
+func (a *app) currentSession() *session {
+	a.listen.mu.Lock()
+	defer a.listen.mu.Unlock()
+	return a.listen.sess
 }
 
 // sessionPathsInUse is what a retention sweep must not delete: the files the

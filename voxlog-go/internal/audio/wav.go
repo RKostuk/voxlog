@@ -32,7 +32,19 @@ type WAVWriter struct {
 	f *os.File
 	w *bufio.Writer
 	n int64 // samples written so far
+	// patchedAt is how many samples the header on disk claims. A file whose
+	// Close never ran -- the app was killed, or crashed mid-recording --
+	// used to claim zero, and a zero-length data chunk is an empty file to
+	// every reader including this package's own. The length is refreshed as
+	// the recording runs so that what survives a kill is most of the audio
+	// rather than none of it.
+	patchedAt int64
 }
+
+// patchEvery is how often the header's length fields are brought up to date,
+// in samples. Ten seconds: often enough that a kill costs seconds, rare
+// enough that it is two small WriteAt calls a minute per recording.
+const patchEvery = 10 * SampleRate
 
 // NewWAVWriter creates (or truncates) path and writes the header placeholder.
 func NewWAVWriter(path string) (*WAVWriter, error) {
@@ -86,6 +98,34 @@ func (w *WAVWriter) Write(samples []float32) error {
 		return err
 	}
 	w.n += int64(len(samples))
+
+	// Runs from the audio callback, so it must stay cheap: a flush and two
+	// four-byte writes, once every patchEvery samples.
+	if w.n-w.patchedAt >= patchEvery {
+		if err := w.patchLengths(); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// patchLengths flushes what is buffered and rewrites the two length fields
+// so the file on disk describes the audio actually in it.
+func (w *WAVWriter) patchLengths() error {
+	if err := w.w.Flush(); err != nil {
+		return err
+	}
+	dataBytes := uint32(w.n * bytesPerSample)
+	var sizes [4]byte
+	binary.LittleEndian.PutUint32(sizes[:], 36+dataBytes)
+	if _, err := w.f.WriteAt(sizes[:], 4); err != nil {
+		return err
+	}
+	binary.LittleEndian.PutUint32(sizes[:], dataBytes)
+	if _, err := w.f.WriteAt(sizes[:], 40); err != nil {
+		return err
+	}
+	w.patchedAt = w.n
 	return nil
 }
 
@@ -96,20 +136,7 @@ func (w *WAVWriter) Samples() int64 { return w.n }
 // Close never ran is still readable by anything that trusts the data chunk's
 // length -- it just claims to be empty, which is why Close matters.
 func (w *WAVWriter) Close() error {
-	if err := w.w.Flush(); err != nil {
-		w.f.Close()
-		return err
-	}
-	dataBytes := uint32(w.n * bytesPerSample)
-	var sizes [4]byte
-
-	binary.LittleEndian.PutUint32(sizes[:], 36+dataBytes)
-	if _, err := w.f.WriteAt(sizes[:], 4); err != nil {
-		w.f.Close()
-		return err
-	}
-	binary.LittleEndian.PutUint32(sizes[:], dataBytes)
-	if _, err := w.f.WriteAt(sizes[:], 40); err != nil {
+	if err := w.patchLengths(); err != nil {
 		w.f.Close()
 		return err
 	}
@@ -122,6 +149,22 @@ type WAVReader struct {
 	r         *bufio.Reader
 	remaining int64
 	total     int64
+}
+
+// DurationSeconds is how long the recording at path is, or 0 if it cannot be
+// read at all. Cheap: it reads the header and closes the file.
+//
+// Zero is the answer for a file that is not there, is not a WAV, or whose
+// data chunk claims nothing -- which is what a recording whose Close never
+// ran used to look like. Callers use it to tell "there is audio here" from
+// "there is a file here".
+func DurationSeconds(path string) float64 {
+	r, err := OpenWAV(path)
+	if err != nil {
+		return 0
+	}
+	defer r.Close()
+	return r.Seconds()
 }
 
 // OpenWAV opens path and positions the reader at the first sample. Only the
