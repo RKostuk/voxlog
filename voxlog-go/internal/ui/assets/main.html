@@ -2274,6 +2274,14 @@
       row.scrollIntoView({ block: 'nearest' });
     }
 
+    window.kbdSelectFirstRow = kbdSelectFirstRow;
+    function kbdSelectFirstRow() {
+      var root = kbdListRoot();
+      if (!root) return;
+      var first = root.querySelector('.entry');
+      if (first) kbdSelect(first);
+    }
+
     document.addEventListener('keydown', function (e) {
       if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp' && e.key !== 'Enter') return;
       // A form control's own arrow/Enter behaviour (a <select>, a text
@@ -2291,7 +2299,10 @@
         if (!kbdSelected || rows.indexOf(kbdSelected) === -1) return;
         e.preventDefault();
         var entry = kbdSelected._entry;
-        if (entry && entry.text) window.applyEntry(entry.text, false);
+        // pasteEntry, not applyEntry: walking the list and pressing Enter
+        // means "put this back where I was typing", and it means that
+        // whatever the History click action is set to.
+        if (entry && entry.text) window.pasteEntry(entry.text);
         return;
       }
 
@@ -2310,6 +2321,10 @@
     window.initSettingsPane && window.initSettingsPane();
     render();
     if (window.voxlog && window.voxlog.pane) selectPane(window.voxlog.pane);
+    // Opened on History by the hotkey: highlight the newest row straight
+    // away, so the first arrow press moves the selection instead of being
+    // spent creating one.
+    kbdSelectFirstRow();
     // selectPane already calls updateMeetingPoll when it runs; this covers
     // the case where window.voxlog.pane was never set and the markup's own
     // default (Overview, aria-selected="true") is what's actually showing.

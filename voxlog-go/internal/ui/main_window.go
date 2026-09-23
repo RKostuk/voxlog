@@ -841,6 +841,11 @@ func refreshMainWindow(w webview.WebView, pane string, store *history.Store, mee
 			daysData, meetingsData, overviewData, tasksData, rejectedData, decodeQueueJSON(), settingsData, modelsData, llmData,
 		))
 		w.Eval(fmt.Sprintf("window.selectPane && window.selectPane(%q);", pane))
+		// Reopening lands here rather than in the page's own startup, so the
+		// keyboard selection has to be re-armed from this side too -- otherwise
+		// the first arrow press after a reopen is spent creating a selection
+		// instead of moving one.
+		w.Eval("window.kbdSelectFirstRow && window.kbdSelectFirstRow();")
 	})
 }
 
@@ -989,6 +994,19 @@ func runMainWindow(pane string, store *history.Store, meetings *history.MeetingS
 		default:
 			return output.Emit(text, output.ModeCopy)
 		}
+	})
+
+	// pasteEntry is the other confirmation gesture: a row picked with the
+	// arrow keys and confirmed with Enter. That is always a paste, whatever
+	// HistoryClickAction says -- the setting answers what a *click* means,
+	// and somebody who walked a list with the keyboard and pressed Enter
+	// asked for the line to go back where they were typing.
+	w.Bind("pasteEntry", func(text string) error {
+		// Not inline, for the same reason applyEntry's paste isn't: the
+		// window has to be off screen and the other app frontmost before
+		// Cmd+V is worth sending.
+		go pasteEntryBack(text)
+		return nil
 	})
 
 	// transcribeEntry decodes a meeting recorded earlier. Returns immediately:
