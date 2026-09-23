@@ -73,3 +73,32 @@ func TestSettingsFragmentDoesNotFightTheShellNav(t *testing.T) {
 		}
 	}
 }
+
+// The LLM pane answers one question -- which model, and is it on disk. The
+// project dictionary, the rejected lines and the drawer are about tasks, and
+// putting them back beside the model download is the mistake this guards.
+func TestTaskSettingsLiveInTheTasksPane(t *testing.T) {
+	frag, err := assets.ReadFile("assets/settings-pane.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := string(frag)
+	tasks := body[strings.Index(body, `class="subpane" data-subpane="tasks"`):]
+	tasks = tasks[:strings.Index(tasks, `class="subpane" data-subpane="history"`)]
+	for _, id := range []string{`id="entity-dict-list"`, `id="rejected-list"`, `id="tasks_drawer_placement"`} {
+		if !strings.Contains(tasks, id) {
+			t.Errorf("%s should live in the Tasks pane", id)
+		}
+	}
+
+	llm := body[strings.Index(body, `class="subpane" data-subpane="llm"`):]
+	llm = llm[:strings.Index(llm, `class="subpane" data-subpane="audio"`)]
+	if !strings.Contains(llm, `id="llm-model"`) {
+		t.Error("the LLM pane still owns the model download")
+	}
+	for _, id := range []string{`id="entity-dict-list"`, `id="rejected-list"`} {
+		if strings.Contains(llm, id) {
+			t.Errorf("%s is about tasks, not about the model", id)
+		}
+	}
+}

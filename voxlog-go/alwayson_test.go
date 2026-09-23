@@ -536,3 +536,134 @@ func TestAYieldedMicOpensNoSession(t *testing.T) {
 		t.Fatal("a session opened while the user had the microphone")
 	}
 }
+
+// -- the mode-wide microphone mute (§12) ------------------------------------
+
+// Muting must not shorten the microphone track. The mic and the far end are
+// decoded against one clock, so a file missing the muted seconds would drag
+// every word after them ahead of the other side of the call.
+func TestMutingWritesSilenceRatherThanNothing(t *testing.T) {
+	a := &app{}
+	loud := make([]float32, 480)
+	for i := range loud {
+		loud[i] = 0.5
+	}
+
+	a.onListenChunk(loud)
+	if len(a.listen.preroll) != len(loud) {
+		t.Fatalf("pre-roll = %d samples, want %d", len(a.listen.preroll), len(loud))
+	}
+
+	a.toggleListenMute()
+	a.onListenChunk(loud)
+	if got, want := len(a.listen.preroll), 2*len(loud); got != want {
+		t.Fatalf("pre-roll = %d samples, want %d -- a mute must keep the clock, not skip it", got, want)
+	}
+	for _, v := range a.listen.preroll[len(loud):] {
+		if v != 0 {
+			t.Fatal("the muted stretch of the pre-roll is not silent")
+		}
+	}
+	for _, v := range a.listen.preroll[:len(loud)] {
+		if v != 0.5 {
+			t.Fatal("muting rewrote audio recorded before the mute")
+		}
+	}
+}
+
+// While muted the gate hears nothing, so the user's own voice can neither
+// hold a session open nor open a new one.
+func TestAMutedMicrophoneNeverReachesTheGate(t *testing.T) {
+	a := &app{}
+	a.listen.work = make(chan listenMsg, 8)
+
+	a.onListenChunk(make([]float32, 160))
+	if len(a.listen.work) != 1 {
+		t.Fatalf("unmuted: worker got %d messages, want 1", len(a.listen.work))
+	}
+
+	a.toggleListenMute()
+	a.onListenChunk(make([]float32, 160))
+	if len(a.listen.work) != 1 {
+		t.Fatalf("muted: worker got %d messages, want the microphone withheld", len(a.listen.work))
+	}
+
+	a.toggleListenMute()
+	a.onListenChunk(make([]float32, 160))
+	if len(a.listen.work) != 2 {
+		t.Fatalf("unmuted again: worker got %d messages, want 2", len(a.listen.work))
+	}
+}
+
+// Unlike the meeting's mute, this one is a state of the mode: it has to
+// survive a session opening and closing under it.
+func TestTheListenMuteIsAModeStateNotARecordingState(t *testing.T) {
+	a := &app{}
+	if a.micMuted() {
+		t.Fatal("always-on starts unmuted")
+	}
+	if !a.toggleListenMute() || !a.micMuted() {
+		t.Fatal("the first click must mute")
+	}
+
+	// A session comes and goes; the mute does not.
+	a.listen.mu.Lock()
+	a.listen.sess = &session{}
+	a.listen.mu.Unlock()
+	if !a.micMuted() {
+		t.Fatal("opening a session cleared the mode-wide mute")
+	}
+	a.listen.mu.Lock()
+	a.listen.sess = nil
+	a.listen.mu.Unlock()
+	if !a.micMuted() {
+		t.Fatal("closing a session cleared the mode-wide mute")
+	}
+
+	if a.toggleListenMute() || a.micMuted() {
+		t.Fatal("the second click must unmute")
+	}
+}
+
+// The far end is not muted: a call you sit quietly through is exactly what
+// the tap is for.
+func TestMutingLeavesTheFarEndAlone(t *testing.T) {
+	a := &app{}
+	a.listen.work = make(chan listenMsg, 4)
+	a.toggleListenMute()
+
+	loud := make([]float32, 160)
+	for i := range loud {
+		loud[i] = 0.4
+	}
+	a.onFarEndChunk(loud)
+	if len(a.listen.work) != 1 {
+		t.Fatal("the far end must still reach the gate while the microphone is muted")
+	}
+	if len(a.listen.farPreroll) != len(loud) || a.listen.farPreroll[0] == 0 {
+		t.Fatal("the far-end pre-roll must keep the audio it heard")
+	}
+}
+
+// Two mutes, one glyph: the meeting's dies with its recording, always-on's
+// does not, and the menu bar draws either.
+func TestTheMenuBarShowsEitherMute(t *testing.T) {
+	tr := &tray{}
+	tr.listenMuted = true
+	tr.mu.Lock()
+	got := trayStateFor(tr.recording, tr.decoding, tr.meeting, tr.anyMuteLocked())
+	tr.mu.Unlock()
+	if got != stateMuted {
+		t.Fatalf("state = %q, want %q for a mode-wide mute", got, stateMuted)
+	}
+
+	// Starting a recording clears the meeting's mute and keeps the mode's.
+	tr.micMuted = true
+	tr.startedMeeting(time.Now())
+	if tr.micMuted {
+		t.Fatal("a new recording must start unmuted")
+	}
+	if !tr.listenMuted {
+		t.Fatal("always-on's mute must survive a session opening under it")
+	}
+}

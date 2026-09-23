@@ -825,7 +825,12 @@ func onReady(store *settings.Store, histStore *history.Store, meetStore *history
 	mTasksDrawer := systray.AddMenuItem("Quick tasks", "Open the tasks drawer")
 	// Always-on's pause. Shown only while the feature is on: a menu item
 	// that pauses something not happening says nothing.
-	mListenPause := systray.AddMenuItem(listenPauseLabel(false), "Stop listening until you resume it")
+	mListenPause := systray.AddMenuItem(listenPauseLabel(false), listenPauseTip)
+	// Beside it, the softer switch: keep listening, stop writing me down.
+	// Shown and hidden with the pause item, since neither means anything
+	// while the feature is off.
+	mListenMute := systray.AddMenuItem(listenMuteLabel(false), listenMuteTip)
+	setSymbol(mListenMute, "mic.slash")
 	systray.AddSeparator()
 	mSettings := systray.AddMenuItem("Settings", "Open settings")
 	systray.AddSeparator()
@@ -872,7 +877,10 @@ func onReady(store *settings.Store, histStore *history.Store, meetStore *history
 			stopMeetingBlink = make(chan struct{})
 			go blinkStatus(mMeetingStatus, stopMeetingBlink, "Meeting", func() (bool, time.Duration, bool) {
 				running, elapsed := a.meetingElapsed()
-				return running, elapsed, a.meetingMuted()
+				// Either mute counts here. A recording opened by always-on
+				// has no meeting mute of its own, and the status line saying
+				// nothing about it is exactly the silent state §12 is for.
+				return running, elapsed, a.meetingMuted() || a.micMuted()
 			})
 			return
 		}
@@ -1097,8 +1105,10 @@ func onReady(store *settings.Store, histStore *history.Store, meetStore *history
 			ui.RunOnMain(func() {
 				if listening {
 					mListenPause.Show()
+					mListenMute.Show()
 				} else {
 					mListenPause.Hide()
+					mListenMute.Hide()
 				}
 			})
 			recording, _ := a.meetingElapsed()
@@ -1119,6 +1129,12 @@ func onReady(store *settings.Store, histStore *history.Store, meetStore *history
 			case <-mListenPause.ClickedCh:
 				paused := a.toggleListenPause()
 				ui.RunOnMain(func() { mListenPause.SetTitle(listenPauseLabel(paused)) })
+			case <-mListenMute.ClickedCh:
+				// The menu bar itself has to say this, not just the item:
+				// "listening, but not to you" must never be a silent state.
+				muted := a.toggleListenMute()
+				a.tray.setListenMuted(muted)
+				ui.RunOnMain(func() { mListenMute.SetTitle(listenMuteLabel(muted)) })
 			case <-mTasksDrawer.ClickedCh:
 				// Same entry point as the tasks hotkey, so a menu open and a
 				// key open cannot drift apart.

@@ -118,7 +118,12 @@ type tray struct {
 	decoding     int
 	meeting      bool
 	meetingSince time.Time
-	micMuted     bool
+	// micMuted is the meeting recorder's mute: one recording long, cleared
+	// when the next one starts.
+	micMuted bool
+	// listenMuted is always-on's, which outlives any session under it. Two
+	// fields, one glyph -- see setListenMuted.
+	listenMuted bool
 	// listening is always-on's gate having the microphone open. Deliberately
 	// not a trayStateFor state: the icon means "something is being
 	// recorded", and listening is the opposite of that -- nothing is being
@@ -126,7 +131,7 @@ type tray struct {
 	// must always say so.
 	listening bool
 	last      string
-	lastTitle    string
+	lastTitle string
 
 	// onRecording fires when a dictation starts or stops -- when the count
 	// crosses zero, not on every take -- so the menu can offer to stop the one
@@ -181,6 +186,10 @@ func (t *tray) setListening(on bool) {
 
 func (t *tray) startedMeeting(at time.Time) {
 	t.mu.Lock()
+	// micMuted, not listenMuted: the meeting's mute belongs to the recording
+	// and starts off with it. Always-on's mute is a state of the mode and
+	// must survive a session opening under it, or every new session would
+	// quietly start writing the user down again.
 	t.meeting, t.meetingSince, t.micMuted = true, at, false
 	t.mu.Unlock()
 	t.refresh()
@@ -204,21 +213,42 @@ func (t *tray) setMicMuted(muted bool) {
 	t.refresh()
 }
 
+// setListenMuted is the same glyph for always-on's mode-wide mute. Separate
+// field because the two have different lifetimes, same picture because to the
+// user they are one fact: the app is running and it is not hearing you.
+func (t *tray) setListenMuted(muted bool) {
+	t.mu.Lock()
+	t.listenMuted = muted
+	t.mu.Unlock()
+	t.refresh()
+}
+
+// anyMuteLocked is the two mutes as the menu bar sees them. Caller holds mu.
+func (t *tray) anyMuteLocked() bool { return t.micMuted || t.listenMuted }
+
 // refresh applies the current state. Cheap to call often -- the ticker behind
 // a running meeting calls it every few seconds -- because it only touches the
 // status item when something actually changed.
 func (t *tray) refresh() {
 	t.mu.Lock()
-	state := trayStateFor(t.recording, t.decoding, t.meeting, t.micMuted)
+	muted := t.anyMuteLocked()
+	state := trayStateFor(t.recording, t.decoding, t.meeting, muted)
 	title := ""
 	if t.listening && !t.meeting {
 		// A hollow marker against the meeting's filled one: listening is the
 		// state where nothing is being written yet.
 		title = "◦ listening"
+		if muted {
+			// The one combination that has to be spelled out even with
+			// nothing recording: the app is listening and deliberately deaf
+			// to the user. Left implicit it reads as "listening", which is
+			// the opposite of what is happening.
+			title += " · mic off"
+		}
 	}
 	if t.meeting {
 		title = elapsedLabel(time.Since(t.meetingSince))
-		if t.micMuted {
+		if muted {
 			// Spelled out beside the clock as well as drawn: the glyph is 16
 			// points of struck-through microphone, and this is the line that
 			// survives a glance at the wrong moment.

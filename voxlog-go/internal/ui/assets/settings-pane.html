@@ -24,6 +24,7 @@
       <path d="M7.8 7.8a5.9 5.9 0 0 0 0 8.4M16.2 16.2a5.9 5.9 0 0 0 0-8.4"/>
       <path d="M4.6 4.6a10.4 10.4 0 0 0 0 14.8M19.4 19.4a10.4 10.4 0 0 0 0-14.8"/>
     </g>
+    <g id="ic-tasks">
     <g id="ic-llm">
       <path d="M12 3.5l2.1 4.4 4.8.6-3.5 3.3.9 4.8L12 14.3l-4.3 2.3.9-4.8-3.5-3.3 4.8-.6z"/>
     </g>
@@ -46,6 +47,9 @@
         </button>
         <button type="button" class="subnav-item" role="tab" data-subpane="listening" aria-selected="false">
           <span class="glyph i-listening"><svg viewBox="0 0 24 24"><use href="#ic-listening"/></svg></span>Listening
+        </button>
+        <button type="button" class="subnav-item" role="tab" data-subpane="tasks" aria-selected="false">
+          <span class="glyph i-tasks"><svg viewBox="0 0 24 24"><use href="#ic-tasks"/></svg></span>Tasks
         </button>
         <button type="button" class="subnav-item" role="tab" data-subpane="history" aria-selected="false">
           <span class="glyph i-history"><svg viewBox="0 0 24 24"><use href="#ic-clock"/></svg></span>History
@@ -278,66 +282,6 @@
       </div>
     </div>
 
-    <div class="group">
-      <div class="group-title">Project dictionary</div>
-      <div class="card">
-        <div class="item stacked">
-          <div class="title">Projects
-            <div class="subtext">This is the whole list Task Hub is allowed to file tasks under -- it
-              cannot invent new ones. Anything that doesn't clearly match one of these lands in a
-              project called "Unfiltered" instead.</div>
-          </div>
-          <div id="entity-dict-list" class="entity-dict-list"></div>
-          <div class="entity-dict-add">
-            <input type="text" id="entity-dict-input" placeholder="Add a project or client name">
-            <button type="button" id="entity-dict-add-btn">Add</button>
-          </div>
-        </div>
-      </div>
-    </div>
-
-    <div class="group">
-      <div class="group-title">Quick tasks drawer</div>
-      <div class="card">
-        <div class="item">
-          <div class="title">Open the drawer
-            <div class="subtext">A small always-on-top window: what is still open, grouped by project, and one line to add to it</div>
-          </div>
-          <span class="mono-field" id="tasks_key_label"></span>
-          <button type="button" class="capture-btn" data-target="tasks_key">Set&hellip;</button>
-        </div>
-        <div class="item stacked" id="tasks-drawer-position-row">
-          <div class="title">Where it opens
-            <div class="subtext">The drawer stays put while it is up -- it is a window you type into, so it never follows the cursor.</div>
-          </div>
-          <div class="place-wrap" id="drawer-place-wrap">
-            <div class="place-map" id="drawer-place-map">
-              <button type="button" class="place-spot" data-pos="top_left" title="Top left"></button>
-              <button type="button" class="place-spot" data-pos="top_centre" title="Top centre"></button>
-              <button type="button" class="place-spot" data-pos="top_right" title="Top right"></button>
-              <button type="button" class="place-spot" data-pos="bottom_left" title="Bottom left"></button>
-              <button type="button" class="place-spot" data-pos="bottom_centre" title="Bottom centre"></button>
-              <button type="button" class="place-spot" data-pos="bottom_right" title="Bottom right"></button>
-            </div>
-          </div>
-          <input type="hidden" id="tasks_drawer_placement" value="top_centre">
-        </div>
-      </div>
-    </div>
-
-    <div class="group">
-      <div class="group-title">Not a task</div>
-      <div class="card">
-        <div class="item stacked">
-          <div class="title">Rejected lines
-            <div class="subtext">Everything you have marked &quot;Not a task&quot;. Task Hub is shown
-              these as examples of what not to extract. Only the last few are kept -- restoring one
-              puts it back in Tasks as a fresh to-do, without a link to where it came from.</div>
-          </div>
-          <div id="rejected-list" class="entity-dict-list"></div>
-        </div>
-      </div>
-    </div>
       </div>
 
       <div class="subpane" data-subpane="audio">
@@ -552,6 +496,70 @@
             disk until it is sure somebody is speaking; a recording that turns out to be one voice is
             filed in History as a note, and one with a second voice in it becomes a meeting. Pause it
             any time from the menu bar.</div>
+        </div>
+      </div>
+    </div>
+      </div>
+
+      <div class="subpane" data-subpane="tasks">
+        <div class="subpane-title">Tasks</div>
+    <div class="group">
+      <div class="group-title">Project dictionary</div>
+      <div class="card">
+        <div class="item stacked">
+          <div class="title">Projects
+            <div class="subtext">This is the whole list Task Hub is allowed to file tasks under -- it
+              cannot invent new ones. Anything that doesn't clearly match one of these lands in a
+              project called "Unfiltered" instead.</div>
+          </div>
+          <div id="entity-dict-list" class="entity-dict-list"></div>
+          <div class="entity-dict-add">
+            <input type="text" id="entity-dict-input" placeholder="Add a project or client name">
+            <button type="button" id="entity-dict-add-btn">Add</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="group">
+      <div class="group-title">Quick tasks drawer</div>
+      <div class="card">
+        <div class="item">
+          <div class="title">Open the drawer
+            <div class="subtext">A small always-on-top window: what is still open, grouped by project, and one line to add to it</div>
+          </div>
+          <span class="mono-field" id="tasks_key_label"></span>
+          <button type="button" class="capture-btn" data-target="tasks_key">Set&hellip;</button>
+        </div>
+        <div class="item stacked" id="tasks-drawer-position-row">
+          <div class="title">Where it opens
+            <div class="subtext">The drawer stays put while it is up -- it is a window you type into, so it never follows the cursor.</div>
+          </div>
+          <div class="place-wrap" id="drawer-place-wrap">
+            <div class="place-map" id="drawer-place-map">
+              <button type="button" class="place-spot" data-pos="top_left" title="Top left"></button>
+              <button type="button" class="place-spot" data-pos="top_centre" title="Top centre"></button>
+              <button type="button" class="place-spot" data-pos="top_right" title="Top right"></button>
+              <button type="button" class="place-spot" data-pos="bottom_left" title="Bottom left"></button>
+              <button type="button" class="place-spot" data-pos="bottom_centre" title="Bottom centre"></button>
+              <button type="button" class="place-spot" data-pos="bottom_right" title="Bottom right"></button>
+            </div>
+          </div>
+          <input type="hidden" id="tasks_drawer_placement" value="top_centre">
+        </div>
+      </div>
+    </div>
+
+    <div class="group">
+      <div class="group-title">Not a task</div>
+      <div class="card">
+        <div class="item stacked">
+          <div class="title">Rejected lines
+            <div class="subtext">Everything you have marked &quot;Not a task&quot;. Task Hub is shown
+              these as examples of what not to extract. Only the last few are kept -- restoring one
+              puts it back in Tasks as a fresh to-do, without a link to where it came from.</div>
+          </div>
+          <div id="rejected-list" class="entity-dict-list"></div>
         </div>
       </div>
     </div>

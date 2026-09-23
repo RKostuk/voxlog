@@ -136,6 +136,17 @@ type alwaysOn struct {
 	// on every tick.
 	sessKind string
 
+	// micMuted is "do not write me down", and unlike the meeting's mute it
+	// is a state of the mode, not of one recording: switch it on and it
+	// stays on across sessions until switched off. Always-on listens all
+	// day, so "not right now" has to be one click and has to survive the
+	// session it was clicked in.
+	//
+	// It silences one side only. The far end of a call keeps recording,
+	// which is the difference from pausing: a call you are sitting quietly
+	// through is exactly what the tap is for.
+	micMuted bool
+
 	// yielded is set while a dictation owns the microphone. It exists so the
 	// worker never has to ask the app whether the user is recording:
 	// answering that takes a.mu, and a.mu is held by the very hotkey path
@@ -456,15 +467,57 @@ func (a *app) onListenChunk(chunk []float32) {
 
 	l.mu.Lock()
 	sess := l.sess
+	muted := l.micMuted
+	if muted {
+		// Silence of the same length, never a shorter file. The two tracks
+		// are decoded against one clock, so a microphone file missing the
+		// seconds spent muted would drag every word after it ahead of the
+		// far end -- and the pre-roll has the same problem, which is why it
+		// keeps growing with zeros rather than standing still.
+		chunk = make([]float32, len(chunk))
+	}
 	if sess == nil {
 		l.preroll = appendBounded(l.preroll, chunk, prerollSeconds*audio.SampleRate)
 	}
-	l.sendToWorkerLocked(listenMsg{kind: msgMic, samples: chunk})
+	// The gate does not hear a muted microphone either. Otherwise your own
+	// voice would keep lastVoiced alive so the session never closed, and
+	// noteVoice would go on counting you as a speaker in a recording you
+	// asked not to be in. The consequence is intended: while muted, an open
+	// session runs down to the silence threshold and closes unless the far
+	// end is holding it up, and a closed one does not reopen from the
+	// microphone at all.
+	if !muted {
+		l.sendToWorkerLocked(listenMsg{kind: msgMic, samples: chunk})
+	}
 	l.mu.Unlock()
 
 	if sess != nil {
 		sess.writeMic(chunk)
 	}
+}
+
+// MicMuted reports whether always-on is writing silence for the user's own
+// side.
+func (a *app) micMuted() bool {
+	a.listen.mu.Lock()
+	defer a.listen.mu.Unlock()
+	return a.listen.micMuted
+}
+
+// toggleListenMute flips the mode-wide microphone mute and reports the new
+// state. It deliberately does not touch the session: a recording in progress
+// keeps running, it just stops carrying the user's voice.
+func (a *app) toggleListenMute() bool {
+	a.listen.mu.Lock()
+	a.listen.micMuted = !a.listen.micMuted
+	muted := a.listen.micMuted
+	a.listen.mu.Unlock()
+	if muted {
+		log.Print("always-on: microphone muted; the far end is still recorded")
+	} else {
+		log.Print("always-on: microphone unmuted")
+	}
+	return muted
 }
 
 // onFarEndChunk is the same for the system-audio tap: the far end of a call.
@@ -1128,3 +1181,19 @@ func listenPauseLabel(paused bool) string {
 	}
 	return "Pause listening"
 }
+
+// listenMuteLabel is the same for the mode-wide microphone mute. Sitting one
+// line under Pause, the names alone cannot say how the two differ -- that is
+// what the tooltips are for: pause stops everything, mute keeps recording the
+// far end of a call and drops only your side.
+func listenMuteLabel(muted bool) string {
+	if muted {
+		return "Unmute my microphone"
+	}
+	return "Mute my microphone"
+}
+
+const (
+	listenPauseTip = "Stop listening entirely -- neither you nor the other side is recorded -- until you resume it"
+	listenMuteTip  = "Keep listening but write silence for your side. A call you are sitting quietly through is still recorded."
+)

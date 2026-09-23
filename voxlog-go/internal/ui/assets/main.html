@@ -839,11 +839,9 @@
       if (e.task_id) tags += '<span class="tag">Task found</span>';
       tags += decodeTagHTML(e);
 
-      // Transcribe is the only button on a card: everything else you do to a
-      // meeting, you do inside it.
-      var action = (!e.text && e.has_audio)
-        ? '<button type="button" class="act transcribe-meeting" data-id="' + escapeHtml(e.id) + '">Transcribe</button>'
-        : '';
+      // No buttons on a card. A row answers "what was this"; the actions
+      // over a meeting live inside it, where you have already seen it. The
+      // "Not transcribed" tag above already says there is something to do.
 
       return '<button type="button" class="meeting-card" data-id="' + escapeHtml(e.id) + '">' +
         '<div class="m-top"><span class="m-title">' + escapeHtml(e.time) + '</span>' +
@@ -855,7 +853,6 @@
           '<span class="tag">' + ((e.speakers || []).length
             ? (e.speakers.length === 1 ? '1 speaker' : e.speakers.length + ' speakers')
             : 'no speaker data') + '</span>' +
-          action +
         '</div>' +
       '</button>';
     }
@@ -929,14 +926,6 @@
         ? 'No meetings match that.' : emptyText;
       root.innerHTML = html || '<div class="empty">' + empty + '</div>';
 
-      root.querySelectorAll('.transcribe-meeting').forEach(function (btn) {
-        btn.addEventListener('click', function (ev) {
-          ev.stopPropagation(); // the card underneath opens the meeting
-          btn.disabled = true;
-          btn.textContent = 'Queued…';
-          window.transcribeEntry(btn.dataset.id);
-        });
-      });
       root.querySelectorAll('.meeting-card').forEach(function (card) {
         card.addEventListener('click', function () { openMeeting(card.dataset.id); });
       });
@@ -963,6 +952,37 @@
 
     // ---- one meeting, opened -------------------------------------------
 
+    // A silent placeholder and a hang look identical. Anything that waits on
+    // a binding puts its "Loading…" up through this: after a second the text
+    // starts counting, so a pane that is still working says so, and a pane
+    // that died says that instead (see the .catch on every caller).
+    var waitingTicker = null;
+
+    function showWaiting(paneID, text) {
+      stopWaiting();
+      var started = Date.now();
+      var pane = document.getElementById(paneID);
+      if (!pane) return;
+      pane.innerHTML = '<div class="empty" id="waiting-note">' + escapeHtml(text) + '</div>';
+      waitingTicker = setInterval(function () {
+        var note = document.getElementById('waiting-note');
+        if (!note) { stopWaiting(); return; }
+        var secs = Math.round((Date.now() - started) / 1000);
+        if (secs >= 1) note.textContent = text + ' (' + secs + 's)';
+      }, 1000);
+    }
+
+    function stopWaiting() {
+      if (waitingTicker) { clearInterval(waitingTicker); waitingTicker = null; }
+    }
+
+    function showPaneError(paneID, err) {
+      stopWaiting();
+      var pane = document.getElementById(paneID);
+      if (!pane) return;
+      pane.innerHTML = '<div class="empty">' + escapeHtml(String(err && err.message ? err.message : err)) + '</div>';
+    }
+
     var detailTurns = [], detailSpeakers = [], detailMeeting = null, turnQuery = '';
 
     function openMeeting(id) {
@@ -971,16 +991,19 @@
       openMeetingID = id;
       detailMeeting = meeting;
       showMeetingView('detail');
-      document.getElementById('meeting-detail').innerHTML =
-        '<div class="empty">Loading the transcript…</div>';
+      showWaiting('meeting-detail', 'Loading the transcript…');
 
       window.meetingDetail(id).then(function (detail) {
         // A second click landed elsewhere while this was in flight.
         if (openMeetingID !== id) return;
+        stopWaiting();
         detailTurns = (detail && detail.turns) || [];
         detailSpeakers = (detail && detail.speakers) || [];
         renderMeetingDetail();
         scrollToPendingTurn();
+      }).catch(function (err) {
+        if (openMeetingID !== id) return;
+        showPaneError('meeting-detail', err);
       });
     }
 
@@ -1112,6 +1135,19 @@
           '<span id="turn-now"></span></div>';
     }
 
+    // The button reads its state from the same queue the row tags read
+    // (decodeKeys), so a meeting already queued cannot be queued twice by
+    // clicking again -- the button says what is happening and refuses.
+    function detailTranscribeHTML(meeting) {
+      if (meeting.text || !meeting.has_audio) return '';
+      var state = decodeKeys()[meeting.id];
+      if (state) {
+        return '<button type="button" class="act" id="detail-transcribe" disabled>' +
+          (state === 'running' ? 'Transcribing…' : 'Queued') + '</button>';
+      }
+      return '<button type="button" class="act" id="detail-transcribe">Transcribe</button>';
+    }
+
     function renderMeetingDetail() {
       var meeting = detailMeeting;
       var entity = meetingEntity(meeting);
@@ -1126,6 +1162,7 @@
         '<div class="detail-meta"><span>' + duration(meeting.recording_seconds) + '</span>' +
           (meeting.duration_seconds ? '<span>decoded in ' + duration(meeting.duration_seconds) + '</span>' : '') +
           '<span>Project: <select id="meeting-entity"></select></span>' +
+          detailTranscribeHTML(meeting) +
         '</div>' +
         (meeting.summary ? '<div class="panel" style="margin-bottom:14px"><h3>Summary</h3>' + escapeHtml(meeting.summary) + '</div>' : '') +
         statsHTML(meeting) +
@@ -1143,6 +1180,19 @@
       picker.addEventListener('change', function () {
         window.setMeetingEntity(meeting.id, picker.value);
       });
+
+      var transcribe = root.querySelector('#detail-transcribe');
+      if (transcribe && !transcribe.disabled) {
+        transcribe.addEventListener('click', function () {
+          transcribe.disabled = true;
+          transcribe.textContent = 'Transcribing…';
+          window.transcribeEntry(meeting.id).catch(function (err) {
+            transcribe.disabled = false;
+            transcribe.textContent = 'Transcribe';
+            alert(err);
+          });
+        });
+      }
 
       root.querySelector('#detail-back').addEventListener('click', function () { showMeetingView('browse'); });
       root.querySelector('#turn-search').addEventListener('input', function (ev) {
@@ -1347,11 +1397,11 @@
 
     function openPeople() {
       showMeetingView('people');
-      document.getElementById('people-pane').innerHTML = '<div class="empty">Adding it up…</div>';
-      window.peopleStats().then(renderPeople).catch(function (e) {
-        document.getElementById('people-pane').innerHTML =
-          '<div class="empty">' + escapeHtml(String(e)) + '</div>';
-      });
+      showWaiting('people-pane', 'Adding it up…');
+      window.peopleStats().then(function (people) {
+        stopWaiting();
+        renderPeople(people);
+      }).catch(function (e) { showPaneError('people-pane', e); });
     }
 
     function renderPeople(people) {
@@ -1398,11 +1448,12 @@
       similarClips = [];
       pickedClips = {};
       showMeetingView('voices');
-      document.getElementById('voices-pane').innerHTML = '<div class="empty">Loading voices…</div>';
+      showWaiting('voices-pane', 'Loading voices…');
 
       var work = [window.voiceList()];
       if (namingRow) work.push(window.similarUnnamed(namingRow));
       Promise.all(work).then(function (results) {
+        stopWaiting();
         var list = results[0] || {};
         similarClips = results[1] || [];
         // Everything the naming form offers is pre-ticked: the query already
@@ -1410,6 +1461,12 @@
         // out is less work than ticking nine.
         similarClips.forEach(function (c) { pickedClips[c.row] = true; });
         renderVoices(list.voices || [], list.unnamed || []);
+      }).catch(function (err) {
+        // Without this the pane sat on "Loading voices…" forever whenever
+        // voiceList rejected -- the error only ever reached the webview
+        // console, where nobody looks. Whatever went wrong now says so on
+        // screen, which is the difference between a hang and a failure.
+        showPaneError('voices-pane', err);
       });
     }
 
