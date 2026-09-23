@@ -113,6 +113,30 @@ var knownModels = []asr.ModelSpec{
 			{URL: "https://huggingface.co/csukuangfj/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3/resolve/main/tokens.txt", Filename: "tokens.txt"},
 		},
 	},
+	{
+		Family:  "orukeet",
+		Variant: "v0.1.0-int8",
+		// Parakeet TDT 0.6B v3 with half the encoder's temporal depthwise
+		// filters replaced by frozen Gabor kernels, so it decodes through
+		// the same offline transducer path and the same 8193-token
+		// NeMo/Canary vocabulary (<blk> last, SentencePiece pieces) --
+		// auto-detect only, batch decode, exactly like parakeet.
+		SupportsLanguage:  false,
+		SupportsStreaming: false,
+		// Smaller than parakeet by more than a factor of three because the
+		// int8 encoder is self-contained: no external-data .weights sidecar
+		// to go missing.
+		Description: "Dictation, a third of parakeet's size \u00b7 25 languages \u00b7 ~0.7 GB",
+		Files: []asr.ModelFile{
+			// The repo's own sherpa-onnx export (onnx/sherpa-v0.1.0-int8),
+			// not the .nemo or .gguf builds: separate encoder/decoder/joiner
+			// plus tokens.txt is the only layout sherpa-onnx can load.
+			{URL: "https://huggingface.co/oruk/orukeet/resolve/main/onnx/sherpa-v0.1.0-int8/encoder.int8.onnx", Filename: "encoder.onnx"},
+			{URL: "https://huggingface.co/oruk/orukeet/resolve/main/onnx/sherpa-v0.1.0-int8/decoder.int8.onnx", Filename: "decoder.onnx"},
+			{URL: "https://huggingface.co/oruk/orukeet/resolve/main/onnx/sherpa-v0.1.0-int8/joiner.int8.onnx", Filename: "joiner.onnx"},
+			{URL: "https://huggingface.co/oruk/orukeet/resolve/main/onnx/sherpa-v0.1.0-int8/tokens.txt", Filename: "tokens.txt"},
+		},
+	},
 }
 
 // expandHome resolves a leading "~/" in a user-typed path. Settings holds

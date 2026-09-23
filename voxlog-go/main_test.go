@@ -625,3 +625,14 @@ func TestRenderTurnsUsesTextThatIsAlreadyDecoded(t *testing.T) {
 		t.Fatalf("got %q, want %q", got, want)
 	}
 }
+
+// A model can be listed for download with no engine behind it: the catalog
+// here and the switch in asr are separate lists, and the only sign of the
+// mistake is every dictation failing after a 700MB download.
+func TestKnownModelsAllHaveAnEngine(t *testing.T) {
+	for _, m := range knownModels {
+		if !asr.HasEngine(m.Family) {
+			t.Errorf("%s/%s is offered for download, but asr has no engine for family %q", m.Family, m.Variant, m.Family)
+		}
+	}
+}

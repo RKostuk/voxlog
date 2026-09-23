@@ -20,3 +20,14 @@ func TestNewTranscriberUnknownFamilyErrors(t *testing.T) {
 		t.Fatal("expected error for unknown family")
 	}
 }
+
+func TestHasEngineCoversEveryRoutedFamily(t *testing.T) {
+	for _, family := range []string{"whisper", "parakeet", "orukeet", "nemotron"} {
+		if !HasEngine(family) {
+			t.Errorf("HasEngine(%q) = false, but NewTranscriber routes it", family)
+		}
+	}
+	if HasEngine("gibberish") {
+		t.Error("HasEngine reports an engine for a family NewTranscriber would reject")
+	}
+}

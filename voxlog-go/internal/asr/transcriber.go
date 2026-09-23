@@ -40,14 +40,30 @@ func NewTranscriber(m ModelSpec, modelDir, language string) (Transcriber, error)
 		return nil, fmt.Errorf("model %s-%s not downloaded at %s", m.Family, m.Variant, modelDir)
 	}
 
-	switch m.Family {
-	case "whisper", "parakeet":
+	switch {
+	case offlineFamilies[m.Family]:
 		return newOfflineTranscriber(m, modelDir, language)
-	case "nemotron":
+	case onlineFamilies[m.Family]:
 		return newOnlineTranscriber(m, modelDir, language)
 	default:
 		return nil, fmt.Errorf("unknown model family %q", m.Family)
 	}
+}
+
+// offlineFamilies and onlineFamilies are the families each engine can load:
+// offline.go decodes a whole recording in one pass, online.go streams. They
+// are maps rather than switch cases so HasEngine can answer from the same
+// list NewTranscriber routes by -- main.go's download catalog is a separate
+// list, and a model offered there with no engine behind it looks like a
+// working download followed by every dictation failing.
+var (
+	offlineFamilies = map[string]bool{"whisper": true, "parakeet": true, "orukeet": true}
+	onlineFamilies  = map[string]bool{"nemotron": true}
+)
+
+// HasEngine reports whether NewTranscriber can build an engine for family.
+func HasEngine(family string) bool {
+	return offlineFamilies[family] || onlineFamilies[family]
 }
 
 func dirHasFiles(modelDir string, m ModelSpec) bool {

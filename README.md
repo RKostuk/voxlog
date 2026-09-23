@@ -164,7 +164,8 @@ claude mcp add --transport http voxlog http://127.0.0.1:51888/mcp \
 
 | Model | Size | Notes |
 |---|---|---|
-| `parakeet tdt-0.6b-v3` | ~2.5 GB | The one to use. 25 European languages including Ukrainian, detected automatically. |
+| `orukeet v0.1.0-int8` | ~0.7 GB | Parakeet with half its encoder's temporal filters replaced by frozen Gabor kernels. Same 25 languages, a third of the size, and it loads and decodes about three times faster here. |
+| `parakeet tdt-0.6b-v3` | ~2.5 GB | 25 European languages including Ukrainian, detected automatically. |
 | `whisper large-v3` | ~1.8 GB | As accurate on the same audio, noticeably slower to decode. Takes an explicit language. |
 | `nemotron streaming-320ms` | ~0.7 GB | The only one that can show text while you speak. Measurably less accurate: it substitutes words and truncates the last word of anything handed to it in pieces, which is inherent to a streaming model. |
 

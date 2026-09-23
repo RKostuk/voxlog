@@ -12,7 +12,7 @@ type Settings struct {
 	// auto-detect with no pinning API, so the Settings window forces this
 	// to "auto" for them rather than offering a control that does nothing.
 	Language     string `json:"language"`
-	ModelFamily  string `json:"model_family"`  // "whisper" | "parakeet" | "nemotron"
+	ModelFamily  string `json:"model_family"`  // "whisper" | "parakeet" | "orukeet" | "nemotron"
 	ModelVariant string `json:"model_variant"` // e.g. "base.en", "tdt-0.6b-v3"
 	DictateKeyID string `json:"dictate_key"`   // "vk:54" / "sym:shift_r" form
 	HistoryKeyID string `json:"history_key"`
