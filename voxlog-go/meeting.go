@@ -187,12 +187,28 @@ func (a *app) startMeeting() {
 
 	a.meeting = m
 	a.tray.startedMeeting(at)
+	a.warnAboutRecording()
 	if a.onMeetingState != nil {
 		a.onMeetingState(true)
 	}
 	log.Printf("meeting: recording to %s", micPath)
 
 	go a.models.warm(spec, asr.ModelDir(a.modelsDir, spec), cfg.Language)
+}
+
+// warnAboutRecording reminds the user to tell the other people on the call
+// that it is being recorded -- courtesy everywhere, and the law in some
+// places. The banner goes up as the recording starts, because that is the
+// only moment saying it is any use.
+//
+// Callers are responsible for firing this once per recording: startMeeting
+// runs once, and always-on goes through session.warnOnce.
+func (a *app) warnAboutRecording() {
+	if !a.store.Get().RecordingNotice {
+		return
+	}
+	// notify, not notifyPane: there is nothing in the window to show anyone.
+	notify("Recording started \u2014 let the others on the call know.")
 }
 
 // tickMeetingClock keeps the elapsed time in the menu bar moving.

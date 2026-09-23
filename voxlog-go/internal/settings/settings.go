@@ -77,13 +77,14 @@ type Settings struct {
 	// system side actually carried sound -- a take with nothing playing has
 	// exactly one speaker and nothing to separate.
 	SeparateSpeakers bool `json:"separate_speakers"`
-	// HistoryClickAction is what confirming an entry in the History pane
-	// does -- clicking its row, or selecting it with the arrow keys and
-	// pressing Enter: output.ModeNone, output.ModeCopy, or output.ModePaste,
-	// which puts the window away, hands focus back to the app it was opened
-	// from, and pastes there. A stored "paste_copy" is read as plain paste:
-	// it dates from the popover, and paste already leaves the clipboard as
-	// it found it.
+	// HistoryClickAction is what CLICKING an entry in the History pane does:
+	// output.ModeNone, output.ModeCopy, or output.ModePaste, which puts the
+	// window away, hands focus back to the app it was opened from, and pastes
+	// there. A stored "paste_copy" is read as plain paste: it dates from the
+	// popover, and paste already leaves the clipboard as it found it.
+	//
+	// Only a click. Picking a row with the arrow keys and pressing Enter is
+	// always a paste, whatever this says -- see pasteEntry in internal/ui.
 	HistoryClickAction string `json:"history_click_action"`
 	// HistoryRetention is how long transcripts are kept:
 	// "disabled" | "week" | "two_weeks" | "month" (see internal/history).
@@ -166,6 +167,12 @@ type Settings struct {
 	// transcribed. On by default, and nothing deletes it until the cleanup
 	// settings are turned on.
 	KeepMeetingAudio bool `json:"keep_meeting_audio"`
+	// RecordingNotice posts a banner when a meeting recording starts,
+	// reminding the user to tell the other people on the call that it is
+	// being recorded. On by default: telling them is basic courtesy
+	// everywhere and the law in some places, and the one moment it is worth
+	// saying is the moment the recording begins.
+	RecordingNotice bool `json:"recording_notice"`
 	// AudioRetention deletes recordings past a certain age:
 	// "disabled" (default) | "week" | "two_weeks" | "month". It shares its
 	// vocabulary with HistoryRetention but not its value -- transcripts are
@@ -283,6 +290,7 @@ func DefaultSettings() Settings {
 		// audio until the user turns on the cleanup settings in a later phase.
 		KeepDictationAudio: true,
 		KeepMeetingAudio:   true,
+		RecordingNotice:    true,
 		// Matches history.RetentionDisabled, spelled out as a literal so this
 		// package does not need to import internal/history.
 		AudioRetention: "disabled",

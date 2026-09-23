@@ -102,3 +102,28 @@ func TestTaskSettingsLiveInTheTasksPane(t *testing.T) {
 		}
 	}
 }
+
+// A checkbox only reaches Go if it is in the payload the pane sends:
+// saveSettings takes the whole settings struct, so a field left out of the
+// payload is a field quietly set back to false on every save -- which is
+// invisible until the day somebody notices their switch keeps turning
+// itself off.
+func assertSwitchRoundTrips(t *testing.T, body string, keys ...string) {
+	t.Helper()
+	for _, key := range keys {
+		if !strings.Contains(body, key+": document.getElementById('"+key+"').checked") {
+			t.Errorf("%s is never collected, so saving would clear it", key)
+		}
+		if !strings.Contains(body, "document.getElementById('"+key+"').checked = ") {
+			t.Errorf("%s is never loaded back into the form", key)
+		}
+	}
+}
+
+func TestTheRecordingNoticeSwitchIsSavedAndLoaded(t *testing.T) {
+	frag, err := assets.ReadFile("assets/settings-pane.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertSwitchRoundTrips(t, string(frag), "recording_notice")
+}

@@ -88,6 +88,12 @@ type session struct {
 	confirmed bool
 	// stopTicker ends the goroutine that keeps the menu bar clock moving.
 	stopTicker chan struct{}
+	// warned is set once the "tell them they are being recorded" banner has
+	// been posted for this session. A session becomes a conversation exactly
+	// once, but promote() is called on every far-end segment, so without this
+	// the reminder would arrive over and over for as long as the other side
+	// keeps talking.
+	warned bool
 
 	// voices are the distinct speakers heard so far, as running centroids.
 	// This is the live version of what the diarizer does after the fact --
@@ -256,6 +262,18 @@ func (s *session) promote() {
 	s.mu.Lock()
 	s.kind = sessionMeeting
 	s.mu.Unlock()
+}
+
+// warnOnce reports whether this is the first time anybody has asked to warn
+// about this session, and remembers that they did.
+func (s *session) warnOnce() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.warned {
+		return false
+	}
+	s.warned = true
+	return true
 }
 
 // isConfirmed reports whether anything in this recording has passed the

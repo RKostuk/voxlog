@@ -377,6 +377,9 @@ func (a *app) handleMicSegments(segments []vad.Segment) {
 		// The reason is logged by escalateLocked, which has the numbers.
 		if sess.noteVoice(embed, seg.Seconds()) {
 			a.noteSessionKind(sessionMeeting)
+			if sess.warnOnce() {
+				a.warnAboutRecording()
+			}
 		}
 	}
 }
@@ -398,6 +401,12 @@ func (a *app) handleFarSegments(segments []vad.Segment) {
 		if sess.noteFarEnd(seg.Seconds()) {
 			log.Print("always-on: the far end is talking -- this is a conversation")
 			a.noteSessionKind(sessionMeeting)
+		}
+		// Outside the escalation branch: a session opened as a conversation
+		// by openSessionIfIdle above never escalates, because it was one from
+		// its first sample. warnOnce is what keeps this to a single banner.
+		if sess.warnOnce() {
+			a.warnAboutRecording()
 		}
 	}
 }

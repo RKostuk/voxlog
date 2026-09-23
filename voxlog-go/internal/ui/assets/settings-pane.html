@@ -351,6 +351,12 @@
           </select>
         </div>
         <div class="item">
+          <div class="title">Remind me to tell the others
+            <div class="subtext">A banner when a recording starts &middot; courtesy everywhere, the law in some places</div>
+          </div>
+          <input type="checkbox" class="switch" id="recording_notice">
+        </div>
+        <div class="item">
           <div class="title">Keep meeting recordings
             <div class="subtext">About 115 MB per hour, beside the transcripts</div>
           </div>
@@ -1274,6 +1280,7 @@
         dictate_activation: document.getElementById('dictate_activation').value,
         meeting_transcribe: document.getElementById('meeting_transcribe').value,
         backfill_turns: document.getElementById('backfill_turns').value,
+        recording_notice: document.getElementById('recording_notice').checked,
         keep_meeting_audio: document.getElementById('keep_meeting_audio').checked,
         keep_dictation_audio: document.getElementById('keep_dictation_audio').checked,
         input_device: document.getElementById('input_device').value,
@@ -1645,6 +1652,7 @@
       document.getElementById('dictate_activation').value = settings.dictate_activation || 'toggle';
       document.getElementById('meeting_transcribe').value = settings.meeting_transcribe || 'stop';
       document.getElementById('backfill_turns').value = settings.backfill_turns || 'idle';
+      document.getElementById('recording_notice').checked = settings.recording_notice !== false;
       document.getElementById('keep_meeting_audio').checked = settings.keep_meeting_audio !== false;
       document.getElementById('keep_dictation_audio').checked = settings.keep_dictation_audio !== false;
       document.getElementById('audio_retention').value = settings.audio_retention || 'disabled';
