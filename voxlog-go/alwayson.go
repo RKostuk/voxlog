@@ -177,6 +177,10 @@ type alwaysOn struct {
 	// that waits for the worker to drain -- which deadlocks. This flag lives
 	// under listen.mu with everything else the worker touches.
 	yielded bool
+	// wake nudges the supervisor between its own ticks. Buffered by one and
+	// sent to without blocking: it is a "look again now", and two of them
+	// pending mean the same thing as one.
+	wake chan struct{}
 	// fetching guards the one-at-a-time download of the VAD model.
 	fetching bool
 	// sweptAt is when retention last ran over auto recordings.
@@ -187,12 +191,39 @@ type alwaysOn struct {
 // always running; whether it opens the microphone depends on the setting,
 // the pause switch, the frontmost app, and what else is recording.
 func (a *app) startAlwaysOn() {
+	a.listen.mu.Lock()
+	a.listen.wake = make(chan struct{}, 1)
+	wake := a.listen.wake
+	a.listen.mu.Unlock()
+
 	go func() {
 		for {
 			a.tickAlwaysOn()
-			time.Sleep(listenPollInterval)
+			// A dictation handing the microphone back is worth acting on
+			// now. Waiting for the next tick meant the room was not being
+			// listened to for as long as two seconds after the user
+			// finished dictating -- which is exactly when they carry on
+			// talking.
+			select {
+			case <-wake:
+			case <-time.After(listenPollInterval):
+			}
 		}
 	}()
+}
+
+// nudge asks the supervisor to take another look immediately.
+func (l *alwaysOn) nudge() {
+	l.mu.Lock()
+	wake := l.wake
+	l.mu.Unlock()
+	if wake == nil {
+		return
+	}
+	select {
+	case wake <- struct{}{}:
+	default:
+	}
 }
 
 // tickAlwaysOn is one pass of the supervisor.
@@ -288,6 +319,17 @@ func (a *app) startListening(cfg settings.Settings) {
 	if already {
 		return
 	}
+
+	// Timed, because how long this takes is the difference between
+	// always-on being back the moment a dictation ends and it being deaf
+	// for another ten seconds. Loading the gate's model and opening the
+	// device are the two candidates, and only a live run can say which.
+	started := time.Now()
+	defer func() {
+		if slow := time.Since(started); slow > time.Second {
+			log.Printf("DEBUG always-on: took %v to start listening", slow.Round(time.Millisecond))
+		}
+	}()
 
 	gate, err := vad.New(asr.ModelDir(a.modelsDir, vad.Spec), vad.DefaultConfig())
 	if err != nil {
@@ -1305,13 +1347,17 @@ func (a *app) yieldMicToUser() {
 	a.stopListening()
 }
 
-// reclaimMic lets always-on have the microphone back. Listening resumes on
-// the supervisor's next tick rather than here: the dictation's own recorder
-// is still being torn down, and racing it for the device buys nothing.
+// reclaimMic lets always-on have the microphone back.
+//
+// Listening is not restarted here -- the dictation's own recorder is still
+// being torn down, and racing it for the device buys nothing -- but the
+// supervisor is woken so that it happens on the next instant rather than on
+// the next tick.
 func (a *app) reclaimMic() {
 	a.listen.mu.Lock()
 	a.listen.yielded = false
 	a.listen.mu.Unlock()
+	a.listen.nudge()
 }
 
 func (l *alwaysOn) isYielded() bool {

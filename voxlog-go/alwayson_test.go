@@ -797,3 +797,36 @@ func TestAnEmptyRecordingHasNoDuration(t *testing.T) {
 		t.Fatalf("a missing recording reads back as %.1fs", got)
 	}
 }
+
+// Handing the microphone back has to be acted on now, not on the
+// supervisor's own schedule: the two seconds after a dictation ends are
+// exactly when the user carries on talking.
+func TestGivingTheMicrophoneBackWakesTheSupervisor(t *testing.T) {
+	a := &app{}
+	a.listen.wake = make(chan struct{}, 1)
+	a.listen.yielded = true
+
+	a.reclaimMic()
+	if a.listen.isYielded() {
+		t.Fatal("the microphone was not handed back")
+	}
+	select {
+	case <-a.listen.wake:
+	default:
+		t.Fatal("the supervisor was left to find out on its next tick")
+	}
+}
+
+// A nudge with nobody listening for it must not block, and two of them are
+// the same request.
+func TestNudgingIsSafeAndIdempotent(t *testing.T) {
+	var l alwaysOn
+	l.nudge() // no channel yet: startAlwaysOn has not run
+
+	l.wake = make(chan struct{}, 1)
+	l.nudge()
+	l.nudge()
+	if len(l.wake) != 1 {
+		t.Fatalf("two nudges queued %d wake-ups, want one", len(l.wake))
+	}
+}
