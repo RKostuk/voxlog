@@ -1054,7 +1054,14 @@ func runMainWindow(pane string, store *history.Store, meetings *history.MeetingS
 	})
 
 	w.Bind("saveSettings", func(v settings.Settings) error {
-		return cfgStore.Set(v)
+		if err := cfgStore.Set(v); err != nil {
+			return err
+		}
+		// Tell the app. Most settings are read when they are next needed, so
+		// nothing had to know before -- but a switch that starts and stops a
+		// listener cannot wait to be noticed.
+		settingsApplied(v)
+		return nil
 	})
 
 	// revealModels opens the models directory in Finder, so downloaded
@@ -1324,6 +1331,7 @@ func runMainWindow(pane string, store *history.Store, meetings *history.MeetingS
 	// Everything the meeting screen and the Voices pane need -- opening one
 	// meeting, filing it under a project, and naming the voices in it.
 	bindMeetings(w, store, meetings, tasks)
+	bindMCP(w)
 
 	// setTaskStatus backs the Tasks pane's status control -- cycling a task
 	// through To do/In progress/Blocked/Done. Marking a task Done cancels its

@@ -216,6 +216,24 @@ func scanMeeting(row rowScanner) (Meeting, error) {
 	return m, nil
 }
 
+// Get returns the meeting that started at start. The window never needed
+// this -- it already had the row it was showing -- but a caller that is
+// handed only an id does.
+func (s *MeetingStore) Get(start time.Time) (Meeting, error) {
+	db, err := s.open()
+	if err != nil {
+		return Meeting{}, err
+	}
+	m, err := scanMeeting(db.sql.QueryRow(selectMeetingSQL+" WHERE start_ns = ?", start.UnixNano()))
+	if errors.Is(err, sql.ErrNoRows) {
+		return Meeting{}, fmt.Errorf("history: no meeting at %s", start.Format(time.RFC3339Nano))
+	}
+	if err != nil {
+		return Meeting{}, fmt.Errorf("history: reading meeting: %w", err)
+	}
+	return m, nil
+}
+
 // All returns every meeting, newest first.
 func (s *MeetingStore) All() ([]Meeting, error) {
 	db, err := s.open()

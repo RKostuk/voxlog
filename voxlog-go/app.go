@@ -10,6 +10,7 @@ import (
 	"voxlog-go/internal/asr"
 	"voxlog-go/internal/history"
 	"voxlog-go/internal/llm"
+	"voxlog-go/internal/mcp"
 	"voxlog-go/internal/settings"
 	"voxlog-go/internal/task"
 	"voxlog-go/internal/ui"
@@ -53,6 +54,14 @@ type app struct {
 	// onMeetingState shows or hides the tray's "Stop meeting recording" item.
 	// A menu entry that does nothing most of the time is worse than no entry.
 	onMeetingState func(running bool)
+
+	// The MCP server, and whether it is up. Its own lock: it is started and
+	// stopped from the settings pane, which has nothing to do with the
+	// recording slots mu guards. Nil when the feature is off -- that is the
+	// whole of what a disabled server costs.
+	mcpMu  sync.Mutex
+	mcpSrv *mcp.Server
+	mcpErr string
 }
 
 func newApp(store *settings.Store, hist *history.Store, meetings *history.MeetingStore, tasks *task.Store, modelsDir string, overlay *ui.Overlay) *app {

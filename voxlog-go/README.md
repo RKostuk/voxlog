@@ -107,6 +107,16 @@ with every downloaded model, showing what each made of it and how long it
 took, load time reported separately from decode time. Nothing is written to
 history. Needs at least two downloaded models to be worth anything.
 
+**Letting an LLM read it.** Settings has an MCP section that serves notes,
+meetings and tasks to a client on this machine over the Model Context
+Protocol. Off until you turn it on; when it is on it listens on 127.0.0.1
+only, behind a token, and the pane hands you the one-line command to paste
+into Claude Code. The port it was given is remembered, so a client
+configured once keeps working after a restart. It reads by default — the
+tools that add or move a task appear only if you turn on the second switch,
+and nothing else about the app can be written from outside it. Transcripts
+go out; the paths of the recordings behind them do not.
+
 ## Models
 
 | Model | Size | Notes |

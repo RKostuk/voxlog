@@ -1090,6 +1090,14 @@ func onReady(store *settings.Store, histStore *history.Store, meetStore *history
 	// clicked the instant it fires has somewhere to go.
 	task.RescheduleAll(a.tasks)
 
+	// The MCP server, if it is turned on. Installed before it is first
+	// applied so a save that arrives while the window is open reaches the
+	// same code path as this startup call.
+	ui.SetSettingsAppliedFunc(a.applyMCP)
+	ui.SetMCPStatusFunc(a.mcpStatus)
+	ui.SetMCPRegenerateFunc(a.regenerateMCPToken)
+	a.applyMCP(store.Get())
+
 	// Always-on listening. The supervisor runs for the life of the app and
 	// decides on each tick whether the microphone should be open at all --
 	// the setting, the pause switch, the frontmost app and whatever else is

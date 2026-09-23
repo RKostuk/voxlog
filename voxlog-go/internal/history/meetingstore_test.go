@@ -232,3 +232,29 @@ func TestAllToleratesAMissingDirectoryAndStrayFiles(t *testing.T) {
 		t.Fatalf("got %d meetings, want the one real meeting kept", len(got))
 	}
 }
+
+func TestGetReturnsTheStoredMeeting(t *testing.T) {
+	s := NewMeetingStore(t.TempDir())
+	at := time.Date(2026, 9, 1, 10, 0, 0, 0, time.Local)
+	seedMeeting(t, s, at)
+
+	m, err := s.Get(at)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !m.Start.Equal(at) {
+		t.Fatalf("got a meeting starting %v, want %v", m.Start, at)
+	}
+	if m.RecordingSeconds != 300 {
+		t.Fatalf("got %v recording seconds, want the seeded 300", m.RecordingSeconds)
+	}
+}
+
+func TestGetOnAMissingMeetingErrors(t *testing.T) {
+	s := NewMeetingStore(t.TempDir())
+	at := time.Date(2026, 9, 1, 10, 0, 0, 0, time.Local)
+
+	if _, err := s.Get(at); err == nil {
+		t.Fatal("reading a meeting that was never recorded returned no error")
+	}
+}

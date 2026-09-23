@@ -25,6 +25,14 @@
       <path d="M4.6 4.6a10.4 10.4 0 0 0 0 14.8M19.4 19.4a10.4 10.4 0 0 0 0-14.8"/>
     </g>
     <g id="ic-tasks">
+      <path d="M4 6.6l1.9 1.9L9.4 5M4 16.6l1.9 1.9L9.4 15"/>
+      <path d="M12.6 7.2h7.8M12.6 17.2h7.8"/>
+    </g>
+    <g id="ic-plug">
+      <path d="M9 3.2v5M15 3.2v5"/>
+      <path d="M6.2 8.2h11.6v3a5.8 5.8 0 0 1-11.6 0z"/>
+      <path d="M12 16.8v4"/>
+    </g>
     <g id="ic-llm">
       <path d="M12 3.5l2.1 4.4 4.8.6-3.5 3.3.9 4.8L12 14.3l-4.3 2.3.9-4.8-3.5-3.3 4.8-.6z"/>
     </g>
@@ -53,6 +61,9 @@
         </button>
         <button type="button" class="subnav-item" role="tab" data-subpane="history" aria-selected="false">
           <span class="glyph i-history"><svg viewBox="0 0 24 24"><use href="#ic-clock"/></svg></span>History
+        </button>
+        <button type="button" class="subnav-item" role="tab" data-subpane="mcp" aria-selected="false">
+          <span class="glyph i-mcp"><svg viewBox="0 0 24 24"><use href="#ic-plug"/></svg></span>MCP
         </button>
         <button type="button" class="subnav-item" role="tab" data-subpane="advanced" aria-selected="false">
           <span class="glyph i-advanced"><svg viewBox="0 0 24 24"><use href="#ic-sliders"/></svg></span>Advanced
@@ -603,6 +614,73 @@
             <button type="button" id="transcripts_dir_btn">Change&hellip;</button>
             <button type="button" id="transcripts_dir_reset">Default</button>
           </div>
+        </div>
+      </div>
+    </div>
+      </div>
+
+      <div class="subpane" data-subpane="mcp">
+        <div class="subpane-title">MCP</div>
+    <!-- The one way anything outside Voxlog can read what is in it. Off by
+         default, loopback only, and behind a token: an LLM client on this
+         machine can ask for notes, meetings and tasks, and nothing else
+         can. -->
+    <div class="group">
+      <div class="card">
+        <div class="item">
+          <div class="title">Let an LLM client read Voxlog
+            <div class="subtext">A local server on 127.0.0.1 &middot; notes, meetings and tasks &middot; nothing leaves this machine</div>
+          </div>
+          <input type="checkbox" class="switch" id="mcp_enabled">
+        </div>
+        <div class="item">
+          <div class="title">Status</div>
+          <span id="mcp-status" class="pill-bad">Off</span>
+        </div>
+        <div class="item stacked" id="mcp-address-row" hidden>
+          <div class="title">Address</div>
+          <div style="display:flex; align-items:center; gap:8px;">
+            <span class="mono-field" id="mcp-url"></span>
+            <button type="button" id="mcp-copy-url">Copy</button>
+          </div>
+        </div>
+        <div class="item">
+          <div class="title">Let it add and update tasks
+            <div class="subtext">Adds create_task and update_task_status &middot; everything else stays read-only</div>
+          </div>
+          <input type="checkbox" class="switch" id="mcp_allow_write">
+        </div>
+      </div>
+    </div>
+
+    <div class="group" id="mcp-connect" hidden>
+      <div class="group-title">Connect</div>
+      <div class="card">
+        <div class="item stacked">
+          <div class="title">Claude Code
+            <div class="subtext">Run this in a terminal, once</div>
+          </div>
+          <div style="display:flex; align-items:center; gap:8px;">
+            <span class="mono-field" id="mcp-cmd-code"></span>
+            <button type="button" id="mcp-copy-code">Copy</button>
+          </div>
+        </div>
+        <div class="item stacked">
+          <div class="title">Claude Desktop
+            <div class="subtext">Add this to the mcpServers block of its config &middot; it speaks stdio, so mcp-remote bridges the two</div>
+          </div>
+          <div style="display:flex; align-items:center; gap:8px;">
+            <span class="mono-field" id="mcp-cmd-desktop"></span>
+            <button type="button" id="mcp-copy-desktop">Copy</button>
+          </div>
+        </div>
+        <div class="item">
+          <div class="title">Token
+            <div class="subtext">Copy buttons above carry it &middot; regenerating locks out every client until it is added again</div>
+          </div>
+          <span class="mono-field" id="mcp-token">&bull;&bull;&bull;&bull;</span>
+          <button type="button" id="mcp-show-token">Show</button>
+          <button type="button" id="mcp-regen-token">Regenerate</button>
         </div>
       </div>
     </div>
@@ -1280,6 +1358,8 @@
         dictate_activation: document.getElementById('dictate_activation').value,
         meeting_transcribe: document.getElementById('meeting_transcribe').value,
         backfill_turns: document.getElementById('backfill_turns').value,
+        mcp_enabled: document.getElementById('mcp_enabled').checked,
+        mcp_allow_write: document.getElementById('mcp_allow_write').checked,
         recording_notice: document.getElementById('recording_notice').checked,
         keep_meeting_audio: document.getElementById('keep_meeting_audio').checked,
         keep_dictation_audio: document.getElementById('keep_dictation_audio').checked,
@@ -1596,6 +1676,110 @@
         p.classList.toggle('on', p.dataset.subpane === pane);
       });
       document.getElementById('settings-subcontent').scrollTop = 0;
+      // The MCP pane is the only one showing live state, so it is the only
+      // one that polls -- and only while it is the pane on screen.
+      setMCPPolling(pane === 'mcp');
+    });
+
+    // ---------------- MCP ----------------
+    // The server's state lives in the app, not in the settings file: whether
+    // it actually came up, on which port, and behind which token. So this
+    // pane asks, rather than rendering what was saved.
+    var mcpPoll = null;
+    var mcpToken = '';
+    var mcpTokenShown = false;
+
+    function setMCPPolling(on) {
+      if (on && !mcpPoll) {
+        refreshMCP();
+        mcpPoll = setInterval(refreshMCP, 2000);
+      } else if (!on && mcpPoll) {
+        clearInterval(mcpPoll);
+        mcpPoll = null;
+      }
+    }
+
+    function refreshMCP() {
+      if (!window.mcpStatus) return;
+      window.mcpStatus().then(renderMCP).catch(function (err) {
+        console.log('mcpStatus failed: ' + err);
+      });
+    }
+
+    function mcpCommands(url, token) {
+      return {
+        code: 'claude mcp add --transport http voxlog ' + url +
+              ' --header "Authorization: Bearer ' + token + '"',
+        desktop: '"voxlog": { "command": "npx", "args": ["-y", "mcp-remote", "' + url +
+                 '", "--header", "Authorization: Bearer ' + token + '"] }'
+      };
+    }
+
+    function renderMCP(status) {
+      status = status || {};
+      var pill = document.getElementById('mcp-status');
+      if (status.error) {
+        pill.textContent = 'Failed: ' + status.error;
+        pill.className = 'pill-bad';
+      } else if (status.running) {
+        pill.textContent = 'Running on 127.0.0.1:' + status.port;
+        pill.className = 'pill-ok';
+      } else {
+        pill.textContent = 'Off';
+        pill.className = 'pill-bad';
+      }
+
+      var up = !!status.running;
+      document.getElementById('mcp-address-row').hidden = !up;
+      document.getElementById('mcp-connect').hidden = !up;
+      if (!up) return;
+
+      mcpToken = status.token || '';
+      document.getElementById('mcp-url').textContent = status.url || '';
+      var cmds = mcpCommands(status.url || '', mcpToken);
+      // The snippets carry the token in full: their whole purpose is to be
+      // pasted somewhere and work. Only the token's own field is masked,
+      // which is the one a shoulder reads.
+      document.getElementById('mcp-cmd-code').textContent = cmds.code;
+      document.getElementById('mcp-cmd-desktop').textContent = cmds.desktop;
+      document.getElementById('mcp-token').textContent =
+        mcpTokenShown ? mcpToken : '\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022';
+      document.getElementById('mcp-show-token').textContent = mcpTokenShown ? 'Hide' : 'Show';
+    }
+
+    function copyToClipboard(text) {
+      if (window.copyText) window.copyText(text);
+    }
+
+    document.getElementById('mcp-copy-url').addEventListener('click', function () {
+      copyToClipboard(document.getElementById('mcp-url').textContent);
+    });
+    document.getElementById('mcp-copy-code').addEventListener('click', function () {
+      copyToClipboard(document.getElementById('mcp-cmd-code').textContent);
+    });
+    document.getElementById('mcp-copy-desktop').addEventListener('click', function () {
+      copyToClipboard(document.getElementById('mcp-cmd-desktop').textContent);
+    });
+    // The switch saves through the form's own change listener, which starts
+    // or stops the listener in the app. Ask again straight after, so the
+    // status does not sit stale for up to a poll interval.
+    document.getElementById('mcp_enabled').addEventListener('change', function () {
+      setTimeout(refreshMCP, 250);
+    });
+
+    document.getElementById('mcp-show-token').addEventListener('click', function () {
+      mcpTokenShown = !mcpTokenShown;
+      refreshMCP();
+    });
+    document.getElementById('mcp-regen-token').addEventListener('click', function () {
+      if (!window.mcpRegenerateToken) return;
+      window.mcpRegenerateToken().then(function () {
+        refreshMCP();
+      }).catch(function (err) {
+        var pill = document.getElementById('mcp-status');
+        pill.textContent = 'Could not issue a new token: ' + err;
+        pill.className = 'pill-bad';
+      });
     });
 
     document.getElementById('form').addEventListener('change', save);
@@ -1652,6 +1836,8 @@
       document.getElementById('dictate_activation').value = settings.dictate_activation || 'toggle';
       document.getElementById('meeting_transcribe').value = settings.meeting_transcribe || 'stop';
       document.getElementById('backfill_turns').value = settings.backfill_turns || 'idle';
+      document.getElementById('mcp_enabled').checked = !!settings.mcp_enabled;
+      document.getElementById('mcp_allow_write').checked = !!settings.mcp_allow_write;
       document.getElementById('recording_notice').checked = settings.recording_notice !== false;
       document.getElementById('keep_meeting_audio').checked = settings.keep_meeting_audio !== false;
       document.getElementById('keep_dictation_audio').checked = settings.keep_dictation_audio !== false;

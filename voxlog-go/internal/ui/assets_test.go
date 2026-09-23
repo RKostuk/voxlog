@@ -67,7 +67,7 @@ func TestSettingsFragmentDoesNotFightTheShellNav(t *testing.T) {
 	if !strings.Contains(body, `id="settings-pane"`) {
 		t.Error("the fragment needs a single root element with id settings-pane")
 	}
-	for _, subpane := range []string{"dictation", "model", "audio", "meetings", "history", "advanced"} {
+	for _, subpane := range []string{"dictation", "model", "llm", "audio", "meetings", "listening", "tasks", "history", "mcp", "advanced"} {
 		if !strings.Contains(body, `data-subpane="`+subpane+`"`) {
 			t.Errorf("the %s category did not survive the move", subpane)
 		}
@@ -103,6 +103,32 @@ func TestTaskSettingsLiveInTheTasksPane(t *testing.T) {
 	}
 }
 
+// The MCP pane is the one place the server is turned on, addressed and
+// explained. Advanced is where a switch like this would drift to, and the
+// slice below is what stops it: everything the pane owns has to be inside
+// the pane.
+func TestMCPSettingsLiveInTheirOwnPane(t *testing.T) {
+	frag, err := assets.ReadFile("assets/settings-pane.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := string(frag)
+	mcp := body[strings.Index(body, `class="subpane" data-subpane="mcp"`):]
+	mcp = mcp[:strings.Index(mcp, `class="subpane" data-subpane="advanced"`)]
+	for _, id := range []string{`id="mcp_enabled"`, `id="mcp_allow_write"`, `id="mcp-status"`, `id="mcp-url"`, `id="mcp-regen-token"`} {
+		if !strings.Contains(mcp, id) {
+			t.Errorf("%s should live in the MCP pane", id)
+		}
+	}
+
+	advanced := body[strings.Index(body, `class="subpane" data-subpane="advanced"`):]
+	for _, id := range []string{`id="mcp_enabled"`, `id="mcp-url"`} {
+		if strings.Contains(advanced, id) {
+			t.Errorf("%s is the MCP pane's, not Advanced's", id)
+		}
+	}
+}
+
 // A checkbox only reaches Go if it is in the payload the pane sends:
 // saveSettings takes the whole settings struct, so a field left out of the
 // payload is a field quietly set back to false on every save -- which is
@@ -126,4 +152,12 @@ func TestTheRecordingNoticeSwitchIsSavedAndLoaded(t *testing.T) {
 		t.Fatal(err)
 	}
 	assertSwitchRoundTrips(t, string(frag), "recording_notice")
+}
+
+func TestTheMCPSwitchesAreSavedAndLoaded(t *testing.T) {
+	frag, err := assets.ReadFile("assets/settings-pane.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertSwitchRoundTrips(t, string(frag), "mcp_enabled", "mcp_allow_write")
 }

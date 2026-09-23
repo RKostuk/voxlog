@@ -123,6 +123,22 @@ type Settings struct {
 	// way to notice a call where the other side speaks first and the user
 	// says nothing for two minutes.
 	AlwaysOnSystemAudio string `json:"always_on_system_audio"`
+	// MCPEnabled runs a small MCP server on loopback, so an LLM client can
+	// read notes, meetings and tasks. Off by default: nothing about this app
+	// is reachable from outside it until the user says so.
+	MCPEnabled bool `json:"mcp_enabled"`
+	// MCPPort is the port that server listens on. Zero means "not chosen
+	// yet": the first start binds :0, takes whatever the kernel hands out,
+	// and stores it here, because an MCP client is configured once and has
+	// to find the same address after a restart. A fixed default port was
+	// rejected on both counts -- it collides with whatever else the machine
+	// runs, and a predictable address is half of a guessed one.
+	MCPPort int `json:"mcp_port"`
+	// MCPAllowWrite adds the two task-writing tools (create_task,
+	// update_task_status) to what the server offers. Off by default, and
+	// enforced where the tool list is built, so a read-only install has no
+	// write tool to call rather than one that refuses.
+	MCPAllowWrite bool `json:"mcp_allow_write"`
 	// Version is the settings-file version, for migrating a default that
 	// turned out to be wrong (see migrate). Same idea as the database's
 	// PRAGMA user_version, and for the same reason: "this field is at its
