@@ -220,3 +220,26 @@ func TestTapChoiceSurvivesOnceTheFileIsVersioned(t *testing.T) {
 		t.Fatalf("always_on_system_audio = %q, want the stored choice %q", got.AlwaysOnSystemAudio, AlwaysOnTapSession)
 	}
 }
+
+// Summarizing used to be implied by task_hub_enabled, so a settings file
+// written before these fields existed must still summarize: reading a
+// missing summary_enabled as "off" would turn the feature off for everyone
+// who already had it.
+func TestSummarizingStaysOnForAFileThatPredatesIt(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "settings.json")
+	if err := os.WriteFile(path, []byte(`{"task_hub_enabled":true}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	got := NewStore(path).Get()
+	if !got.SummaryEnabled {
+		t.Error("SummaryEnabled is off for a file written before it existed")
+	}
+	if got.SummaryLength != SummaryNormal {
+		t.Errorf("SummaryLength = %q, want %q", got.SummaryLength, SummaryNormal)
+	}
+	if got.SummaryPromptExtra != "" {
+		t.Errorf("SummaryPromptExtra = %q, want empty", got.SummaryPromptExtra)
+	}
+}

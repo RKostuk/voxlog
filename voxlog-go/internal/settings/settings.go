@@ -216,6 +216,20 @@ type Settings struct {
 	// misrecognized name here only affects future classification, nothing is
 	// rewritten retroactively.
 	EntityDictionary []string `json:"entity_dictionary"`
+	// SummaryEnabled is whether a finished meeting gets a summary written
+	// for it. Split out of TaskHubEnabled, which used to imply it: finding
+	// tasks and writing a paragraph about the call are separate wants, and a
+	// user who only wanted one had to take both.
+	SummaryEnabled bool `json:"summary_enabled"`
+	// SummaryLength is how much summary to ask for:
+	// SummaryBrief | SummaryNormal | SummaryDetailed.
+	SummaryLength string `json:"summary_length"`
+	// SummaryPromptExtra is the user's own instructions for the summarizer,
+	// from Settings > LLM model. Appended to the built-in prompt, never a
+	// replacement for it: the reply's shape is read back by the app (see
+	// llm.Summarize), so a prompt that could drop the format could also drop
+	// the project line and the sentences along with it.
+	SummaryPromptExtra string `json:"summary_prompt_extra"`
 	// EntityDictionarySeeded records that the one-time seeding of
 	// EntityDictionary from already-classified tasks has run. Without it the
 	// Settings pane re-adds every entity it finds on every open, resurrecting
@@ -244,6 +258,13 @@ const (
 const (
 	ActivationToggle = "toggle"
 	ActivationHold   = "hold"
+)
+
+// How much of a summary to ask the model for.
+const (
+	SummaryBrief    = "brief"
+	SummaryNormal   = "normal"
+	SummaryDetailed = "detailed"
 )
 
 // Meeting transcription timing.
@@ -312,6 +333,11 @@ func DefaultSettings() Settings {
 		AudioRetention: "disabled",
 		AudioMaxGB:     0,
 		BackfillTurns:  BackfillIdle,
+		// True, with no extra instructions: this is what Task Hub already did
+		// on its own, so an existing install behaves exactly as it did and
+		// only gains a switch to turn it off.
+		SummaryEnabled: true,
+		SummaryLength:  SummaryNormal,
 	}
 }
 

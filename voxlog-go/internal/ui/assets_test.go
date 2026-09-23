@@ -96,6 +96,14 @@ func TestTaskSettingsLiveInTheTasksPane(t *testing.T) {
 	if !strings.Contains(llm, `id="llm-model"`) {
 		t.Error("the LLM pane still owns the model download")
 	}
+	// Summarization is the other thing that model is for, so its controls
+	// belong beside it rather than in Advanced, where a switch like this
+	// drifts to.
+	for _, id := range []string{`id="summary_enabled"`, `id="summary_length"`, `id="summary_prompt_extra"`, `id="summary_prompt_reset"`} {
+		if !strings.Contains(llm, id) {
+			t.Errorf("%s should live in the LLM pane", id)
+		}
+	}
 	for _, id := range []string{`id="entity-dict-list"`, `id="rejected-list"`} {
 		if strings.Contains(llm, id) {
 			t.Errorf("%s is about tasks, not about the model", id)

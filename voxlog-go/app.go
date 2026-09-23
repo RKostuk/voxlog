@@ -221,7 +221,7 @@ func (a *app) classifyForTasks(sourceKind, sourceKey, text string) {
 // classification, so one failing doesn't hold up the other.
 func (a *app) summarizeMeeting(start time.Time, text string) {
 	cfg := a.store.Get()
-	if !cfg.TaskHubEnabled {
+	if !cfg.TaskHubEnabled || !cfg.SummaryEnabled {
 		return
 	}
 	if !asr.IsDownloaded(a.modelsDir, llm.Spec) {
@@ -231,7 +231,10 @@ func (a *app) summarizeMeeting(start time.Time, text string) {
 
 	entities := a.entityNames(cfg)
 	modelDir := asr.ModelDir(a.modelsDir, llm.Spec)
-	summary, err := a.llm.Summarize(modelDir, text, entities)
+	summary, err := a.llm.Summarize(modelDir, text, entities, llm.SummaryOptions{
+		Length: cfg.SummaryLength,
+		Extra:  cfg.SummaryPromptExtra,
+	})
 	if err != nil {
 		log.Printf("meeting summarize: %v", err)
 		return

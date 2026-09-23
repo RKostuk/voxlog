@@ -293,6 +293,41 @@
       </div>
     </div>
 
+    <!-- Summarization is the other half of what the local model is for, and
+         until now it had no controls at all: it ran whenever Task Hub was on,
+         always at the same length, always with the same prompt. -->
+    <div class="group">
+      <div class="group-title">Summarization</div>
+      <div class="card">
+        <div class="item stacked">
+          <div class="title">Summarize finished meetings
+            <div class="subtext">Writes a short summary under each meeting once its transcript lands.
+              Needs the model above; nothing is summarized while Task Hub is off.</div>
+          </div>
+          <input type="checkbox" class="switch" id="summary_enabled">
+        </div>
+        <div class="item">
+          <div class="title">Length</div>
+          <select id="summary_length">
+            <option value="brief">Brief &mdash; a sentence or two</option>
+            <option value="normal">Normal &mdash; two or three sentences</option>
+            <option value="detailed">Detailed &mdash; decisions and open questions</option>
+          </select>
+        </div>
+        <div class="item stacked">
+          <div class="title">Additional instructions
+            <div class="subtext">Added to Voxlog's own prompt, not a replacement for it &mdash; the summary's
+              shape is read back by the app. Leave empty for the default.</div>
+          </div>
+          <textarea id="summary_prompt_extra" rows="3"
+            placeholder="e.g. Always name who agreed to do what. Answer in Ukrainian."></textarea>
+          <div style="display:flex; justify-content:flex-end; margin-top:6px;">
+            <button type="button" id="summary_prompt_reset">Reset to default</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
       </div>
 
       <div class="subpane" data-subpane="audio">
@@ -1387,6 +1422,9 @@
         history_retention: document.getElementById('history_retention').value,
         transcripts_dir: transcriptsDir,
         task_hub_enabled: document.getElementById('task_hub_enabled').checked,
+        summary_enabled: document.getElementById('summary_enabled').checked,
+        summary_length: document.getElementById('summary_length').value,
+        summary_prompt_extra: document.getElementById('summary_prompt_extra').value,
         always_on: document.getElementById('always_on').checked,
         always_on_split_minutes: parseFloat(document.getElementById('always_on_split_minutes').value),
         always_on_note_gap_seconds: parseFloat(document.getElementById('always_on_note_gap_seconds').value),
@@ -1782,6 +1820,13 @@
       });
     });
 
+    // The default is no extra instructions at all, so "reset" is a clear --
+    // and a button click fires neither change nor input, hence the save.
+    document.getElementById('summary_prompt_reset').addEventListener('click', function () {
+      document.getElementById('summary_prompt_extra').value = '';
+      save();
+    });
+
     document.getElementById('form').addEventListener('change', save);
     document.getElementById('form').addEventListener('input', save);
     document.getElementById('form').addEventListener('submit', function (e) {
@@ -1861,6 +1906,13 @@
       syncIndicatorStyle();
 
       document.getElementById('task_hub_enabled').checked = !!settings.task_hub_enabled;
+      // Defaulted the way settings.DefaultSettings does, not to false/empty:
+      // a file written before these fields existed has no summary_enabled in
+      // it, and reading that as "off" would silently stop summarizing for
+      // everyone already using it.
+      document.getElementById('summary_enabled').checked = settings.summary_enabled !== false;
+      document.getElementById('summary_length').value = settings.summary_length || 'normal';
+      document.getElementById('summary_prompt_extra').value = settings.summary_prompt_extra || '';
       document.getElementById('always_on').checked = !!settings.always_on;
       document.getElementById('always_on_split_minutes').value = String(settings.always_on_split_minutes || 5);
       document.getElementById('always_on_note_gap_seconds').value = String(settings.always_on_note_gap_seconds || 60);

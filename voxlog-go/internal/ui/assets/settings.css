@@ -136,7 +136,7 @@
      combination it warns about silently throws a recording away. */
   .warn { font-size: 11px; color: var(--red); }
 
-  #settings-pane select, #settings-pane input[type=text] {
+  #settings-pane select, #settings-pane input[type=text], #settings-pane textarea {
     font: inherit;
     color: var(--label);
     background: var(--field);
@@ -146,7 +146,11 @@
     min-width: 170px;
   }
   .item.stacked select,
-  .item.stacked input[type=text] { width: 100%; }
+  .item.stacked input[type=text],
+  .item.stacked textarea { width: 100%; }
+  /* Tall enough for a couple of sentences of instructions without scrolling,
+     and resizable downward by the user -- the field is prose, not a value. */
+  #settings-pane textarea { min-height: 72px; resize: vertical; }
   #settings-pane select:focus, #settings-pane input:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
 
   #settings-pane input[type=range] { accent-color: var(--accent); width: 100%; }
