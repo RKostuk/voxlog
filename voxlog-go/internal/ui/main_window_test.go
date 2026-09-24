@@ -312,7 +312,7 @@ func TestMainPageCarriesEveryPaneAndEveryMarker(t *testing.T) {
 			t.Errorf("no %s pane", pane)
 		}
 	}
-	for _, marker := range []string{kitCSSMarker, settingsCSSMarker, indicatorCSSMarker, settingsMarkup} {
+	for _, marker := range []string{kitCSSMarker, kitJSMarker, settingsCSSMarker, indicatorCSSMarker, settingsMarkup} {
 		if !strings.Contains(body, marker) {
 			t.Errorf("marker %q is missing", marker)
 		}
@@ -322,7 +322,7 @@ func TestMainPageCarriesEveryPaneAndEveryMarker(t *testing.T) {
 // Every marker has to resolve, or the window opens unstyled or half-built.
 func TestBuildMainPageResolvesEveryMarker(t *testing.T) {
 	page := buildMainPage()
-	for _, marker := range []string{kitCSSMarker, settingsCSSMarker, indicatorCSSMarker, settingsMarkup} {
+	for _, marker := range []string{kitCSSMarker, kitJSMarker, settingsCSSMarker, indicatorCSSMarker, settingsMarkup} {
 		if strings.Contains(page, marker) {
 			t.Errorf("marker %q was left unspliced", marker)
 		}

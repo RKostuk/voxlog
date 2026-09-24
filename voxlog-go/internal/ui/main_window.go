@@ -939,6 +939,7 @@ func buildMainPage() string {
 		panic(err)
 	}
 	out := injectAsset(string(page), kitCSSMarker, "kit.css")
+	out = injectAsset(out, kitJSMarker, "kit.js")
 	out = injectAsset(out, settingsCSSMarker, "settings.css")
 	out = injectAsset(out, indicatorCSSMarker, "indicator.css")
 	return injectAsset(out, settingsMarkup, "settings-pane.html")

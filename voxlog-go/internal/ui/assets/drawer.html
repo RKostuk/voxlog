@@ -2,6 +2,12 @@
 <html>
 <head>
 <meta charset="utf-8">
+<script>
+  /* KIT_JS */
+</script>
+<style>
+  /* KIT_CSS */
+</style>
 <style>
   /* The quick-tasks drawer: a small always-on-top window next to the notch.
      It is not a second Tasks pane -- it shows what is still open, grouped by
@@ -11,32 +17,32 @@
      The window is chromeless but focusable (see makeDrawerPanelC), so this
      page owns its own top bar: a title, and a close button that has to
      exist because there is no system one. */
+  /* Everything else -- the labels, the separators, the accent, the scales,
+     the status colours -- comes from kit.css above. Only these two differ,
+     and they differ for a reason: this window floats over whatever is on
+     screen, so its ground is translucent and its rows are opaque enough to
+     read against anything. */
   :root {
     color-scheme: light dark;
     --bg: rgba(246, 246, 248, 0.92);
     --card: #fff;
-    --label: #1c1c1e;
-    --secondary: #636366;
-    --tertiary: #8e8e93;
-    --separator: rgba(60, 60, 67, 0.14);
-    --accent: #007aff;
-    --field: rgba(120, 120, 128, 0.1);
   }
   @media (prefers-color-scheme: dark) {
-    :root {
+    :root:not([data-theme="light"]) {
       --bg: rgba(28, 28, 30, 0.94);
       --card: #2c2c2e;
-      --label: #f2f2f7;
-      --secondary: #aeaeb2;
-      --tertiary: #8e8e93;
-      --separator: rgba(84, 84, 88, 0.5);
-      --field: rgba(120, 120, 128, 0.24);
     }
+  }
+  :root[data-theme="dark"] {
+    --bg: rgba(28, 28, 30, 0.94);
+    --card: #2c2c2e;
   }
   html, body { margin: 0; height: 100%; }
   body {
-    font: 12.5px -apple-system, "SF Pro Text", system-ui, sans-serif;
+    font: var(--fs-body)/1.4 -apple-system, "SF Pro Text", system-ui, sans-serif;
     color: var(--label);
+    /* Flat, not the main window's ambient wash: there is a desktop behind
+       this one, and the blur is already bending it. */
     background: var(--bg);
     -webkit-backdrop-filter: blur(30px) saturate(180%);
     backdrop-filter: blur(30px) saturate(180%);
@@ -64,7 +70,7 @@
 
   .chips { display: flex; flex-wrap: wrap; gap: 5px; padding: 7px 10px 0; flex: none; }
   .chip {
-    font-size: 10.5px; padding: 2px 8px; border-radius: 999px;
+    font-size: var(--fs-small); padding: 2px 8px; border-radius: var(--r-pill);
     background: var(--field); color: var(--secondary); cursor: pointer;
     border: none; font-family: inherit;
   }
@@ -73,12 +79,12 @@
   .list { flex: 1; overflow-y: auto; padding: 8px 10px; }
   .group-name {
     display: flex; align-items: center; gap: 6px;
-    font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.04em;
-    color: var(--tertiary); margin: 8px 2px 4px;
+    font-size: var(--fs-caption); text-transform: uppercase; letter-spacing: 0.06em; font-weight: 600;
+    color: var(--secondary); margin: var(--sp-5) 2px var(--sp-2);
   }
   .group-name:first-child { margin-top: 0; }
   .dot { width: 7px; height: 7px; border-radius: 50%; flex: none; }
-  .card { background: var(--card); border-radius: 9px; overflow: hidden; box-shadow: 0 0 0 0.5px var(--separator); }
+  .card { background: var(--card); border-radius: var(--r-md); overflow: hidden; box-shadow: 0 0 0 0.5px var(--separator); }
   .row {
     display: flex; align-items: flex-start; gap: 8px;
     padding: 7px 9px; border-top: 0.5px solid var(--separator);
@@ -90,13 +96,14 @@
      along in one gesture, and the full four-way picker lives in the main
      window. */
   .row .status {
-    flex: none; font-size: 10px; padding: 2px 7px; border-radius: 999px;
+    flex: none; font-size: var(--fs-small); font-weight: var(--fw-bold);
+    padding: 2px 7px; border-radius: var(--r-pill);
     background: var(--field); color: var(--secondary);
     border: none; font-family: inherit; cursor: pointer;
   }
-  .row .status.in_progress { background: color-mix(in srgb, #ff9500 22%, transparent); color: #c26a00; }
-  .row .status.blocked { background: color-mix(in srgb, #ff3b30 20%, transparent); color: #c9271e; }
-  .row .status.done { background: color-mix(in srgb, #34c759 22%, transparent); color: #1c7c36; }
+  .row .status.status-in_progress { background: color-mix(in srgb, var(--accent) 16%, transparent); color: var(--accent); }
+  .row .status.status-blocked { background: color-mix(in srgb, var(--red) 16%, transparent); color: var(--red-ink); }
+  .row .status.status-done { background: color-mix(in srgb, var(--green) 18%, transparent); color: var(--green-ink); }
 
   .empty { color: var(--tertiary); text-align: center; padding: 18px 0; }
 
@@ -148,21 +155,9 @@
     window.voxlog = window.voxlog || {};
     var entityFilter = '';
 
-    function escapeHtml(s) {
-      return String(s).replace(/[&<>"']/g, function (c) {
-        return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
-      });
-    }
-
-    // Same hash-to-hue as the main window's entityColor, so a project is the
-    // same colour in both places.
-    function entityColor(name) {
-      var h = 0;
-      for (var i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) % 360;
-      return 'hsl(' + h + ' 62% 52%)';
-    }
-
-    var STATUS_LABEL = { todo: 'To do', in_progress: 'Doing', blocked: 'Blocked', done: 'Done' };
+    // escapeHtml, entityColor and taskStatusLabel come from kit.js, which is
+    // spliced into this page and into the main window alike -- this file used
+    // to carry its own copies, and they had drifted apart from the originals.
     // Clicking a status advances it. Done wraps back to To do, which is the
     // only way to undo a misclick without a menu.
     var NEXT_STATUS = { todo: 'in_progress', in_progress: 'done', blocked: 'todo', done: 'todo' };
@@ -236,9 +231,9 @@
           '<div class="card">' + g.rows.map(function (t) {
             return '<div class="row">' +
               '<div class="text">' + escapeHtml(t.text) + '</div>' +
-              '<button type="button" class="status ' + t.status + '" data-id="' + escapeHtml(t.id) +
+              '<button type="button" class="status ' + taskStatusClass(t.status) + '" data-id="' + escapeHtml(t.id) +
                 '" data-next="' + NEXT_STATUS[t.status] + '" title="Click to advance">' +
-                (STATUS_LABEL[t.status] || t.status) + '</button>' +
+                escapeHtml(taskStatusLabel[t.status] || t.status) + '</button>' +
             '</div>';
           }).join('') + '</div>';
       }).join('') : '<div class="empty">Nothing open' + (entityFilter ? ' in this project' : '') + '.</div>';

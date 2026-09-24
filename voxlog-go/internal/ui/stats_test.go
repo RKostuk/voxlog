@@ -20,14 +20,14 @@ func TestOverviewCountsTodayOnly(t *testing.T) {
 	}
 
 	got := buildOverview(entries, meetings, now)
-	if got.Recordings != 3 {
-		t.Errorf("Recordings = %d, want 3 (two dictations and one meeting today)", got.Recordings)
+	if got.Today.Recordings != 3 {
+		t.Errorf("Today.Recordings = %d, want 3 (two dictations and one meeting today)", got.Today.Recordings)
 	}
-	if got.Words != 5 {
-		t.Errorf("Words = %d, want 5 -- only today's dictations", got.Words)
+	if got.Today.Words != 5 {
+		t.Errorf("Today.Words = %d, want 5 -- only today's dictations", got.Today.Words)
 	}
-	if got.SpeakingSeconds != 610 {
-		t.Errorf("SpeakingSeconds = %v, want 610", got.SpeakingSeconds)
+	if got.Today.SpeakingSeconds != 610 {
+		t.Errorf("Today.SpeakingSeconds = %v, want 610", got.Today.SpeakingSeconds)
 	}
 }
 
@@ -41,8 +41,8 @@ func TestMedianDecodeIgnoresTheOutlier(t *testing.T) {
 	}
 
 	got := buildOverview(entries, nil, now)
-	if got.MedianDecode < 1.2 || got.MedianDecode > 1.4 {
-		t.Errorf("MedianDecode = %v, want the middle of 1.0/1.2/1.4/11.0", got.MedianDecode)
+	if got.Today.MedianDecode < 1.2 || got.Today.MedianDecode > 1.4 {
+		t.Errorf("Today.MedianDecode = %v, want the middle of 1.0/1.2/1.4/11.0", got.Today.MedianDecode)
 	}
 }
 
@@ -51,8 +51,8 @@ func TestWordsCountsWordsNotCharacters(t *testing.T) {
 	entries := []history.Entry{
 		{Timestamp: now, Text: "  треба   закрити це\nдо п'ятниці  "},
 	}
-	if got := buildOverview(entries, nil, now).Words; got != 5 {
-		t.Errorf("Words = %d, want 5 -- runs of whitespace are one separator", got)
+	if got := buildOverview(entries, nil, now).Today.Words; got != 5 {
+		t.Errorf("Today.Words = %d, want 5 -- runs of whitespace are one separator", got)
 	}
 }
 
@@ -61,45 +61,130 @@ func TestWordsCountsWordsNotCharacters(t *testing.T) {
 func TestUntranscribedMeetingStillCounts(t *testing.T) {
 	now := time.Date(2026, 8, 18, 15, 0, 0, 0, time.Local)
 	got := buildOverview(nil, []history.Meeting{{Start: now, RecordingSeconds: 1200}}, now)
-	if got.Recordings != 1 || got.SpeakingSeconds != 1200 {
-		t.Errorf("got %d recordings / %v seconds, want 1 / 1200", got.Recordings, got.SpeakingSeconds)
+	if got.Today.Recordings != 1 || got.Today.SpeakingSeconds != 1200 {
+		t.Errorf("got %d recordings / %v seconds, want 1 / 1200", got.Today.Recordings, got.Today.SpeakingSeconds)
 	}
-	if got.Words != 0 {
-		t.Errorf("Words = %d, want 0 -- there is no transcript yet", got.Words)
+	if got.Today.Words != 0 {
+		t.Errorf("Today.Words = %d, want 0 -- there is no transcript yet", got.Today.Words)
 	}
 }
 
-func TestChartAlwaysCoversFourteenDaysEndingToday(t *testing.T) {
-	now := time.Date(2026, 8, 18, 15, 0, 0, 0, time.Local)
+func TestChartAlwaysCoversEightWeeksEndingThisWeek(t *testing.T) {
+	now := time.Date(2026, 8, 18, 15, 0, 0, 0, time.Local) // a Tuesday
 	entries := []history.Entry{
-		{Timestamp: now, Text: "today"},
-		{Timestamp: now.AddDate(0, 0, -13), Text: "the oldest day still shown"},
-		{Timestamp: now.AddDate(0, 0, -20), Text: "older than the window"},
+		{Timestamp: now, Text: "this week"},
+		{Timestamp: now.AddDate(0, 0, -49), Text: "the oldest week still shown"},
+		{Timestamp: now.AddDate(0, 0, -70), Text: "older than the window"},
 	}
 
 	got := buildOverview(entries, nil, now)
-	if len(got.Days) != 14 {
-		t.Fatalf("got %d days, want exactly 14 even where nothing was recorded", len(got.Days))
+	if len(got.Weeks) != overviewWeeks {
+		t.Fatalf("got %d weeks, want exactly %d even where nothing was recorded", len(got.Weeks), overviewWeeks)
 	}
-	if got.Days[13].Day != now.Format("2006-01-02") {
-		t.Errorf("last day is %s, want today last (oldest first)", got.Days[13].Day)
+	if want := startOfWeek(now).Format("2006-01-02"); got.Weeks[7].Week != want {
+		t.Errorf("last column is %s, want this week (%s) last, oldest first", got.Weeks[7].Week, want)
 	}
-	if got.Days[13].Dictations != 1 || got.Days[0].Dictations != 1 {
-		t.Errorf("got %+v / %+v, want one dictation at each end of the window", got.Days[0], got.Days[13])
+	if got.Weeks[7].Dictations != 1 || got.Weeks[0].Dictations != 1 {
+		t.Errorf("got %+v / %+v, want one dictation at each end of the window", got.Weeks[0], got.Weeks[7])
 	}
-	if got.TotalRecordings != 2 {
-		t.Errorf("TotalRecordings = %d, want 2 -- the 20-day-old entry is outside the window", got.TotalRecordings)
+	if got.WindowRecordings != 2 {
+		t.Errorf("WindowRecordings = %d, want 2 -- the 70-day-old entry is outside the window", got.WindowRecordings)
+	}
+}
+
+// A week is Monday to Sunday: a Sunday take belongs to the week that started
+// six days earlier, not to the one beginning the next morning.
+func TestWeeksStartOnMonday(t *testing.T) {
+	sunday := time.Date(2026, 8, 16, 22, 0, 0, 0, time.Local)
+	monday := time.Date(2026, 8, 17, 9, 0, 0, 0, time.Local)
+	now := time.Date(2026, 8, 18, 15, 0, 0, 0, time.Local)
+
+	got := buildOverview([]history.Entry{{Timestamp: sunday, Text: "a"}, {Timestamp: monday, Text: "b"}}, nil, now)
+	if got.Weeks[6].Dictations != 1 {
+		t.Errorf("previous week has %d dictations, want the Sunday take", got.Weeks[6].Dictations)
+	}
+	if got.Weeks[7].Dictations != 1 {
+		t.Errorf("this week has %d dictations, want the Monday take", got.Weeks[7].Dictations)
+	}
+}
+
+// The axis says the month only where it turns over; repeating it on every
+// column is eight labels carrying one fact.
+func TestWeekLabelsNameTheMonthOnlyWhenItChanges(t *testing.T) {
+	now := time.Date(2026, 8, 18, 15, 0, 0, 0, time.Local)
+	weeks := buildOverview(nil, nil, now).Weeks
+	if weeks[0].Label != "29 Jun" {
+		t.Errorf("first label = %q, want %q -- the first column has no predecessor to differ from", weeks[0].Label, "29 Jun")
+	}
+	var named int
+	for _, w := range weeks {
+		if len(w.Label) > 2 {
+			named++
+		}
+	}
+	if named != 3 {
+		t.Errorf("%d labels carry a month, want 3 (the first, plus July and August turning over)", named)
+	}
+}
+
+// What the fourteen-day window could never answer: how much there is in
+// total, however old.
+func TestAllTimeCountsWhatTheWindowDoesNot(t *testing.T) {
+	now := time.Date(2026, 8, 18, 15, 0, 0, 0, time.Local)
+	entries := []history.Entry{
+		{Timestamp: now, Text: "two words", RecordingSeconds: 10, DurationSeconds: 1},
+		{Timestamp: now.AddDate(0, 0, -200), Text: "three words here", RecordingSeconds: 30, DurationSeconds: 3},
+	}
+	meetings := []history.Meeting{{Start: now.AddDate(0, 0, -100), RecordingSeconds: 600}}
+
+	got := buildOverview(entries, meetings, now)
+	if got.AllTime.Recordings != 3 {
+		t.Errorf("AllTime.Recordings = %d, want 3 -- age is not a reason to stop counting", got.AllTime.Recordings)
+	}
+	if got.AllTime.Words != 5 {
+		t.Errorf("AllTime.Words = %d, want 5", got.AllTime.Words)
+	}
+	if got.AllTime.SpeakingSeconds != 640 {
+		t.Errorf("AllTime.SpeakingSeconds = %v, want 640", got.AllTime.SpeakingSeconds)
+	}
+	if got.AllTime.MedianDecode != 2 {
+		t.Errorf("AllTime.MedianDecode = %v, want 2 -- the middle of 1 and 3", got.AllTime.MedianDecode)
+	}
+	if got.FirstDay != now.AddDate(0, 0, -200).Format("2006-01-02") {
+		t.Errorf("FirstDay = %q, want the oldest recording's day", got.FirstDay)
+	}
+	if got.ActiveDays != 3 {
+		t.Errorf("ActiveDays = %d, want 3 -- three distinct days have something in them", got.ActiveDays)
+	}
+	if got.SpanDays != 201 {
+		t.Errorf("SpanDays = %d, want 201 -- both ends counted", got.SpanDays)
+	}
+}
+
+// Two recordings on one day are one day of recording, not two.
+func TestActiveDaysCountsDaysNotRecordings(t *testing.T) {
+	now := time.Date(2026, 8, 18, 15, 0, 0, 0, time.Local)
+	entries := []history.Entry{
+		{Timestamp: now.Add(-time.Hour), Text: "a"},
+		{Timestamp: now.Add(-2 * time.Hour), Text: "b"},
+	}
+	got := buildOverview(entries, []history.Meeting{{Start: now.Add(-3 * time.Hour)}}, now)
+	if got.ActiveDays != 1 || got.SpanDays != 1 {
+		t.Errorf("got %d active / %d span, want 1 / 1", got.ActiveDays, got.SpanDays)
 	}
 }
 
 func TestEmptyHistoryIsAllZeroesNotACrash(t *testing.T) {
 	now := time.Date(2026, 8, 18, 15, 0, 0, 0, time.Local)
 	got := buildOverview(nil, nil, now)
-	if got.Recordings != 0 || got.Words != 0 || got.MedianDecode != 0 {
-		t.Errorf("got %+v, want zeroes", got)
+	if got.Today.Recordings != 0 || got.Today.Words != 0 || got.Today.MedianDecode != 0 {
+		t.Errorf("got %+v, want zeroes", got.Today)
 	}
-	if len(got.Days) != 14 {
-		t.Errorf("got %d days, want the chart's fourteen empty columns", len(got.Days))
+	if got.AllTime.Recordings != 0 || got.FirstDay != "" || got.SpanDays != 0 {
+		t.Errorf("got %+v / first %q / span %d, want nothing recorded yet", got.AllTime, got.FirstDay, got.SpanDays)
+	}
+	if len(got.Weeks) != overviewWeeks {
+		t.Errorf("got %d weeks, want the chart's %d empty columns", len(got.Weeks), overviewWeeks)
 	}
 }
 
@@ -110,7 +195,7 @@ func TestTodayEndsAtLocalMidnight(t *testing.T) {
 		{Timestamp: now.Add(-time.Hour), Text: "before midnight"}, // 23:30 yesterday
 		{Timestamp: now, Text: "after midnight"},
 	}
-	if got := buildOverview(entries, nil, now).Recordings; got != 1 {
-		t.Errorf("Recordings = %d, want 1 -- the 23:30 take belongs to yesterday", got)
+	if got := buildOverview(entries, nil, now).Today.Recordings; got != 1 {
+		t.Errorf("Today.Recordings = %d, want 1 -- the 23:30 take belongs to yesterday", got)
 	}
 }

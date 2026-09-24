@@ -20,6 +20,19 @@
   --green: #34c759;
   --yellow: #ffcc00;
   --red: #ff3b30;
+  /* The hues that were hardcoded at their use sites: the Meetings glyph and
+     chart bars are purple, the Settings badge orange. A fallback to a token
+     that was never defined (var(--purple, #af52de)) is how the first of them
+     used to be spelled. */
+  --purple: #af52de;
+  --orange: #ff9500;
+  /* Text on a tinted chip. --green etc. are the fill colours; at text size
+     over their own 16-20% tint they do not carry enough contrast, so the ink
+     is a darker relative of each -- and it has to change with the theme,
+     which the hardcoded #1b8a3e/#c62b22/#92700a did not. */
+  --green-ink: #1b8a3e;
+  --red-ink: #c62b22;
+  --yellow-ink: #92700a;
   /* Liquid Glass surfaces: a translucent, blurred fill plus a specular rim
      rather than a flat card colour. --glass-edge is the highlight along the
      top of a raised surface; --glass-shadow is what lifts it off the page.
@@ -43,6 +56,38 @@
   --spk-4: #c02d6a;
   --spk-x: rgba(60, 60, 67, 0.45);
   --silence: rgba(60, 60, 67, 0.14);
+
+  /* The scales. Every one of these values was already in the stylesheets --
+     as one of eighteen font sizes, fourteen radii and thirteen row paddings,
+     each written out by hand where it was needed. Naming them is what stops
+     the next one from being a nineteenth. */
+  --sp-1: 2px;
+  --sp-2: 4px;
+  --sp-3: 6px;
+  --sp-4: 9px;
+  --sp-5: 12px;
+  --sp-6: 16px;
+  --sp-7: 20px;
+  --sp-8: 28px;
+  --r-xs: 5px;
+  --r-sm: 7px;
+  --r-md: 10px;
+  --r-pill: 999px;
+  --fs-micro: 9.5px;
+  --fs-small: 10.5px;
+  --fs-caption: 11px;
+  --fs-body: 13px;
+  --fs-lead: 15px;
+  --fs-title: 18px;
+  --fs-display: 20px;
+  --fw-medium: 500;
+  --fw-semi: 590;
+  --fw-bold: 650;
+  /* One recipe for a raised glass surface, rather than the four hand-copied
+     variants of it this file and main.html held between them. */
+  --glass: inset 0 1px 0 var(--glass-edge), inset 0 0 0 0.5px var(--separator), 0 8px 20px var(--glass-shadow);
+  --glass-low: inset 0 1px 0 var(--glass-edge), inset 0 0 0 0.5px var(--separator), 0 6px 16px var(--glass-shadow);
+  --glass-flat: inset 0 1px 0 var(--glass-edge), inset 0 0 0 0.5px var(--separator);
 }
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
@@ -58,6 +103,11 @@
     --green: #30d158;
     --yellow: #ffd60a;
     --red: #ff453a;
+    --purple: #bf5af2;
+    --orange: #ff9f0a;
+    --green-ink: #5fe08a;
+    --red-ink: #ff6f66;
+    --yellow-ink: #ffd60a;
     --glass-edge: rgba(255, 255, 255, 0.14);
     --glass-shadow: rgba(0, 0, 0, 0.5);
     --wash-a: #3a2a4a;
@@ -86,6 +136,11 @@
   --green: #30d158;
   --yellow: #ffd60a;
   --red: #ff453a;
+  --purple: #bf5af2;
+  --orange: #ff9f0a;
+  --green-ink: #5fe08a;
+  --red-ink: #ff6f66;
+  --yellow-ink: #ffd60a;
   --glass-edge: rgba(255, 255, 255, 0.14);
   --glass-shadow: rgba(0, 0, 0, 0.5);
   --wash-a: #3a2a4a;
@@ -124,7 +179,7 @@ body {
   backdrop-filter: blur(26px) saturate(180%);
   border-radius: 10px;
   overflow: hidden;
-  box-shadow: inset 0 1px 0 var(--glass-edge), inset 0 0 0 0.5px var(--separator), 0 8px 20px var(--glass-shadow);
+  box-shadow: var(--glass);
 }
 
 /* One row inside a card: label left, control right, hairline below. */

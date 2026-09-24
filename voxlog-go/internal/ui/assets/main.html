@@ -2,6 +2,11 @@
 <html>
 <head>
 <meta charset="utf-8">
+<!-- Before every other script on the page: the settings fragment runs its
+     own script, and it uses these helpers too. -->
+<script>
+  /* KIT_JS */
+</script>
 <style>
   /* KIT_CSS */
   /* SETTINGS_CSS */
@@ -14,13 +19,12 @@
      list makes every other meeting unreachable. */
   .meeting-card {
     display: grid; grid-template-columns: 1fr auto; gap: 4px 14px;
-    width: 100%; text-align: left; cursor: pointer;
-    background: var(--card); border: 1px solid var(--separator);
-    border-radius: 11px; padding: 12px 14px; color: var(--label); font: inherit;
-    box-shadow: 0 1px 0 var(--glass-edge) inset;
+    width: 100%; text-align: left; cursor: pointer; border: none;
+    background: var(--card);
+    border-radius: var(--r-md); padding: 12px 14px; color: var(--label); font: inherit;
+    box-shadow: var(--glass-flat);
   }
-  .meeting-card:hover { border-color: var(--accent); }
-  .meeting-card:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .meeting-card:hover { box-shadow: var(--glass-flat), 0 0 0 1px var(--accent); }
   .meeting-list { display: flex; flex-direction: column; gap: 8px; margin-bottom: 14px; }
   .m-top { display: flex; align-items: baseline; gap: 9px; flex-wrap: wrap; }
   .m-title { font-size: 14px; font-weight: 600; }
@@ -42,16 +46,39 @@
      between segments so neighbouring colours never merge into a third. */
   .talk-strip { grid-column: 1 / -1; display: flex; gap: 2px; height: 5px; margin-top: 9px; }
   .talk-strip i { display: block; border-radius: 2px; }
+  /* Inside an open meeting the same strip is the headline, not a footnote. */
+  .talk-strip.tall { height: 10px; }
 
   .detail-head { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; flex-wrap: wrap; }
+  .detail-head .filter-search { margin-left: auto; }
   .back-btn { border: 0; background: none; color: var(--accent); cursor: pointer; padding: 2px 4px; font: inherit; }
-  .detail-title { font-size: 18px; font-weight: 600; }
+  /* One ring, one offset, on everything focusable. Four controls had no
+     :focus-visible rule at all, and the ones that did disagreed about the
+     offset -- 1px here, 2px there, -1px in Settings. */
+  #shell-content :focus-visible, #shell-nav :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  /* Same id in the selector, or the rule above out-specifies this one and
+     a field's ring sits outside its own border. */
+  #shell-content .task-panel input[type=text]:focus-visible,
+  #shell-content .task-panel textarea:focus-visible,
+  #shell-content .filter-search:focus-visible,
+  #shell-content .name-form input:focus-visible { outline-offset: -1px; }
+  /* 15px, not 18px: the largest text on a meeting screen should be the
+     figures in .fact, not the date at the top of it. */
+  .detail-title { font-size: var(--fs-lead); font-weight: var(--fw-bold); }
   .detail-meta { color: var(--secondary); display: flex; gap: 12px; flex-wrap: wrap; font-variant-numeric: tabular-nums; margin-bottom: 14px; }
-  .panel { background: var(--card); border: 1px solid var(--separator); border-radius: 11px; padding: 13px 14px; }
-  .panel h3 { margin: 0 0 10px; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .06em; color: var(--secondary); }
-  .stats-row { display: grid; grid-template-columns: 1fr 200px; gap: 14px; margin-bottom: 16px; }
+  /* A panel inside a meeting is the same object as a card anywhere else:
+     no border of its own, the kit's radius, the kit's glass. It used to
+     carry a 1px border and an 11px radius, which is why the inside of a
+     meeting looked like a different app. */
+  .panel { background: var(--card); border: none; border-radius: var(--r-md); padding: 13px 14px; box-shadow: var(--glass-low); }
+  .panel.spaced { margin-top: 14px; }
+  .panel.spaced-below { margin-bottom: 14px; }
+  .panel h3 { margin: 0 0 10px; font-size: var(--fs-caption); font-weight: 600; text-transform: uppercase; letter-spacing: .06em; color: var(--secondary); }
+  /* align-items: start, or the shorter panel is stretched to the taller
+     one's height and ends in a band of empty glass. */
+  .stats-row { display: grid; grid-template-columns: 1fr 200px; gap: 14px; margin-bottom: 16px; align-items: start; }
   @media (max-width: 820px) { .stats-row { grid-template-columns: 1fr; } }
-  .spk-rows { display: flex; flex-direction: column; gap: 9px; }
+  .spk-rows { display: flex; flex-direction: column; gap: 9px; margin-top: 12px; }
   .spk-row { display: grid; grid-template-columns: 1fr auto; gap: 6px 10px; align-items: center; }
   .spk-name { display: flex; align-items: center; gap: 7px; min-width: 0; }
   .swatch { width: 10px; height: 10px; border-radius: 3px; flex: none; }
@@ -59,7 +86,14 @@
   .spk-figs b { color: var(--label); font-weight: 600; }
   .spk-bar { grid-column: 1 / -1; height: 6px; background: var(--field); border-radius: 3px; overflow: hidden; }
   .spk-bar i { display: block; height: 100%; border-radius: 3px; }
-  .name-btn { border: 0; background: none; color: var(--accent); cursor: pointer; font-size: 11px; padding: 1px 5px; }
+  /* A button that looks like one. As borderless accent text it read as a
+     label, and there was no way to tell it apart from the name beside it. */
+  .name-btn {
+    border: none; border-radius: var(--r-sm); height: 20px; padding: 0 7px;
+    background: color-mix(in srgb, var(--accent) 14%, transparent); color: var(--accent);
+    font: inherit; font-size: var(--fs-small); font-weight: var(--fw-medium); cursor: pointer;
+  }
+  .name-btn:hover { background: var(--accent); color: #fff; }
   .facts { display: flex; flex-direction: column; gap: 10px; }
   .fact b { display: block; font-size: 18px; font-weight: 600; font-variant-numeric: tabular-nums; }
   .fact span { color: var(--secondary); font-size: 11px; }
@@ -70,11 +104,13 @@
   .turn-row.playing { background: color-mix(in srgb, var(--accent) 14%, transparent); }
   .turn-at { color: var(--secondary); font-variant-numeric: tabular-nums; font-size: 11px; text-align: right; padding-top: 2px; }
   .turn-who { font-weight: 600; margin-right: 6px; }
+  /* Quiet rather than absent: at opacity 0 the control did not exist for a
+     keyboard or a trackpad that never hovers. */
   .turn-play {
-    border: 1px solid var(--separator); background: var(--card); color: var(--label);
-    border-radius: 50%; width: 24px; height: 24px; cursor: pointer; font-size: 10px; opacity: 0;
+    border: none; background: var(--field); color: var(--secondary);
+    border-radius: 50%; width: 24px; height: 24px; cursor: pointer; font-size: 10px;
   }
-  .turn-row:hover .turn-play, .turn-row.playing .turn-play, .turn-play:focus-visible { opacity: 1; }
+  .turn-row:hover .turn-play, .turn-row.playing .turn-play, .turn-play:focus-visible { background: var(--accent); color: #fff; }
   /* Search results across meetings: a row is a button, because clicking one
      goes somewhere -- into the meeting, at that reply. */
   .hit-row {
@@ -110,7 +146,7 @@
   .player-bar { display: flex; align-items: center; gap: 10px; color: var(--secondary); font-variant-numeric: tabular-nums; }
 
   .voice-item { display: grid; grid-template-columns: auto 1fr auto; gap: 11px; align-items: center;
-    background: var(--card); border: 1px solid var(--separator); border-radius: 10px; padding: 10px 12px; }
+    background: var(--card); border: none; border-radius: var(--r-md); padding: 10px 12px; box-shadow: var(--glass-flat); }
   .voice-item .sub { color: var(--secondary); font-size: 11px; }
   .voice-acts { display: flex; gap: 6px; }
   .voice-list { display: flex; flex-direction: column; gap: 8px; }
@@ -183,7 +219,7 @@
     animation: queue-spin 0.9s linear infinite;
   }
   .queue-row.waiting .queue-mark { background: var(--separator); }
-  .queue-row.llm .queue-mark { border-top-color: var(--purple, #af52de); }
+  .queue-row.llm .queue-mark { border-top-color: var(--purple); }
   @keyframes queue-spin { to { transform: rotate(360deg); } }
   @media (prefers-reduced-motion: reduce) { .queue-row.running .queue-mark { animation: none; } }
   .queue-more { font-size: 10.5px; color: var(--tertiary); padding: 2px 5px 0; }
@@ -210,7 +246,6 @@
     color: #fff;
     box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.28);
   }
-  .navitem:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 
   /* Days are sections; entries are rows in a card. The heading is the kit's
      group title with the breathing room a scrolling list needs. */
@@ -280,6 +315,10 @@
          color: var(--secondary); font-size: 10px; }
   .tag.pending { background: color-mix(in srgb, var(--yellow) 18%, transparent);
                  color: var(--yellow); }
+  /* A task has no elapsed time to put in the left pill, so the pill carries
+     its status instead -- the one thing worth scanning down that column. */
+  .entry .pill[class*="status-"] { font-weight: var(--fw-bold); }
+  .entry[data-kind="task"] { cursor: pointer; }
 
   /* Row actions appear on hover or once the row is open -- the resting list
      stays a list, not a wall of buttons. */
@@ -299,7 +338,6 @@
   }
   .act:hover:not(:disabled) { background: var(--accent); color: #fff; }
   .act:disabled { color: var(--tertiary); }
-  .act:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 
   .chev {
     flex: none;
@@ -327,7 +365,7 @@
     background: linear-gradient(135deg, color-mix(in srgb, var(--red) 14%, transparent), transparent), var(--card);
     -webkit-backdrop-filter: blur(24px) saturate(180%);
     backdrop-filter: blur(24px) saturate(180%);
-    box-shadow: inset 0 1px 0 var(--glass-edge), inset 0 0 0 0.5px var(--separator), 0 6px 16px var(--glass-shadow);
+    box-shadow: var(--glass-low);
     border-left: 3px solid var(--red);
   }
   .live .pulse {
@@ -356,17 +394,33 @@
     background: color-mix(in srgb, var(--accent) 15%, transparent);
   }
 
-  .tiles { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-top: 16px; }
+  /* Heading and its control on one line: the toggle belongs to the tiles
+     under it, not to the pane. */
+  .head-row { display: flex; align-items: center; gap: 9px; margin: 20px 0 6px; }
+  .head-row:first-child { margin-top: 16px; }
+  .head-row .group-title.day { margin: 0 0 0 10px; }
+  .segmented { margin-left: auto; display: inline-flex; gap: 2px; padding: 2px; background: var(--field); border-radius: 999px; }
+  .segmented button {
+    border: none; background: none; color: var(--secondary); font: inherit;
+    font-size: 11px; font-weight: 500; padding: 3px 11px; border-radius: 999px; cursor: pointer;
+  }
+  .segmented button[aria-pressed="true"] { background: var(--card); color: var(--label); font-weight: 650; box-shadow: 0 1px 2px var(--glass-shadow); }
+  .segmented button:hover:not([aria-pressed="true"]) { color: var(--label); }
+  /* Since when, and how much of that stretch has anything in it -- the one
+     thing a rolling window can never say. */
+  .provenance { margin-top: 9px; padding: 0 10px; font-size: 11px; color: var(--tertiary); font-variant-numeric: tabular-nums; }
+
+  .tiles { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; }
   .tile {
     background: var(--card);
     -webkit-backdrop-filter: blur(26px) saturate(180%);
     backdrop-filter: blur(26px) saturate(180%);
     border-radius: 10px;
-    box-shadow: inset 0 1px 0 var(--glass-edge), inset 0 0 0 0.5px var(--separator), 0 6px 16px var(--glass-shadow);
-    padding: 12px 13px 13px;
+    box-shadow: var(--glass-low);
+    padding: 9px 11px 10px;
     display: flex;
     flex-direction: column;
-    gap: 3px;
+    gap: 1px;
     min-width: 0;
     position: relative;
     overflow: hidden;
@@ -386,34 +440,36 @@
      under them. */
   .tile .k, .tile .v, .tile .d { position: relative; }
   .tile .k {
-    font-size: 11px;
+    font-size: 10.5px;
     color: var(--secondary);
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
   }
   .tile .v {
-    font-size: 26px;
-    font-weight: 590;
+    font-size: 20px;
+    font-weight: 650;
     letter-spacing: -0.025em;
     font-variant-numeric: tabular-nums;
     line-height: 1.1;
   }
-  .tile .v small { font-size: 13px; font-weight: 500; color: var(--secondary); letter-spacing: 0; }
-  .tile .d { font-size: 11px; color: var(--tertiary); }
+  .tile .v small { font-size: 11px; font-weight: 500; color: var(--secondary); letter-spacing: 0; }
+  .tile .d { font-size: 10px; color: var(--tertiary); }
 
-  /* 14-day column chart. Today is the emphasised endpoint. */
-  .chart { padding: 14px 14px 10px; }
-  .bars { display: flex; align-items: flex-end; gap: 6px; height: 92px; }
-  .bars .col { flex: 1; display: flex; flex-direction: column; justify-content: flex-end; gap: 4px; min-width: 0; }
-  .bars .stack { display: flex; flex-direction: column; justify-content: flex-end; gap: 2px; height: 82px; }
+  /* Eight-week column chart, drawn straight onto the pane. This week is the
+     emphasised endpoint. */
+  .chart { padding: 4px 2px 0; }
+  .bars { display: flex; align-items: flex-end; gap: 6px; height: 60px; }
+  .bars .col { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: flex-end; gap: 4px; min-width: 0; }
+  /* Capped, not stretched: eight columns across a wide window would each be
+     150px of ribbon, which reads as a stack of bands rather than a chart. */
+  .bars .stack { display: flex; flex-direction: column; justify-content: flex-end; gap: 2px; height: 48px; width: 100%; max-width: 34px; }
   .bars .dict { background: var(--accent); border-radius: 3px 3px 0 0; opacity: 0.85; }
-  /* #af52de, not a --purple token: kit.css doesn't define one, and this is
-     the same hardcoded hue the Meetings sidebar glyph already uses. */
-  .bars .meet { background: #af52de; border-radius: 3px 3px 0 0; opacity: 0.8; }
+  .bars .meet { background: var(--purple); border-radius: 3px 3px 0 0; opacity: 0.8; }
   .bars .col.today .dict, .bars .col.today .meet { opacity: 1; }
   .bars .lbl {
     text-align: center;
+    white-space: nowrap;
     font-size: 9.5px;
     color: var(--tertiary);
     font-variant-numeric: tabular-nums;
@@ -429,7 +485,6 @@
     color: var(--secondary);
   }
   .legend span { display: inline-flex; align-items: center; gap: 5px; }
-  .swatch { width: 8px; height: 8px; border-radius: 2.5px; }
 
   /* ---------------- task hub ---------------- */
   /* A classified entry gets the same "this row means more" language the
@@ -439,8 +494,8 @@
     border-left: 3px solid var(--green);
     background: color-mix(in srgb, var(--green) 6%, transparent);
   }
-  .tag.task-detected { background: color-mix(in srgb, var(--green) 18%, transparent); color: #1b8a3e; }
-  .entry .hub-note { margin-top: 4px; font-size: 11px; color: #1b8a3e; font-weight: 500; }
+  .tag.task-detected { background: color-mix(in srgb, var(--green) 18%, transparent); color: var(--green-ink); }
+  .entry .hub-note { margin-top: 4px; font-size: 11px; color: var(--green-ink); font-weight: 500; }
   /* Entity/status tags on a classified History or Meetings row -- the same
      facts the Tasks pane shows for this task, so the project and where it
      stands are visible right where it was dictated too. */
@@ -448,30 +503,41 @@
   .tag.task-entity-tag::before {
     content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--dot);
   }
-  .tag.status-todo { background: var(--field); color: var(--secondary); }
-  .tag.status-in_progress { background: color-mix(in srgb, var(--accent) 16%, transparent); color: var(--accent); }
-  .tag.status-blocked { background: color-mix(in srgb, var(--red) 16%, transparent); color: #c62b22; }
-  .tag.status-done { background: color-mix(in srgb, var(--green) 18%, transparent); color: #1b8a3e; }
+  /* One status, one colour, whichever shape is carrying it: a tag on a
+     History row, the pill on an Overview row, the picker in Tasks. The
+     shapes bring their own geometry; this brings the meaning. */
+  :is(.tag, .status-select, .entry .pill).status-todo { background: var(--field); color: var(--secondary); }
+  :is(.tag, .status-select, .entry .pill).status-in_progress { background: color-mix(in srgb, var(--accent) 16%, transparent); color: var(--accent); }
+  :is(.tag, .status-select, .entry .pill).status-blocked { background: color-mix(in srgb, var(--red) 16%, transparent); color: var(--red-ink); }
+  :is(.tag, .status-select, .entry .pill).status-done { background: color-mix(in srgb, var(--green) 18%, transparent); color: var(--green-ink); }
 
   .task-summary { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-top: 16px; }
+  /* The same object as an Overview tile -- four numbers in a row across the
+     top of a pane -- so the same geometry, not a near-miss of it. */
   .task-stat {
     background: var(--card);
     -webkit-backdrop-filter: blur(20px) saturate(180%);
     backdrop-filter: blur(20px) saturate(180%);
-    border-radius: 9px; padding: 8px 13px;
-    box-shadow: inset 0 1px 0 var(--glass-edge), inset 0 0 0 0.5px var(--separator);
+    border-radius: var(--r-md); padding: 9px 11px 10px;
+    box-shadow: var(--glass-low);
   }
-  .task-stat .n { font-size: 19px; font-weight: 650; letter-spacing: -0.02em; }
-  .task-stat .k { font-size: 10.5px; color: var(--secondary); text-transform: uppercase; letter-spacing: 0.04em; }
+  .task-stat .n { font-size: var(--fs-display); font-weight: var(--fw-bold); letter-spacing: -0.02em; }
+  .task-stat .k { font-size: var(--fs-small); color: var(--secondary); text-transform: uppercase; letter-spacing: 0.04em; }
   .task-stat.todo .n { color: var(--secondary); }
   .task-stat.progress .n { color: var(--accent); }
   .task-stat.blocked .n { color: var(--red); }
   .task-stat.done .n { color: var(--green); }
 
-  .task-entity { display: flex; align-items: center; gap: 7px; margin: 22px 0 6px 2px; }
+  /* A project heading is a section heading: the same one History puts over
+     a day and Overview puts over Recent, plus the dot, which carries
+     information the words do not. */
+  .task-entity { display: flex; align-items: center; gap: 7px; margin: 20px 0 6px 10px; }
   .task-entity:first-child { margin-top: 16px; }
   .task-entity-dot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
-  .task-entity-name { font-size: 12.5px; font-weight: 650; }
+  .task-entity-name {
+    font-size: var(--fs-caption); font-weight: 600; text-transform: uppercase;
+    letter-spacing: 0.06em; color: var(--secondary);
+  }
   .task-entity-count { font-size: 11px; color: var(--tertiary); }
   .task-entity-auto { margin-left: auto; font-size: 10px; color: var(--tertiary); font-weight: 500; }
 
@@ -488,13 +554,6 @@
      task list should read as a list, not a wall of buttons. */
   .task-acts { display: none; gap: 4px; flex: none; }
   .task-row:hover .task-acts { display: flex; }
-  .task-act {
-    height: 22px; padding: 0 8px; border: none; border-radius: 6px;
-    background: var(--field); color: var(--secondary);
-    font: inherit; font-size: 10.5px; cursor: pointer;
-  }
-  .task-act:hover:not(:disabled) { background: var(--accent); color: #fff; }
-  .task-act:disabled { color: var(--tertiary); }
 
   /* The task row is a <summary>: strip the disclosure triangle so it still
      reads as a row, and keep the cursor honest about being clickable. */
@@ -512,9 +571,6 @@
     font: inherit; color: var(--label); background: var(--card);
     border: 0.5px solid var(--separator); border-radius: 6px;
     padding: 6px 8px; width: 100%; resize: vertical;
-  }
-  .task-panel input[type=text]:focus, .task-panel textarea:focus {
-    outline: 2px solid var(--accent); outline-offset: -1px;
   }
   .task-panel-meta {
     display: flex; flex-wrap: wrap; gap: 4px 12px;
@@ -534,9 +590,9 @@
   .reminder-chip {
     display: inline-flex; align-items: center; padding: 2px 8px; border-radius: 999px;
     font-size: 10.5px; font-weight: 600;
-    background: color-mix(in srgb, var(--yellow) 20%, transparent); color: #92700a;
+    background: color-mix(in srgb, var(--yellow) 20%, transparent); color: var(--yellow-ink);
   }
-  .reminder-chip.overdue { background: color-mix(in srgb, var(--red) 16%, transparent); color: #c62b22; }
+  .reminder-chip.overdue { background: color-mix(in srgb, var(--red) 16%, transparent); color: var(--red-ink); }
   .reminder-chip.none { background: var(--field); color: var(--tertiary); }
 
   /* A native <select>, styled as a pill -- it's the smallest control that
@@ -545,17 +601,17 @@
     flex: none; border: none; border-radius: 999px; padding: 3px 9px;
     font-size: 10.5px; font-weight: 650; font-family: inherit; cursor: pointer;
   }
-  .status-select.todo { background: var(--field); color: var(--secondary); }
-  .status-select.progress { background: color-mix(in srgb, var(--accent) 16%, transparent); color: var(--accent); }
-  .status-select.blocked { background: color-mix(in srgb, var(--red) 16%, transparent); color: #c62b22; }
-  .status-select.done { background: color-mix(in srgb, var(--green) 18%, transparent); color: #1b8a3e; }
 
   .pane-filters { display: flex; align-items: center; gap: 10px; margin: 16px 0 4px; flex-wrap: wrap; }
-  .pane-filters select {
+  /* One picker, three places: the meetings filter, the tasks filter, and
+     the project on an open meeting -- which until now was a bare, unstyled
+     <select> sitting in the middle of a line of text. */
+  .pane-filters select, .select {
     font: inherit; font-size: 11.5px; color: var(--label);
-    background: var(--field); border: none; border-radius: 7px;
+    background: var(--field); border: none; border-radius: var(--r-sm);
     padding: 4px 9px; cursor: pointer;
   }
+  .detail-field { display: inline-flex; align-items: center; gap: 6px; }
   .filter-chips { display: flex; gap: 4px; }
   .filter-chip {
     font: inherit; font-size: 11px; color: var(--secondary);
@@ -594,10 +650,22 @@
     <main class="content" id="shell-content">
       <div class="pane on" data-pane="overview">
         <div id="overview-live"></div>
-        <div class="group-title day">Today</div>
+        <!-- The tiles answer the same four questions for either stretch, so
+             the heading and the toggle sit on one line and the tiles below
+             them never change shape. -->
+        <div class="head-row">
+          <div class="group-title day" id="overview-span-title">Today</div>
+          <div class="segmented" id="overview-span" role="group" aria-label="Which stretch the figures cover">
+            <button type="button" data-span="today" aria-pressed="true">Today</button>
+            <button type="button" data-span="all" aria-pressed="false">All time</button>
+          </div>
+        </div>
         <div class="tiles" id="overview-tiles"></div>
-        <div class="group-title day">Last 14 days</div>
-        <div class="card chart">
+        <div class="provenance" id="overview-provenance"></div>
+        <div class="group-title day">Last 8 weeks</div>
+        <!-- No card around the chart: eight short columns inside a wide
+             filled panel read as an empty band rather than as a chart. -->
+        <div class="chart">
           <div class="bars" id="overview-bars"></div>
           <div class="legend" id="overview-legend"></div>
         </div>
@@ -684,16 +752,22 @@
     // whose entry carries a task_id gets a green accent and a small note
     // pointing at the Tasks pane, so a classified snippet is visible right
     // where it was dictated, not only inside Tasks.
+    // One project tag, drawn the same wherever a row names its project:
+    // History, Meetings and Overview all call this rather than each building
+    // the same span with its own colour lookup.
+    function entityTagHTML(name) {
+      if (!name) return '';
+      return '<span class="tag task-entity-tag" style="--dot:' + entityColor(name) + '">' +
+        escapeHtml(name) + '</span>';
+    }
+
     function taskHint(e) {
       if (!e.task_id) return { cls: '', html: '' };
       var tags = '<span class="tag task-detected">Task detected</span>';
-      if (e.task_entity) {
-        tags += '<span class="tag task-entity-tag" style="--dot:' + entityColor(e.task_entity) + '">' +
-          escapeHtml(e.task_entity) + '</span>';
-      }
+      tags += entityTagHTML(e.task_entity);
       if (e.task_status) {
-        tags += '<span class="tag status-' + e.task_status + '">' +
-          (taskStatusLabel[e.task_status] || e.task_status) + '</span>';
+        tags += '<span class="tag ' + taskStatusClass(e.task_status) + '">' +
+          escapeHtml(taskStatusLabel[e.task_status] || e.task_status) + '</span>';
       }
       return {
         cls: ' task-detected',
@@ -800,12 +874,6 @@
       return (parts[0].charAt(0) + (parts[1] ? parts[1].charAt(0) : '')).toUpperCase();
     }
 
-    function clockTime(seconds) {
-      seconds = Math.max(0, Math.round(seconds || 0));
-      var m = Math.floor(seconds / 60), s = seconds % 60;
-      return (m < 10 ? '0' : '') + m + ':' + (s < 10 ? '0' : '') + s;
-    }
-
     // talkStripHTML is the whole call as one bar: each person's share, plus
     // whatever nobody was speaking for.
     function talkStripHTML(e) {
@@ -857,6 +925,17 @@
       '</button>';
     }
 
+    // The same list of <option>s three pickers needed, each of which used to
+    // build it: the meetings filter, the project on an open meeting, and the
+    // tasks filter. Only the label on the empty choice differs, so that is
+    // the argument.
+    function entityOptionsHTML(names, selected, emptyLabel) {
+      return '<option value="">' + escapeHtml(emptyLabel) + '</option>' +
+        names.map(function (n) {
+          return '<option value="' + escapeHtml(n) + '"' + (n === selected ? ' selected' : '') + '>' + escapeHtml(n) + '</option>';
+        }).join('');
+    }
+
     function renderMeetingFilter(root, meetings) {
       var names = [];
       meetings.forEach(function (m) {
@@ -872,10 +951,7 @@
       if (meetingEntityFilter && names.indexOf(meetingEntityFilter) === -1) meetingEntityFilter = '';
 
       root.innerHTML =
-        '<select id="meeting-filter-entity"><option value="">All projects</option>' +
-        names.map(function (n) {
-          return '<option value="' + escapeHtml(n) + '"' + (n === meetingEntityFilter ? ' selected' : '') + '>' + escapeHtml(n) + '</option>';
-        }).join('') + '</select>' +
+        '<select id="meeting-filter-entity">' + entityOptionsHTML(names, meetingEntityFilter, 'All projects') + '</select>' +
         '<input type="search" id="meeting-search" class="filter-search" placeholder="Search meetings" value="' + escapeHtml(meetingQuery) + '">' +
         '<button type="button" class="act" id="open-people">People</button>' +
         '<button type="button" class="act" id="open-voices">Voices</button>';
@@ -1060,10 +1136,13 @@
         // Naming is only offered where it can mean something: a speaker with
         // no voice fingerprint cannot be recognised anywhere else, so a name
         // on them would be a label that never travels.
+        // ...and where it cannot, the row says why. A missing button with no
+        // explanation reads as a bug in the app rather than as a fact about
+        // the recording.
         var nameBtn = sp.identified
           ? '<button type="button" class="name-btn" data-name-speaker="' + sp.row + '">' +
               (sp.name ? 'Rename' : 'Name this voice') + '</button>'
-          : '';
+          : '<span class="tag" title="Too little speech to recognise this voice anywhere else">No voice print</span>';
         return '<div class="spk-row" data-speaker-row="' + sp.row + '">' +
           '<span class="spk-name"><span class="swatch" style="background:' + speakerColor(sp.speaker) + '"></span>' +
             '<b>' + escapeHtml(speakerLabel(sp.speaker, sp.name)) + '</b>' + nameBtn + '</span>' +
@@ -1078,8 +1157,8 @@
 
       return '<div class="stats-row">' +
         '<div class="panel"><h3>Talk time</h3>' +
-          '<div class="talk-strip" style="height:10px">' + share + '</div>' +
-          '<div class="spk-rows" style="margin-top:12px">' + rows + '</div></div>' +
+          '<div class="talk-strip tall">' + share + '</div>' +
+          '<div class="spk-rows">' + rows + '</div></div>' +
         '<div class="panel"><h3>At a glance</h3><div class="facts">' +
           '<div class="fact"><b>' + detailSpeakers.length + '</b><span>speakers</span></div>' +
           '<div class="fact"><b>' + detailTurns.length + '</b><span>replies</span></div>' +
@@ -1157,26 +1236,24 @@
         '<div class="detail-head">' +
           '<button type="button" class="back-btn" id="detail-back">&#8249; Meetings</button>' +
           '<span class="detail-title">' + escapeHtml(meeting.day + ' · ' + meeting.time) + '</span>' +
-          '<input type="search" id="turn-search" class="filter-search" placeholder="Search transcript" style="margin-left:auto" value="' + escapeHtml(turnQuery) + '">' +
+          '<input type="search" id="turn-search" class="filter-search" placeholder="Search transcript" value="' + escapeHtml(turnQuery) + '">' +
         '</div>' +
         '<div class="detail-meta"><span>' + duration(meeting.recording_seconds) + '</span>' +
           (meeting.duration_seconds ? '<span>decoded in ' + duration(meeting.duration_seconds) + '</span>' : '') +
-          '<span>Project: <select id="meeting-entity"></select></span>' +
+          '<span class="detail-field">Project <select id="meeting-entity" class="select"></select></span>' +
           detailTranscribeHTML(meeting) +
         '</div>' +
-        (meeting.summary ? '<div class="panel" style="margin-bottom:14px"><h3>Summary</h3>' + escapeHtml(meeting.summary) + '</div>' : '') +
+        (meeting.summary ? '<div class="panel spaced-below"><h3>Summary</h3>' + escapeHtml(meeting.summary) + '</div>' : '') +
         statsHTML(meeting) +
         timelineHTML(meeting) +
         turnsHTML() +
         (!detailTurns.length && meeting.text
-          ? '<div class="panel" style="margin-top:14px"><h3>Transcript</h3>' + escapeHtml(meeting.text) + '</div>' : '');
+          ? '<div class="panel spaced"><h3>Transcript</h3>' + escapeHtml(meeting.text) + '</div>' : '');
 
       var picker = root.querySelector('#meeting-entity');
       var names = ((window.voxlog && window.voxlog.settings && window.voxlog.settings.entity_dictionary) || []).slice();
       if (entity && names.indexOf(entity) === -1) names.push(entity);
-      picker.innerHTML = '<option value="">Unfiled</option>' + names.map(function (n) {
-        return '<option value="' + escapeHtml(n) + '"' + (n === entity ? ' selected' : '') + '>' + escapeHtml(n) + '</option>';
-      }).join('');
+      picker.innerHTML = entityOptionsHTML(names, entity, 'Unfiled');
       picker.addEventListener('change', function () {
         window.setMeetingEntity(meeting.id, picker.value);
       });
@@ -1493,7 +1570,7 @@
             '<span class="said">' + escapeHtml(c.text || '(no transcript)') + '</span>' +
             '<span class="q">' + escapeHtml(c.day) + '</span></button>';
         }).join('');
-        naming = '<h3 style="margin:20px 0 8px">Name this voice</h3>' +
+        naming = '<div class="group-title day">Name this voice</div>' +
           '<div class="panel">' +
             '<p class="hint" style="margin-top:0">Naming one speaker names every reply they ever spoke. ' +
               (similarClips.length
@@ -1512,7 +1589,7 @@
         '<div class="voice-list">' + known + '</div>' +
         naming +
         (unnamed.length && !namingRow
-          ? '<h3 style="margin:20px 0 8px">Not named yet</h3><div class="voice-list">' +
+          ? '<div class="group-title day">Not named yet</div><div class="voice-list">' +
               unnamed.map(function (c) {
                 return '<div class="voice-item">' +
                   '<span class="avatar" style="background:var(--spk-x);margin:0">?</span>' +
@@ -1601,23 +1678,6 @@
       audio.play().catch(function () {});
     }
 
-    // entityColor turns a task's entity name into a stable colour, so the
-    // same project always draws the same dot without a colour picked or
-    // stored anywhere -- a plain string hash into a small fixed palette.
-    function entityColor(name) {
-      // Unfiltered is the catch-all, not a real project -- a neutral dot
-      // says so at a glance instead of it looking like just another one of
-      // the user's configured projects.
-      if (name === 'Unfiltered') return '#8e8e93';
-      var hash = 0;
-      for (var i = 0; i < name.length; i++) { hash = (hash * 31 + name.charCodeAt(i)) >>> 0; }
-      var hues = ['#007aff', '#af52de', '#34c759', '#ff9500', '#ff3b30', '#5e5ce6', '#00c7be'];
-      return hues[hash % hues.length];
-    }
-
-    var taskStatusLabel = { todo: 'To do', in_progress: 'In progress', blocked: 'Blocked', done: 'Done' };
-    function taskStatusClass(status) { return status === 'in_progress' ? 'progress' : status; }
-
     // renderTasks draws the Tasks pane: a status summary bar, then tasks
     // grouped by their LLM-assigned entity (project/client/topic) -- the
     // classification step decides is_task/entity/reminder; this only lays
@@ -1646,10 +1706,7 @@
       if (taskFilter.entity && names.indexOf(taskFilter.entity) === -1) taskFilter.entity = '';
 
       var entitySelect = names.length
-        ? '<select id="task-filter-entity"><option value="">All projects</option>' +
-          names.map(function (n) {
-            return '<option value="' + escapeHtml(n) + '"' + (n === taskFilter.entity ? ' selected' : '') + '>' + escapeHtml(n) + '</option>';
-          }).join('') + '</select>'
+        ? '<select id="task-filter-entity">' + entityOptionsHTML(names, taskFilter.entity, 'All projects') + '</select>'
         : '';
       var statusChips = ['', 'todo', 'in_progress', 'blocked', 'done'].map(function (s) {
         return '<button type="button" class="filter-chip' + (taskFilter.status === s ? ' on' : '') + '" data-status="' + s + '">' +
@@ -1738,8 +1795,8 @@
             '</div>' +
             '<select class="status-select ' + taskStatusClass(t.status) + '" data-id="' + t.id + '">' + options + '</select>' +
             '<div class="task-acts">' +
-              '<button type="button" class="task-act" data-act="reject" data-id="' + t.id + '" title="Wrong -- not actually a task">Not a task</button>' +
-              '<button type="button" class="task-act" data-act="delete" data-id="' + t.id + '" title="Remove">Delete</button>' +
+              '<button type="button" class="act task-act" data-act="reject" data-id="' + t.id + '" title="Wrong -- not actually a task">Not a task</button>' +
+              '<button type="button" class="act task-act" data-act="delete" data-id="' + t.id + '" title="Remove">Delete</button>' +
             '</div>' +
           '</summary>' +
           '<div class="task-panel">' +
@@ -1867,19 +1924,27 @@
     // different array, so the lookup is the one thing that has to be passed
     // in rather than shared.
     function wireEntries(root, entryFor) {
-      root.querySelectorAll('.entry').forEach(function (row) {
+      // Task rows are wired by whoever drew them: clicking one goes to the
+      // Tasks pane rather than copying its text.
+      root.querySelectorAll('.entry:not([data-kind="task"])').forEach(function (row) {
         // Stashed on the element itself rather than kept in this closure:
         // keyboard navigation (below) needs to read the entry back off
         // whichever row is highlighted, without caring which list drew it.
         row._entry = entryFor(row);
-        row.querySelector('.chev').addEventListener('click', function (ev) {
-          // Expanding is not "using" the entry -- keep it off the output path.
-          ev.stopPropagation();
-          var open = row.classList.toggle('expanded');
-          this.title = open ? 'Collapse' : 'Expand';
-          // A collapsed row must not leave a dead player behind it.
-          if (!open && currentPlayer && currentPlayer.row === row) stopPlayer();
-        });
+        // Not every row has one: the compact meeting row in Overview's Recent
+        // has nothing to expand, and reaching through a missing chevron used
+        // to throw here and leave every row after it unwired.
+        var chev = row.querySelector('.chev');
+        if (chev) {
+          chev.addEventListener('click', function (ev) {
+            // Expanding is not "using" the entry -- keep it off the output path.
+            ev.stopPropagation();
+            var open = row.classList.toggle('expanded');
+            this.title = open ? 'Collapse' : 'Expand';
+            // A collapsed row must not leave a dead player behind it.
+            if (!open && currentPlayer && currentPlayer.row === row) stopPlayer();
+          });
+        }
         row.querySelector('.body').addEventListener('click', function () {
           var entry = entryFor(row);
           // A meeting with no transcript has nothing to re-deliver; clicking
@@ -1964,53 +2029,115 @@
 
     // ---------------- overview ----------------
 
+    // Which stretch the tiles show. Lives here rather than in Go because
+    // both sets of figures arrive in the same payload -- switching is a
+    // re-render, never another round trip.
+    var overviewSpan = 'today';
+
     function renderOverview() {
       var ov = (window.voxlog && window.voxlog.overview) || {};
+      wireSpanToggle();
       renderOverviewTiles(ov);
+      renderOverviewProvenance(ov);
       renderOverviewChart(ov);
       renderOverviewRecent();
+    }
+
+    var spanWired = false;
+    function wireSpanToggle() {
+      if (spanWired) return;
+      var group = document.getElementById('overview-span');
+      if (!group) return;
+      spanWired = true;
+      group.addEventListener('click', function (ev) {
+        var button = ev.target.closest('button[data-span]');
+        if (!button || button.dataset.span === overviewSpan) return;
+        overviewSpan = button.dataset.span;
+        group.querySelectorAll('button').forEach(function (b) {
+          b.setAttribute('aria-pressed', String(b === button));
+        });
+        document.getElementById('overview-span-title').textContent =
+          overviewSpan === 'all' ? 'All time' : 'Today';
+        renderOverviewTiles((window.voxlog && window.voxlog.overview) || {});
+      });
+    }
+
+    // Minutes for a day, hours for a lifetime: 12 840 min is a number nobody
+    // reads, and 214 h is the same fact.
+    function spanAmount(seconds) {
+      var mins = Math.round((seconds || 0) / 60);
+      if (mins < 180) return mins + '<small> min</small>';
+      return Math.round(mins / 60) + '<small> h</small>';
+    }
+
+    // 1243000 is not a number anybody reads off a tile.
+    function grouped(n) {
+      return (n || 0).toLocaleString();
+    }
+
+    function typingSaved(minutes) {
+      var m = minutes || 0;
+      if (m < 120) return '\u2248 ' + m + ' min of typing saved';
+      return '\u2248 ' + Math.round(m / 60) + ' h of typing saved';
     }
 
     function renderOverviewTiles(ov) {
       var el = document.getElementById('overview-tiles');
       if (!el) return;
+      var span = (overviewSpan === 'all' ? ov.all_time : ov.today) || {};
       el.innerHTML =
-        '<div class="tile"><div class="k">Recordings</div><div class="v">' + (ov.recordings || 0) + '</div></div>' +
-        '<div class="tile"><div class="k">Words dictated</div><div class="v">' + (ov.words || 0) + '</div>' +
-          // "≈" is load-bearing: 40 words/minute is a typing-speed estimate,
+        '<div class="tile"><div class="k">Recordings</div><div class="v">' + grouped(span.recordings) + '</div></div>' +
+        '<div class="tile"><div class="k">Words dictated</div><div class="v">' + grouped(span.words) + '</div>' +
+          // "\u2248" is load-bearing: 40 words/minute is a typing-speed estimate,
           // never this user's actual one (see buildOverview in stats.go).
-          '<div class="d">≈ ' + (ov.typing_minutes || 0) + ' min of typing saved</div></div>' +
-        '<div class="tile"><div class="k">Time speaking</div><div class="v">' + minutes(ov.speaking_seconds) + '<small> min</small></div></div>' +
-        '<div class="tile"><div class="k">Median decode</div><div class="v">' + (ov.median_decode || 0).toFixed(1) + '<small> s</small></div></div>';
+          '<div class="d">' + typingSaved(span.typing_minutes) + '</div></div>' +
+        '<div class="tile"><div class="k">Time speaking</div><div class="v">' + spanAmount(span.speaking_seconds) + '</div></div>' +
+        '<div class="tile"><div class="k">Median decode</div><div class="v">' + (span.median_decode || 0).toFixed(1) + '<small> s</small></div></div>';
     }
 
-    // The chart draws one column per day, stacking meetings above
-    // dictations, scaled to the tallest column -- and a day with nothing in
-    // it still gets its label and an empty column, so a gap reads as a gap
-    // rather than vanishing from the axis.
+    // Since when, and how much of that stretch has anything in it. A rolling
+    // window cannot answer either, which is why the line exists at all -- and
+    // it says nothing at all until there is a first recording to date it from.
+    function renderOverviewProvenance(ov) {
+      var el = document.getElementById('overview-provenance');
+      if (!el) return;
+      if (!ov.first_day) { el.textContent = ''; return; }
+      var since = new Date(ov.first_day + 'T00:00:00')
+        .toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+      var total = (ov.all_time && ov.all_time.speaking_seconds) || 0;
+      el.textContent = 'Recording since ' + since + ' \u00b7 ' +
+        (ov.active_days || 0) + ' of ' + (ov.span_days || 0) + ' days have something in them \u00b7 ' +
+        duration(total) + ' of audio';
+    }
+
+    // One column per week, stacking meetings above dictations, scaled to the
+    // tallest column -- and a week with nothing in it still gets its label and
+    // an empty column, so a gap reads as a gap rather than vanishing from the
+    // axis.
     function renderOverviewChart(ov) {
       var bars = document.getElementById('overview-bars');
       var legend = document.getElementById('overview-legend');
       if (!bars || !legend) return;
-      var days = ov.days || [];
+      var weeks = ov.weeks || [];
       var max = 1;
-      days.forEach(function (d) { max = Math.max(max, d.dictations + d.meetings); });
+      weeks.forEach(function (w) { max = Math.max(max, w.dictations + w.meetings); });
 
-      bars.innerHTML = days.map(function (d, i) {
-        var dict = Math.round(d.dictations / max * 76);
-        var meet = Math.round(d.meetings / max * 76);
-        var today = i === days.length - 1 ? ' today' : '';
-        return '<div class="col' + today + '"><div class="stack">' +
+      bars.innerHTML = weeks.map(function (w, i) {
+        var dict = Math.round(w.dictations / max * 42);
+        var meet = Math.round(w.meetings / max * 42);
+        var now = i === weeks.length - 1 ? ' today' : '';
+        return '<div class="col' + now + '" title="Week of ' + escapeHtml(w.week) + ': ' +
+            w.dictations + ' dictations, ' + w.meetings + ' meetings"><div class="stack">' +
           (meet ? '<div class="meet" style="height:' + Math.max(meet, 4) + 'px"></div>' : '') +
           (dict ? '<div class="dict" style="height:' + Math.max(dict, 3) + 'px"></div>' : '') +
-          '</div><div class="lbl">' + d.label + '</div></div>';
+          '</div><div class="lbl">' + escapeHtml(w.label || '') + '</div></div>';
       }).join('');
 
       legend.innerHTML =
         '<span><i class="swatch" style="background:var(--accent)"></i> Dictation</span>' +
-        '<span><i class="swatch" style="background:#af52de"></i> Meetings</span>' +
-        '<span style="margin-left:auto">' + (ov.total_recordings || 0) + ' recordings · ' +
-          (ov.total_words || 0) + ' words · ' + duration(ov.total_seconds) + ' of audio</span>';
+        '<span><i class="swatch" style="background:var(--purple)"></i> Meetings</span>' +
+        '<span style="margin-left:auto">' + grouped(ov.window_recordings) + ' recordings \u00b7 ' +
+          grouped(ov.window_words) + ' words \u00b7 ' + duration(ov.window_seconds) + ' of audio</span>';
     }
 
     // Recent reuses the same row markup History and Meetings draw from --
@@ -2053,10 +2180,46 @@
         '<span class="pill" title="Length of the recording">' + duration(e.recording_seconds) + '</span>' +
         '<div class="body"><div class="text">' + escapeHtml(body) + '</div>' +
           '<div class="meta"><span>' + e.time + '</span><span>Meeting</span>' +
+            entityTagHTML(e.entity) +
             decodeTagHTML(e) +
           '</div></div>' +
       '</div>';
     }
+
+    // A task row is the same .entry every other row is, with one substitution:
+    // the left pill carries no elapsed time (a task has none) but the status,
+    // which is the thing worth scanning down that column for a task.
+    function taskRecentRowHTML(t, ei) {
+      var from = t.source_kind === 'meeting' ? 'meetings' : 'history';
+      return '<div class="entry task-detected" data-kind="task" data-entry="' + ei + '" data-task="' + escapeHtml(t.id) + '">' +
+        '<span class="pill ' + taskStatusClass(t.status) + '" title="Status">' +
+          escapeHtml(taskStatusLabel[t.status] || t.status) + '</span>' +
+        '<div class="body"><div class="text">' + escapeHtml(t.text) + '</div>' +
+          '<div class="meta"><span>' + escapeHtml(clockOf(t.created)) + '</span><span class="tag">Task</span>' +
+            entityTagHTML(t.entity) +
+            '<span>from ' + (from === 'meetings' ? 'meeting' : 'dictation') + '</span>' +
+          '</div></div>' +
+      '</div>';
+    }
+
+    // HH:MM out of an RFC3339 stamp. Dictations and meetings arrive with the
+    // time already formatted by Go; a task carries only its timestamp.
+    function clockOf(stamp) {
+      if (!stamp) return '';
+      var at = new Date(stamp);
+      return isNaN(at) ? '' : at.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
+    }
+
+    // Sortable to the nanosecond where there is one. Dictation and meeting ids
+    // are RFC3339Nano, a task's created stamp is plain RFC3339 -- comparing
+    // those as strings puts a task before a dictation from the same second
+    // whichever way round they happened, so the key is the parsed time.
+    function recentKey(stamp) {
+      var at = Date.parse(stamp);
+      return isNaN(at) ? 0 : at;
+    }
+
+    var overviewRecentRows = 10;
 
     function renderOverviewRecent() {
       var root = document.getElementById('overview-recent');
@@ -2065,32 +2228,44 @@
         return acc.concat(g.entries);
       }, []);
       var meetings = (window.voxlog && window.voxlog.meetings) || [];
+      var tasks = (window.voxlog && window.voxlog.tasks) || [];
 
-      var recent = dictations.map(function (e) { return { kind: 'd', e: e }; })
-        .concat(meetings.map(function (e) { return { kind: 'm', e: e }; }))
-        .sort(function (a, b) { return a.e.id < b.e.id ? 1 : -1; })
-        .slice(0, 3);
+      var recent = dictations.map(function (e) { return { kind: 'd', at: recentKey(e.id), e: e }; })
+        .concat(meetings.map(function (e) { return { kind: 'm', at: recentKey(e.id), e: e }; }))
+        // A task appears where it was created, which is when it was said --
+        // editing one later does not make it news again.
+        .concat(tasks.map(function (t) { return { kind: 't', at: recentKey(t.created), e: t }; }))
+        .sort(function (a, b) { return b.at - a.at; })
+        .slice(0, overviewRecentRows);
 
       root.innerHTML = recent.length
-        ? recent.map(function (r, i) { return r.kind === 'm' ? meetingRecentRowHTML(r.e, 0, i) : dictationRowHTML(r.e, 0, i); }).join('')
+        ? recent.map(function (r, i) {
+            if (r.kind === 't') return taskRecentRowHTML(r.e, i);
+            return r.kind === 'm' ? meetingRecentRowHTML(r.e, 0, i) : dictationRowHTML(r.e, 0, i);
+          }).join('')
         : '<div class="empty">Nothing recorded yet.</div>';
 
       wireEntries(root, function (row) {
         return recent[parseInt(row.dataset.entry, 10)] && recent[parseInt(row.dataset.entry, 10)].e;
       });
+
+      // A task row goes where it says it goes: the Tasks pane, with that task
+      // already open. Copying its one-line text -- what every other row does
+      // on click -- would be the wrong promise for a row that is a thing to
+      // work on rather than a thing that was said.
+      root.querySelectorAll('.entry[data-kind="task"]').forEach(function (row) {
+        row.addEventListener('click', function () { openTaskInPane(row.dataset.task); });
+      });
     }
 
-    // Minutes, rounded -- the tile shows a whole number, not a number of
-    // seconds nobody would read at a glance.
-    function minutes(seconds) {
-      return Math.round((seconds || 0) / 60);
-    }
-
-    // mm:ss for the live banner's elapsed time.
-    function elapsedLabel(seconds) {
-      var total = Math.max(0, Math.round(seconds || 0));
-      var m = Math.floor(total / 60), s = total % 60;
-      return m + ':' + (s < 10 ? '0' : '') + s;
+    function openTaskInPane(id) {
+      if (!id) return;
+      openTaskIDs[id] = true;
+      renderTasks(document.getElementById('task-summary'), document.getElementById('task-filters'),
+        document.getElementById('task-groups'), (window.voxlog && window.voxlog.tasks) || []);
+      window.selectPane('tasks');
+      var opened = document.querySelector('#task-groups .task-detail[data-id="' + id.replace(/"/g, '\\"') + '"]');
+      if (opened) opened.scrollIntoView({ block: 'center' });
     }
 
     // decodeQueue is what the app last told us is queued or decoding. The
@@ -2174,7 +2349,7 @@
       el.innerHTML =
         '<div class="live"><span class="pulse"></span>' +
           '<div><div class="what">Meeting recording</div><div class="sub">Microphone + system audio · dictation still works</div></div>' +
-          '<div class="elapsed">' + elapsedLabel(status.seconds) + '</div>' +
+          '<div class="elapsed">' + clockTime(status.seconds) + '</div>' +
           '<button type="button" class="act" id="overview-stop">Stop</button>' +
         '</div>';
       var stop = document.getElementById('overview-stop');
@@ -2209,21 +2384,6 @@
       }
     }
     document.addEventListener('visibilitychange', updateMeetingPoll);
-
-    // Recording length, as minutes and seconds -- a call is not a number of
-    // seconds anybody reads.
-    function duration(seconds) {
-      var total = Math.round(seconds || 0);
-      var h = Math.floor(total / 3600), m = Math.floor(total / 60) % 60, s = total % 60;
-      if (h > 0) return h + 'h ' + m + 'm';
-      if (m > 0) return m + 'm ' + (s < 10 ? '0' : '') + s + 's';
-      return s + 's';
-    }
-    function escapeHtml(s) {
-      var d = document.createElement('div');
-      d.textContent = s;
-      return d.innerHTML;
-    }
 
     // Panes are switched here and nowhere else. The settings fragment runs
     // its own nav, scoped to itself, so the two never see each other's

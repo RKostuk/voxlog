@@ -5,7 +5,7 @@ import (
 	"strings"
 )
 
-//go:embed assets/*.html assets/*.css
+//go:embed assets/*.html assets/*.css assets/*.js
 var assets embed.FS
 
 // Markers are the lines a page carries where a shared file belongs. The
@@ -14,6 +14,7 @@ var assets embed.FS
 // worse than no preview, so both get the same bytes at load.
 const (
 	kitCSSMarker       = "  /* KIT_CSS */"
+	kitJSMarker        = "  /* KIT_JS */"
 	settingsCSSMarker  = "  /* SETTINGS_CSS */"
 	indicatorCSSMarker = "  /* INDICATOR_CSS */"
 	settingsMarkup     = "  <!-- SETTINGS_PANE -->"

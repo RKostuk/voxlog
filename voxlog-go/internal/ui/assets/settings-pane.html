@@ -1391,17 +1391,11 @@
             r.load_seconds.toFixed(1) + 's to load</span>') + '</div>' +
           '<div style="margin-top:2px">' +
           (r.error ? '<span class="pill-bad">' + r.error + '</span>'
-                   : (r.text ? escapeHTML(r.text) : '<span class="note">(nothing recognized)</span>')) +
+                   : (r.text ? escapeHtml(r.text) : '<span class="note">(nothing recognized)</span>')) +
           '</div></div>';
       });
       el.innerHTML = html;
       el.style.display = '';
-    }
-
-    function escapeHTML(s) {
-      return String(s).replace(/[&<>"]/g, function (c) {
-        return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c];
-      });
     }
 
     document.getElementById('model-test-btn').addEventListener('click', function () {

@@ -207,7 +207,11 @@ func newDrawerWindow(tasks *task.Store, placement string) {
 		log.Printf("drawer: %v", err)
 		return
 	}
-	w.SetHtml(string(html))
+	// The same shared kit the main window gets: this page used to carry its
+	// own copy of the tokens and helpers, and the two had drifted.
+	page := injectAsset(string(html), kitCSSMarker, "kit.css")
+	page = injectAsset(page, kitJSMarker, "kit.js")
+	w.SetHtml(page)
 
 	drawerMu.Lock()
 	drawerWin = w
