@@ -38,10 +38,13 @@
   .m-foot .act { margin-left: auto; }
   .avatars { display: flex; align-items: center; }
   .avatar {
-    width: 20px; height: 20px; border-radius: 50%; margin-right: -6px;
+    width: 20px; height: 20px; border-radius: 50%; flex: none;
     display: grid; place-items: center; color: #fff;
-    font-size: 9px; font-weight: 600; border: 1.5px solid var(--bg);
+    font-size: var(--fs-micro); font-weight: 600; border: 1.5px solid var(--bg);
   }
+  /* Only the stack on a meeting card overlaps. A single avatar at the head of
+     a People row was pulling the name 6px into it. */
+  .avatars .avatar { margin-right: -6px; }
   /* How the call was shared out, as one bar. Two pixels of background
      between segments so neighbouring colours never merge into a third. */
   .talk-strip { grid-column: 1 / -1; display: flex; gap: 2px; height: 5px; margin-top: 9px; }
@@ -49,7 +52,7 @@
   /* Inside an open meeting the same strip is the headline, not a footnote. */
   .talk-strip.tall { height: 10px; }
 
-  .detail-head { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; flex-wrap: wrap; }
+  .detail-head { display: flex; align-items: center; gap: 10px; margin: 16px 0 10px; flex-wrap: wrap; }
   .detail-head .filter-search { margin-left: auto; }
   .back-btn { border: 0; background: none; color: var(--accent); cursor: pointer; padding: 2px 4px; font: inherit; }
   /* One ring, one offset, on everything focusable. Four controls had no
@@ -128,13 +131,13 @@
   /* People: one row per named voice, bar relative to the person talked with
      most. Who dominates the calendar reads faster as a length than as a
      number of seconds. */
-  .person-row { display: flex; gap: 11px; align-items: center; padding: 10px 12px; border-top: 0.5px solid var(--separator); }
+  .person-row { display: flex; gap: 10px; align-items: center; padding: var(--sp-4) var(--sp-5); border-top: 0.5px solid var(--separator); }
   .person-row:first-child { border-top: none; }
   .person-body { flex: 1; min-width: 0; }
-  .person-name { font-weight: 550; }
+  .person-name { font-weight: var(--fw-medium); }
   .person-bar { height: 6px; border-radius: 3px; background: var(--field); margin: 5px 0 4px; overflow: hidden; }
   .person-bar i { display: block; height: 100%; border-radius: 3px; }
-  .person-meta { font-size: 11px; color: var(--tertiary); }
+  .person-meta { font-size: var(--fs-caption); color: var(--tertiary); font-variant-numeric: tabular-nums; }
 
   .turn-row mark { background: color-mix(in srgb, var(--yellow) 55%, transparent); color: inherit; border-radius: 3px; }
 
@@ -970,7 +973,9 @@
         // a half-remembered sentence finds the moment it was said.
         searchAllTranscripts(meetingQuery);
       });
-      root.querySelector('#open-voices').addEventListener('click', openVoices);
+      // Wrapped, not passed straight in: as a listener, openVoices would take
+      // the click event as its row argument.
+      root.querySelector('#open-voices').addEventListener('click', function () { openVoices(0); });
       root.querySelector('#open-people').addEventListener('click', openPeople);
     }
 
@@ -1521,7 +1526,12 @@
     var namingRow = 0, similarClips = [], pickedClips = {};
 
     function openVoices(row) {
-      namingRow = row || 0;
+      // A number or nothing. This used to be `row || 0`, which let anything
+      // truthy through -- and openVoices was wired to a click listener, so
+      // "anything" was a MouseEvent, sent on to a Go binding that wanted an
+      // int64. That is what left the pane on "Loading voices…" forever:
+      // json: cannot unmarshal object into Go value of type int64.
+      namingRow = typeof row === 'number' && isFinite(row) && row > 0 ? row : 0;
       similarClips = [];
       pickedClips = {};
       showMeetingView('voices');
@@ -1550,7 +1560,7 @@
     function renderVoices(voices, unnamed) {
       var known = voices.length ? voices.map(function (v) {
         return '<div class="voice-item">' +
-          '<span class="avatar" style="background:' + speakerColor(0) + ';margin:0">' +
+          '<span class="avatar" style="background:' + speakerColor(0) + '">' +
             escapeHtml(speakerInitials(0, v.name)) + '</span>' +
           '<span><b>' + escapeHtml(v.name) + '</b><div class="sub">' + duration(v.secs) + ' of speech' +
             (v.has_clip ? '' : ' · no sample stored') + '</div></span>' +
@@ -1586,13 +1596,14 @@
       root.innerHTML =
         '<div class="detail-head"><button type="button" class="back-btn" id="voices-back">&#8249; Meetings</button>' +
           '<span class="detail-title">Voices</span></div>' +
+        '<div class="group-title day">Named</div>' +
         '<div class="voice-list">' + known + '</div>' +
         naming +
         (unnamed.length && !namingRow
           ? '<div class="group-title day">Not named yet</div><div class="voice-list">' +
               unnamed.map(function (c) {
                 return '<div class="voice-item">' +
-                  '<span class="avatar" style="background:var(--spk-x);margin:0">?</span>' +
+                  '<span class="avatar" style="background:var(--spk-x)">?</span>' +
                   '<span><b>' + escapeHtml(c.text || 'A voice with no transcript') + '</b>' +
                     '<div class="sub">' + escapeHtml(c.day) + ' · ' + duration(c.talk_secs) + ' of speech</div></span>' +
                   '<span class="voice-acts">' +

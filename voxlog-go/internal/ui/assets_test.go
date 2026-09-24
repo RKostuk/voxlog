@@ -308,3 +308,21 @@ func TestOverviewGivesRecentTheWeight(t *testing.T) {
 		t.Error("tasks no longer reach Recent")
 	}
 }
+
+// openVoices takes a speaker row. Wiring it straight to a click listener
+// handed it the MouseEvent instead, which went on to a Go binding expecting an
+// int64 -- "json: cannot unmarshal object into Go value of type int64" -- and
+// left the pane on "Loading voices…" forever. That was §14.
+func TestVoicesIsNotOpenedWithAnEvent(t *testing.T) {
+	page, err := assets.ReadFile("assets/main.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := string(page)
+	if strings.Contains(body, "addEventListener('click', openVoices)") {
+		t.Error("openVoices is wired as a listener, so its row argument is a MouseEvent")
+	}
+	if !strings.Contains(body, "namingRow = typeof row === 'number'") {
+		t.Error("openVoices no longer checks that its row is a number")
+	}
+}
