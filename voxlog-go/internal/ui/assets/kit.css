@@ -272,3 +272,17 @@ input[type=checkbox].switch:focus-visible { outline: 2px solid var(--accent); ou
   stroke-linecap: round;
   stroke-linejoin: round;
 }
+
+/* The toast kit.js raises. Fixed to the window rather than the pane: it
+   reports something that has already happened, and a pane that re-renders
+   under it must not take it with it. */
+.toast {
+  position: fixed; left: 50%; bottom: 26px; transform: translateX(-50%);
+  background: var(--label); color: var(--bg);
+  padding: 8px 14px; border-radius: var(--r-md);
+  box-shadow: 0 8px 24px var(--glass-shadow);
+  opacity: 0; pointer-events: none; transition: opacity 0.2s ease; z-index: 50;
+  max-width: 60ch;
+}
+.toast.on { opacity: 0.96; }
+@media (prefers-reduced-motion: reduce) { .toast { transition: none; } }

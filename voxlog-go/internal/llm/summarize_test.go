@@ -68,7 +68,7 @@ func TestNoExtraInstructionsAddsNoBlock(t *testing.T) {
 
 func TestParseSummaryTakesTheProjectOffTheLastLine(t *testing.T) {
 	allowed := []string{"Northwind", "Contoso"}
-	summary, entity := parseSummary("They agreed on the price.\n\nPROJECT: northwind\n", allowed)
+	_, summary, entity := parseSummary("They agreed on the price.\n\nPROJECT: northwind\n", allowed)
 	if summary != "They agreed on the price." {
 		t.Errorf("summary = %q, want the sentence with no project line", summary)
 	}
@@ -85,7 +85,7 @@ func TestParseSummaryDropsAProjectNobodyConfigured(t *testing.T) {
 		`They agreed on the price.
 Project: "Northwind Traders".`,
 	} {
-		summary, entity := parseSummary(reply, []string{"Northwind", "Contoso"})
+		_, summary, entity := parseSummary(reply, []string{"Northwind", "Contoso"})
 		if entity != "" {
 			t.Errorf("reply %q yielded entity %q, want empty", reply, entity)
 		}
@@ -100,7 +100,7 @@ Project: "Northwind Traders".`,
 // A small model forgets the last line often enough that losing the summary
 // over it would be the wrong trade.
 func TestParseSummarySurvivesAMissingProjectLine(t *testing.T) {
-	summary, entity := parseSummary("  They agreed on the price.  ", []string{"Northwind"})
+	_, summary, entity := parseSummary("  They agreed on the price.  ", []string{"Northwind"})
 	if summary != "They agreed on the price." {
 		t.Errorf("summary = %q", summary)
 	}
@@ -117,5 +117,60 @@ func TestTheProjectLineIsOnlyAskedForWhenThereAreProjects(t *testing.T) {
 	without := buildSummaryPrompt("we talked", nil, SummaryOptions{})
 	if strings.Contains(without, "PROJECT:") {
 		t.Error("the prompt asks which project, with no projects to choose from")
+	}
+}
+
+// The title leads the reply and comes off it the same way the project comes
+// off the end -- and its absence is not an error either.
+func TestParseSummaryTakesTheTitleOffTheFirstLine(t *testing.T) {
+	title, summary, entity := parseSummary(
+		"TITLE: CSV importer scope\nThey agreed on the price.\nPROJECT: Northwind",
+		[]string{"Northwind"})
+	if title != "CSV importer scope" {
+		t.Errorf("title = %q", title)
+	}
+	if summary != "They agreed on the price." {
+		t.Errorf("summary = %q, want the title line gone", summary)
+	}
+	if entity != "Northwind" {
+		t.Errorf("entity = %q", entity)
+	}
+}
+
+func TestParseSummarySurvivesAMissingTitleLine(t *testing.T) {
+	title, summary, _ := parseSummary("They agreed on the price.", nil)
+	if title != "" {
+		t.Errorf("title = %q, want empty", title)
+	}
+	// An unlabelled first line is the summary's own opening sentence; taking
+	// it for a heading would leave the summary starting mid-story.
+	if summary != "They agreed on the price." {
+		t.Errorf("summary = %q", summary)
+	}
+}
+
+func TestParseSummaryCleansAndRefusesOversizedTitles(t *testing.T) {
+	title, _, _ := parseSummary(`TITLE: "Pricing page copy."`+"\nThey agreed.", nil)
+	if title != "Pricing page copy" {
+		t.Errorf("title = %q, want the quotes and full stop gone", title)
+	}
+	long := "TITLE: " + strings.Repeat("word ", 30) + "\nThey agreed."
+	if title, _, _ := parseSummary(long, nil); title != "" {
+		t.Errorf("title = %q, want a sentence-length title refused", title)
+	}
+	// Runes, not bytes: a Ukrainian title is two bytes a letter.
+	cyrillic := "TITLE: Обсяг імпортера CSV для першого релізу\nДомовились."
+	if title, _, _ := parseSummary(cyrillic, nil); title != "Обсяг імпортера CSV для першого релізу" {
+		t.Errorf("title = %q, want the Ukrainian title kept whole", title)
+	}
+}
+
+func TestThePromptAsksForATitle(t *testing.T) {
+	p := buildSummaryPrompt("we talked", nil, SummaryOptions{Length: LengthBrief})
+	if !strings.Contains(p, "TITLE:") {
+		t.Error("the prompt does not ask for a title")
+	}
+	if strings.Index(p, "TITLE:") > strings.Index(p, "Transcript:") {
+		t.Error("the title instruction lands after the transcript")
 	}
 }

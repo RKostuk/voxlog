@@ -167,6 +167,7 @@ type meetingJSON struct {
 	Start       string     `json:"start"`
 	Seconds     float64    `json:"seconds"`
 	Summary     string     `json:"summary,omitempty"`
+	Title       string     `json:"title,omitempty"`
 	Entity      string     `json:"entity,omitempty"`
 	Speakers    []string   `json:"speakers,omitempty"`
 	Transcribed bool       `json:"transcribed"`
@@ -438,6 +439,7 @@ func listMeetings(d Deps, args json.RawMessage) (any, error) {
 			Start:       m.Start.Format(time.RFC3339),
 			Seconds:     m.RecordingSeconds,
 			Summary:     m.Summary,
+			Title:       m.Title,
 			Entity:      m.Entity,
 			Speakers:    speakerNames(speakers[m.Start.UnixNano()]),
 			Transcribed: m.Text != "",
@@ -478,6 +480,7 @@ func getMeeting(d Deps, args json.RawMessage) (any, error) {
 		Start:       m.Start.Format(time.RFC3339),
 		Seconds:     m.RecordingSeconds,
 		Summary:     m.Summary,
+		Title:       m.Title,
 		Entity:      m.Entity,
 		Speakers:    speakerNames(speakers),
 		Transcribed: m.Text != "",

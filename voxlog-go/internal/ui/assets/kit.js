@@ -53,3 +53,25 @@ function clockTime(seconds) {
   var m = Math.floor(total / 60), s = total % 60;
   return (m < 10 ? '0' : '') + m + ':' + (s < 10 ? '0' : '') + s;
 }
+
+// toast says what just happened without blocking the window. alert() cannot
+// do that job here at all: webview_go installs no WKUIDelegate, so alert,
+// confirm and prompt are no-ops -- confirm answers false and prompt answers
+// null, which is exactly why the Voices pane's Rename, Forget and Erase
+// buttons looked dead.
+var toastTimer = null;
+function toast(message) {
+  var el = document.getElementById('toast');
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'toast';
+    el.className = 'toast';
+    el.setAttribute('role', 'status');
+    el.setAttribute('aria-live', 'polite');
+    document.body.appendChild(el);
+  }
+  el.textContent = message;
+  el.classList.add('on');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(function () { el.classList.remove('on'); }, 2600);
+}

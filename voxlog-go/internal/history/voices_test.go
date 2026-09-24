@@ -274,3 +274,53 @@ func TestVoiceClipRoundTrips(t *testing.T) {
 		t.Fatal("the voice does not admit to having a sample")
 	}
 }
+
+// A voice is the speakers attached to it -- that is what recomputeVoice
+// averages -- so the pane has to be able to ask which ones those are.
+func TestSpeakersByVoiceReturnsWhatTheVoiceIsMadeOf(t *testing.T) {
+	s := NewMeetingStore(t.TempDir())
+	first := time.Date(2026, 9, 20, 9, 0, 0, 0, time.Local)
+	second := time.Date(2026, 9, 21, 9, 0, 0, 0, time.Local)
+	for _, at := range []time.Time{first, second} {
+		if err := s.Append(Meeting{Start: at, RecordingSeconds: 600}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	writeSpeakers := func(at time.Time, secs float64) int64 {
+		t.Helper()
+		if err := s.ReplaceTurns(at, []MeetingSpeaker{{
+			LocalID: 0, TalkSecs: secs, TurnCount: 2, Embed: []float32{1, 0, 0},
+		}}, []Turn{{Seq: 0, LocalID: 0, StartSecs: 0, EndSecs: secs, Text: "hello"}}, 1); err != nil {
+			t.Fatal(err)
+		}
+		speakers, err := s.Speakers(at)
+		if err != nil || len(speakers) != 1 {
+			t.Fatalf("Speakers = %v, %v", speakers, err)
+		}
+		return speakers[0].ID
+	}
+
+	quiet, loud := writeSpeakers(first, 30), writeSpeakers(second, 90)
+	v, err := s.NameSpeaker(quiet, "Alex")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.LinkSpeaker(loud, v.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	clips, err := s.SpeakersByVoice(v.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(clips) != 2 {
+		t.Fatalf("got %d clips, want both speakers", len(clips))
+	}
+	// Longest-talking first: that is the clip most worth hearing.
+	if clips[0].SpeakerRow != loud {
+		t.Errorf("clips are not ordered by talk time: %v", clips)
+	}
+	if none, err := s.SpeakersByVoice(v.ID + 999); err != nil || len(none) != 0 {
+		t.Errorf("SpeakersByVoice on an unknown voice = %v, %v", none, err)
+	}
+}

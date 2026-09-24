@@ -874,6 +874,10 @@ func onReady(store *settings.Store, histStore *history.Store, meetStore *history
 	// it invites. The Meetings pane stays; only the recorder goes.
 	applyMeetingItems := func(recording bool) {
 		listening := a.store.Get().AlwaysOn
+		// Read off the main thread, next to the other state this closure
+		// needs: a.meetingMuted takes a.mu, and taking a lock inside the
+		// main-thread block is how the menu ends up waiting on a recorder.
+		muted := a.meetingMuted()
 		ui.RunOnMain(func() {
 			if listening {
 				mMeetingHeader.Hide()
@@ -886,7 +890,10 @@ func onReady(store *settings.Store, histStore *history.Store, meetStore *history
 			mMeetingHeader.Show()
 			if recording {
 				mMeetingStatus.Show()
-				mMuteMic.SetTitle(muteMicLabel(false)) // this recording starts unmuted
+				// Not muteMicLabel(false): this runs on every poll tick, not
+				// only when a recording starts, so a hardcoded "Mute" undid
+				// the user's own mute within two seconds of the click.
+				mMuteMic.SetTitle(muteMicLabel(muted))
 				mMuteMic.Show()
 				mStopMeeting.Show()
 				mStartMeeting.Hide()

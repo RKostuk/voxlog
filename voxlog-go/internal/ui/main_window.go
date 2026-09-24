@@ -26,6 +26,7 @@ import (
 	"voxlog-go/internal/permissions"
 	"voxlog-go/internal/settings"
 	"voxlog-go/internal/task"
+	"voxlog-go/internal/usernotify"
 )
 
 // mainWin is the app's one window, if it is currently open.
@@ -270,6 +271,10 @@ type meetingJSON struct {
 	// Summary is Task Hub's short LLM summary, "" until it lands (or Task
 	// Hub is off).
 	Summary string `json:"summary,omitempty"`
+	// Title is the name summarization gave the meeting, "" for one recorded
+	// before titles existed or summarized with none. The row falls back to
+	// Day/Start, which is what every meeting used to show.
+	Title string `json:"title,omitempty"`
 	// Audio is the recording's base name, or "" if it is not on disk -- see
 	// historyEntryJSON.Audio.
 	Audio string `json:"audio"`
@@ -330,6 +335,7 @@ func meetingsJSON(ms []history.Meeting, tasks map[string]task.Task) []meetingJSO
 			DurationSeconds:  m.DurationSeconds,
 			Text:             m.Text,
 			Summary:          m.Summary,
+			Title:            m.Title,
 			Audio:            audio,
 			SystemAudio:      recordingName(m.SystemAudioPath),
 			HasAudio:         audio != "",
@@ -1081,6 +1087,26 @@ func runMainWindow(pane string, store *history.Store, meetings *history.MeetingS
 			return err.Error(), nil
 		}
 		return "", nil
+	})
+
+	// notificationState is what the Listening pane needs to say whether the
+	// recording notice will actually appear. macOS refusing the permission
+	// is silent everywhere else in the app, and a courtesy banner nobody
+	// sees is worse than no feature at all.
+	w.Bind("notificationState", func() (map[string]any, error) {
+		st := usernotify.Status()
+		return map[string]any{
+			"decided":   st.Decided,
+			"granted":   st.Granted,
+			"fell_back": st.FellBack,
+		}, nil
+	})
+
+	// ...and the way to fix it, since the pane cannot grant the permission
+	// itself: macOS only asks once, and after that it is System Settings or
+	// nothing.
+	w.Bind("openNotificationSettings", func() error {
+		return exec.Command("open", "x-apple.systempreferences:com.apple.preference.notifications").Run()
 	})
 
 	// revealModels opens the models directory in Finder, so downloaded

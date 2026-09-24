@@ -26,9 +26,9 @@ const (
 )
 
 // Summarize asks the model for a short plain-text summary of a meeting
-// transcript, and for the project that meeting belongs to. The reply isn't
-// JSON: it is the summary, then one trailing PROJECT: line, which is all
-// parseSummary has to find.
+// transcript, a name for it, and the project it belongs to. The reply isn't
+// JSON: it is one leading TITLE: line, the summary, then one trailing
+// PROJECT: line, which is all parseSummary has to find.
 //
 // The project comes out of this pass rather than a classifier of its own
 // because the model has just read the whole transcript to write the summary.
@@ -39,26 +39,42 @@ const (
 // answer -- a meeting that is plainly not about any configured project has no
 // project, and inventing "Unfiltered" for it (as task classification does)
 // would file every stray call under one heading.
-func (c *Cache) Summarize(modelDir, text string, entities []string, opts SummaryOptions, ep Endpoint) (summary, entity string, err error) {
+func (c *Cache) Summarize(modelDir, text string, entities []string, opts SummaryOptions, ep Endpoint) (title, summary, entity string, err error) {
 	target, err := c.resolve(modelDir, ep)
 	if err != nil {
-		return "", "", err
+		return "", "", "", err
 	}
 	content, err := chatCompletion(target, buildSummaryPrompt(text, entities, opts))
 	if err != nil {
-		return "", "", err
+		return "", "", "", err
 	}
-	summary, entity = parseSummary(content, entities)
-	return summary, entity, nil
+	title, summary, entity = parseSummary(content, entities)
+	return title, summary, entity, nil
 }
 
-// parseSummary splits the reply into the summary and the project. A reply
-// with no PROJECT: line, or one naming something that is not on the list, is
-// a summary with no project -- never an error: the summary is the part worth
-// keeping, and a local model forgets the last line often enough that losing
+// parseSummary splits the reply into the title, the summary and the project.
+// A reply missing either marker line, or naming a project that is not on the
+// list, still yields a summary -- never an error: the summary is the part
+// worth keeping, and a local model forgets a marker often enough that losing
 // the whole reply over it would be the wrong trade.
-func parseSummary(content string, entities []string) (summary, entity string) {
+func parseSummary(content string, entities []string) (title, summary, entity string) {
 	lines := strings.Split(strings.TrimSpace(content), "\n")
+
+	// The title is the first non-empty line, and only if it is labelled: an
+	// unlabelled first line is the summary's own opening sentence, and
+	// promoting that to a heading would leave the summary starting mid-story.
+	for i, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		if rest, ok := cutPrefixFold(line, titleLabel); ok {
+			title = cleanTitle(rest)
+			lines = lines[i+1:]
+		}
+		break
+	}
+
 	for i := len(lines) - 1; i >= 0; i-- {
 		line := strings.TrimSpace(lines[i])
 		if line == "" {
@@ -71,10 +87,32 @@ func parseSummary(content string, entities []string) (summary, entity string) {
 		// Drop the label line whether or not its value matches anything: it
 		// is an instruction's echo, not a sentence about the meeting.
 		summary = strings.TrimSpace(strings.Join(lines[:i], "\n"))
-		return summary, matchEntity(strings.Trim(strings.TrimSpace(rest), `"'.`), entities)
+		return title, summary, matchEntity(strings.Trim(strings.TrimSpace(rest), `"'.`), entities)
 	}
-	return strings.TrimSpace(content), ""
+	return title, strings.TrimSpace(strings.Join(lines, "\n")), ""
 }
+
+// titleLabel is the marker for the name, and it leads rather than trails for
+// the same reason PROJECT: trails: a small model is most reliable at the
+// very start and the very end of a reply, and the summary is what fills the
+// middle.
+const titleLabel = "TITLE:"
+
+// cleanTitle takes the punctuation a model wraps a heading in back off, and
+// refuses one long enough to be a sentence -- at that length it is the
+// summary said twice, and the list has a date to fall back on.
+func cleanTitle(s string) string {
+	t := strings.TrimSpace(strings.Trim(strings.TrimSpace(s), `"'*.`))
+	if len([]rune(t)) > maxTitleChars {
+		return ""
+	}
+	return t
+}
+
+// maxTitleChars is measured in runes, not bytes: a Ukrainian title is two
+// bytes a letter, and a byte cap would cut it at half the words an English
+// one gets.
+const maxTitleChars = 70
 
 // projectLabel is the marker the prompt asks for. A label rather than JSON:
 // mlx_lm has no schema-constrained decoding (see chatCompletion), and one
@@ -140,13 +178,27 @@ func buildSummaryPrompt(text string, entities []string, opts SummaryOptions) str
 		extra = "Additional instructions from the user, to follow as long as they do not\n" +
 			"contradict the format above:\n" + s + "\n\n"
 	}
-	return summaryShape(opts.Length) + ` No preamble ("This meeting..."), no
+	return `First, on its own first line, name this meeting in three to six words, in
+exactly this form: "` + titleLabel + ` <name>". Name what it was about, not what kind
+of thing it is ("` + titleLabel + ` CSV importer scope", never "` + titleLabel + ` Team meeting").
+No quotes, no full stop, and write it in the language the transcript is in.
+
+Then ` + lowerFirst(summaryShape(opts.Length)) + ` No preamble ("This meeting..."), no
 markdown, no bullet points -- just the sentences.
 
 ` + projectAsk(entities) + extra + entityHint + `Transcript:
 """
 ` + text + `
 """`
+}
+
+// lowerFirst drops the capital off summaryShape's opening word, which now
+// follows "Then " rather than starting the prompt.
+func lowerFirst(s string) string {
+	if s == "" {
+		return s
+	}
+	return strings.ToLower(s[:1]) + s[1:]
 }
 
 // projectAsk is the instruction behind the reply's trailing PROJECT: line.

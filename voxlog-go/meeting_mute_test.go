@@ -48,3 +48,22 @@ func TestClockLabel(t *testing.T) {
 		t.Errorf("elapsedLabel = %q, want the menu bar's dot in front", got)
 	}
 }
+
+// The menu is redrawn from a two-second poll, not only when a recording
+// starts, so the title it draws has to come from the meeting's own state. It
+// used to be hardcoded to "Mute my microphone", which took the user's mute
+// back off the menu within one tick of them clicking it.
+func TestTheMuteItemsTitleFollowsTheRunningMeeting(t *testing.T) {
+	a := &app{meeting: &meeting{start: time.Now()}}
+
+	if got := muteMicLabel(a.meetingMuted()); got != muteMicLabel(false) {
+		t.Errorf("a fresh recording reads %q, want the unmuted title", got)
+	}
+	a.toggleMeetingMute()
+	// Every redraw from here on, poll or otherwise, asks the same question.
+	for i := 0; i < 3; i++ {
+		if got := muteMicLabel(a.meetingMuted()); got != muteMicLabel(true) {
+			t.Fatalf("redraw %d reads %q, want the muted title", i, got)
+		}
+	}
+}

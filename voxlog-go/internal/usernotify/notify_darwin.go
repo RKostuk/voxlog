@@ -35,7 +35,30 @@ var (
 	decided     bool
 	pending     []pendingPost
 	pendingWait *time.Timer
+
+	// granted is the answer itself, and fellBack records that a post had to
+	// go out through osascript. Together they are the only evidence the user
+	// can be shown for "the banner you expected never appeared": macOS
+	// refusing the permission is silent everywhere else, and a courtesy
+	// notice nobody sees is worse than no feature at all.
+	granted  bool
+	fellBack bool
 )
+
+// State is what the settings window shows about banners: whether macOS has
+// answered the permission request at all, what it answered, and whether
+// anything has had to fall back to osascript since.
+type State struct {
+	Decided  bool
+	Granted  bool
+	FellBack bool
+}
+
+func Status() State {
+	mu.Lock()
+	defer mu.Unlock()
+	return State{Decided: decided, Granted: granted, FellBack: fellBack}
+}
 
 type pendingPost struct{ message, action string }
 
@@ -87,9 +110,10 @@ func goNotificationAction(action *C.char) {
 // been in.
 //
 //export goNotifyAuthDecided
-func goNotifyAuthDecided(granted C.int) {
+func goNotifyAuthDecided(allowed C.int) {
 	mu.Lock()
 	decided = true
+	granted = allowed == 1
 	if pendingWait != nil {
 		pendingWait.Stop()
 		pendingWait = nil
@@ -151,6 +175,9 @@ func postNow(message, action string) {
 	if C.voxlogNotifyPost(cMessage, cAction) == 1 {
 		return
 	}
+	mu.Lock()
+	fellBack = true
+	mu.Unlock()
 	warnFallbackOnce.Do(func() {
 		log.Print("notify: falling back to osascript banners -- the native " +
 			"path was refused or unavailable, so banners will carry " +

@@ -80,6 +80,15 @@ type voiceJSON struct {
 	HasClip bool    `json:"has_clip"`
 }
 
+// suggestionJSON is "this might be Ірина, ask before you say so": a match
+// Go found in the 0.55-0.72 band, which it is not allowed to apply by itself.
+type suggestionJSON struct {
+	Row     int64   `json:"row"`
+	VoiceID int64   `json:"voice_id"`
+	Name    string  `json:"name"`
+	Score   float64 `json:"score"`
+}
+
 type candidateJSON struct {
 	Row       int64   `json:"row"`
 	Meeting   string  `json:"meeting"`
@@ -158,9 +167,24 @@ func bindMeetings(w webview.WebView, store *history.Store, meetings *history.Mee
 		if err != nil {
 			return nil, err
 		}
+		// Who the unnamed speakers might be. Computed here rather than
+		// fetched separately: the page draws them on the same rows, and
+		// SpeakerSuggestions is the read-only half of the matching that
+		// already ran when this meeting was decoded.
+		unsure, err := meetings.SpeakerSuggestions(at)
+		if err != nil {
+			return nil, err
+		}
+		suggestions := make([]suggestionJSON, 0, len(unsure))
+		for _, u := range unsure {
+			suggestions = append(suggestions, suggestionJSON{
+				Row: u.SpeakerRow, VoiceID: u.VoiceID, Name: u.Name, Score: float64(u.Score),
+			})
+		}
 		return map[string]any{
-			"turns":    turnsJSON(turns),
-			"speakers": speakersJSON(speakers),
+			"turns":       turnsJSON(turns),
+			"speakers":    speakersJSON(speakers),
+			"suggestions": suggestions,
 		}, nil
 	})
 
@@ -311,6 +335,63 @@ func bindMeetings(w webview.WebView, store *history.Store, meetings *history.Mee
 	// happening.
 	w.Bind("unlinkSpeaker", func(row int64) error {
 		if err := meetings.UnlinkSpeaker(row); err != nil {
+			return err
+		}
+		RefreshMainWindowIfOpen(store, meetings, tasks)
+		return nil
+	})
+
+	// voiceClips is what a voice is made of: every speaker row linked to it,
+	// each with the audio to play. The Voices pane draws one row per clip so
+	// the user can hear what they attached, promote one to the sample, or
+	// take a wrong one back out.
+	w.Bind("voiceClips", func(id int64) ([]candidateJSON, error) {
+		clips, err := meetings.SpeakersByVoice(id)
+		if err != nil {
+			return nil, err
+		}
+		out := make([]candidateJSON, 0, len(clips))
+		for _, c := range clips {
+			out = append(out, candidateJSONOf(c))
+		}
+		return out, nil
+	})
+
+	// similarToVoice is similarUnnamed asked about a voice rather than a
+	// speaker: "who else on file sounds like this person?" -- the question
+	// behind adding more audio to somebody already named.
+	w.Bind("similarToVoice", func(id int64) ([]candidateJSON, error) {
+		voices, err := meetings.Voices()
+		if err != nil {
+			return nil, err
+		}
+		for _, v := range voices {
+			if v.ID != id {
+				continue
+			}
+			similar, err := meetings.SimilarUnnamed(v.Embed, 10)
+			if err != nil {
+				return nil, err
+			}
+			out := make([]candidateJSON, 0, len(similar))
+			for _, c := range similar {
+				out = append(out, candidateJSONOf(c))
+			}
+			return out, nil
+		}
+		return nil, fmt.Errorf("no voice with id %d", id)
+	})
+
+	// setVoiceSample replaces the couple of seconds the Voices pane plays for
+	// a voice. Until now the sample was cut once, when the voice was first
+	// named, and never again -- so the row played whatever the first clip
+	// happened to be, however unrepresentative.
+	w.Bind("setVoiceSample", func(id, row int64) error {
+		clip := clipFor(meetings, row)
+		if clip == nil {
+			return errors.New("that recording is no longer on disk, so it cannot be the sample")
+		}
+		if err := meetings.SetVoiceClip(id, clip); err != nil {
 			return err
 		}
 		RefreshMainWindowIfOpen(store, meetings, tasks)

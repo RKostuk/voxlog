@@ -200,6 +200,17 @@ var schemaSteps = []string{
 		text TEXT NOT NULL UNIQUE
 	);
 	`,
+	// Step 6 -- a meeting gets a name.
+	//
+	// Until now the only thing a meeting could be called was the instant it
+	// started, which is why the list reads as a column of timestamps.
+	// Summarization already reads the whole transcript, so the title comes
+	// out of that same pass. Rows written before this stay empty and keep
+	// showing their date: backfilling would mean another minute of model
+	// time per old meeting, for a name nobody asked for.
+	`
+	ALTER TABLE meetings ADD COLUMN title TEXT NOT NULL DEFAULT '';
+	`,
 }
 
 func (d *DB) migrateSchema() error {

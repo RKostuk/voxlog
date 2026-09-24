@@ -261,19 +261,7 @@ func (s *MeetingStore) SpeakerClipSource(row int64) (SpeakerCandidate, error) {
 	if err != nil {
 		return SpeakerCandidate{}, err
 	}
-	c, _, err := scanCandidate(db.sql.QueryRow(`
-		SELECT ms.id, ms.meeting_ns, ms.talk_secs, ms.embed,
-		       COALESCE(t.text, ''), COALESCE(t.channel, 0),
-		       COALESCE(t.start_secs, 0), COALESCE(t.end_secs, 0),
-		       m.audio_path, m.system_audio_path
-		FROM meeting_speakers ms
-		JOIN meetings m ON m.start_ns = ms.meeting_ns
-		LEFT JOIN turns t ON t.id = (
-			SELECT id FROM turns
-			WHERE speaker_id = ms.id
-			ORDER BY (end_secs - start_secs) DESC
-			LIMIT 1
-		)
+	c, _, err := scanCandidate(db.sql.QueryRow(candidateSelectSQL+`
 		WHERE ms.id = ?`, row))
 	if err != nil {
 		return SpeakerCandidate{}, err

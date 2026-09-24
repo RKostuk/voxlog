@@ -451,6 +451,13 @@
           </div>
           <input type="checkbox" class="switch" id="recording_notice">
         </div>
+        <!-- macOS can refuse the permission silently, and then the banner
+             above simply never appears. The one place that can say so is
+             here, beside the switch that promises it. -->
+        <div class="item" id="notice-permission-row" hidden>
+          <div class="title"><span id="notice-permission-text"></span></div>
+          <button type="button" id="open-notification-settings">Open System Settings</button>
+        </div>
         <div class="item">
           <div class="title">Keep meeting recordings
             <div class="subtext">About 115 MB per hour, beside the transcripts</div>
@@ -1106,6 +1113,30 @@
       }
     }
     document.getElementById('always_on').addEventListener('change', syncAlwaysOnRows);
+
+    // Whether the banner the switch above promises can actually be shown.
+    // Asked once when the pane opens and again whenever the switch is turned
+    // on, because that is when the answer starts to matter.
+    function syncNoticePermission() {
+      var row = document.getElementById('notice-permission-row');
+      if (!row || !window.notificationState) return;
+      if (!document.getElementById('recording_notice').checked) { row.hidden = true; return; }
+      window.notificationState().then(function (st) {
+        st = st || {};
+        var broken = (st.decided && !st.granted) || st.fell_back;
+        row.hidden = !broken;
+        if (broken) {
+          document.getElementById('notice-permission-text').textContent =
+            st.decided && !st.granted
+              ? 'macOS is not letting Voxlog post banners, so this notice will not appear.'
+              : 'Banners are going out through osascript: they carry the wrong icon, and clicking one opens Finder.';
+        }
+      }).catch(function () { row.hidden = true; });
+    }
+    document.getElementById('recording_notice').addEventListener('change', syncNoticePermission);
+    document.getElementById('open-notification-settings').addEventListener('click', function () {
+      if (window.openNotificationSettings) window.openNotificationSettings();
+    });
 
     document.getElementById('entity-dict-add-btn').addEventListener('click', addEntityDictEntry);
     document.getElementById('entity-dict-input').addEventListener('keydown', function (e) {
@@ -2039,6 +2070,7 @@
       excludedApps = (settings.always_on_excluded_apps || []).slice();
       renderExcludedApps();
       syncAlwaysOnRows();
+      syncNoticePermission();
       entityDict = (settings.entity_dictionary || []).slice();
       entityDictSeeded = !!settings.entity_dictionary_seeded;
       // One-time migration convenience: tasks classified before projects

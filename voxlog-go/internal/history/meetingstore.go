@@ -30,6 +30,10 @@ type Meeting struct {
 	// Summary is Task Hub's short LLM summary of Text, filled in once the
 	// transcript is available. Empty until then, or if Task Hub is off.
 	Summary string `json:"summary,omitempty"`
+	// Title is the name summarization gave this meeting -- a few words about
+	// what it was. Empty means the window shows the date instead, which is
+	// what every meeting recorded before titles existed does.
+	Title string `json:"title,omitempty"`
 	// Entity is the project this meeting belongs to, set by hand from the
 	// window. Empty means unfiled; the list falls back to the project of any
 	// task Task Hub found in the meeting.
@@ -108,19 +112,20 @@ func (s *MeetingStore) Append(m Meeting) error {
 
 	_, err = db.sql.Exec(`
 		INSERT INTO meetings
-			(start_ns, recording_secs, decode_secs, text, summary, audio_path, system_audio_path, entity, auto_started)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+			(start_ns, recording_secs, decode_secs, text, summary, title, audio_path, system_audio_path, entity, auto_started)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(start_ns) DO UPDATE SET
 			recording_secs    = excluded.recording_secs,
 			decode_secs       = excluded.decode_secs,
 			text              = excluded.text,
 			summary           = excluded.summary,
+			title             = excluded.title,
 			audio_path        = excluded.audio_path,
 			system_audio_path = excluded.system_audio_path,
 			entity            = excluded.entity,
 			auto_started      = excluded.auto_started`,
 		m.Start.UnixNano(), m.RecordingSeconds, m.DurationSeconds, m.Text,
-		m.Summary, m.AudioPath, m.SystemAudioPath, m.Entity, m.AutoStarted)
+		m.Summary, m.Title, m.AudioPath, m.SystemAudioPath, m.Entity, m.AutoStarted)
 	if err != nil {
 		return fmt.Errorf("history: appending meeting: %w", err)
 	}
@@ -164,12 +169,13 @@ func (s *MeetingStore) Update(start time.Time, mutate func(*Meeting)) error {
 			decode_secs       = ?,
 			text              = ?,
 			summary           = ?,
+			title             = ?,
 			audio_path        = ?,
 			system_audio_path = ?,
 			entity            = ?,
 			auto_started      = ?
 		WHERE start_ns = ?`,
-		m.RecordingSeconds, m.DurationSeconds, m.Text, m.Summary,
+		m.RecordingSeconds, m.DurationSeconds, m.Text, m.Summary, m.Title,
 		m.AudioPath, m.SystemAudioPath, m.Entity, m.AutoStarted, start.UnixNano())
 	if err != nil {
 		return fmt.Errorf("history: writing meeting %s: %w", start.Format(time.RFC3339Nano), err)
@@ -225,8 +231,31 @@ func (s *MeetingStore) SetEntityAuto(start time.Time, entity string) (bool, erro
 	return n > 0, nil
 }
 
+// SetTitleAuto gives a meeting the name summarization came up with. Like
+// SetEntityAuto it refuses an empty answer -- a model that could not think of
+// a title is not a reason to take away one an earlier pass produced -- and
+// unlike it there is nothing to defend against: nobody can type a title yet,
+// so there is no hand-written value to overwrite.
+func (s *MeetingStore) SetTitleAuto(start time.Time, title string) error {
+	if title == "" {
+		return nil
+	}
+	db, err := s.open()
+	if err != nil {
+		return err
+	}
+	res, err := db.sql.Exec("UPDATE meetings SET title = ? WHERE start_ns = ?", title, start.UnixNano())
+	if err != nil {
+		return fmt.Errorf("history: naming meeting: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return fmt.Errorf("history: no meeting at %s", start.Format(time.RFC3339Nano))
+	}
+	return nil
+}
+
 const selectMeetingSQL = `
-	SELECT start_ns, recording_secs, decode_secs, text, summary,
+	SELECT start_ns, recording_secs, decode_secs, text, summary, title,
 	       audio_path, system_audio_path, entity, turns_version, auto_started
 	FROM meetings`
 
@@ -238,7 +267,7 @@ func scanMeeting(row rowScanner) (Meeting, error) {
 		startNS int64
 	)
 	err := row.Scan(&startNS, &m.RecordingSeconds, &m.DurationSeconds, &m.Text,
-		&m.Summary, &m.AudioPath, &m.SystemAudioPath, &m.Entity, &m.TurnsVersion, &m.AutoStarted)
+		&m.Summary, &m.Title, &m.AudioPath, &m.SystemAudioPath, &m.Entity, &m.TurnsVersion, &m.AutoStarted)
 	if err != nil {
 		return Meeting{}, err
 	}

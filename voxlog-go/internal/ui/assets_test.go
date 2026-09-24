@@ -326,3 +326,49 @@ func TestVoicesIsNotOpenedWithAnEvent(t *testing.T) {
 		t.Error("openVoices no longer checks that its row is a number")
 	}
 }
+
+// webview_go installs no WKUIDelegate, so alert, confirm and prompt are all
+// no-ops in this window: confirm answers false and prompt answers null
+// without ever showing anything. That is why the Voices pane's Rename,
+// Forget and Erase buttons looked dead -- every one of them was gated on a
+// dialog that never appeared.
+func TestTheVoicesPaneAsksForNothingThroughANativeDialog(t *testing.T) {
+	page, err := assets.ReadFile("assets/main.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	pane := string(page)
+	start := strings.Index(pane, "// ---- voices ---")
+	end := strings.Index(pane, "// renderTasks draws the Tasks pane")
+	if start < 0 || end < 0 || end < start {
+		t.Fatal("cannot find the voices pane in main.html")
+	}
+	for _, call := range []string{"window.prompt(", "window.confirm(", "alert("} {
+		if strings.Contains(pane[start:end], call) {
+			t.Errorf("the voices pane still calls %s, which this webview never shows", call)
+		}
+	}
+	// ...and the thing it uses instead has to be there.
+	kit, err := assets.ReadFile("assets/kit.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(kit), "function toast(") {
+		t.Error("kit.js has no toast for the pane to report with")
+	}
+}
+
+// Every list that can grow without a ceiling caps itself: a meeting the
+// diarizer heard eight people in, and a voice library of dozens, were drawn
+// in full and buried the panel they sat in.
+func TestLongVoiceListsAreCapped(t *testing.T) {
+	page, err := assets.ReadFile("assets/main.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, needle := range []string{"VOICE_PAGE = 5", "speakersShowAll", "data-show-all", "show-all-speakers"} {
+		if !strings.Contains(string(page), needle) {
+			t.Errorf("main.html is missing %q", needle)
+		}
+	}
+}

@@ -290,7 +290,7 @@ func (a *app) summarizeMeeting(start time.Time, text string) {
 
 	entities := a.entityNames(cfg)
 	modelDir := asr.ModelDir(a.modelsDir, llm.Spec)
-	summary, entity, err := a.llm.Summarize(modelDir, text, entities, llm.SummaryOptions{
+	title, summary, entity, err := a.llm.Summarize(modelDir, text, entities, llm.SummaryOptions{
 		Length: cfg.SummaryLength,
 		Extra:  cfg.SummaryPromptExtra,
 	}, a.llmEndpoint(cfg))
@@ -298,16 +298,19 @@ func (a *app) summarizeMeeting(start time.Time, text string) {
 		log.Printf("meeting summarize: %v", err)
 		return
 	}
-	// The project is worth storing even when the summary came back empty, and
-	// the other way round: they are two answers, and one of them failing is
-	// not a reason to drop the other.
+	// Each of the three answers is worth storing even when the other two came
+	// back empty: they are three answers, and one of them failing is not a
+	// reason to drop the rest.
+	if err := a.meetings.SetTitleAuto(start, title); err != nil {
+		log.Printf("meeting summarize: naming it %q: %v", title, err)
+	}
 	if entity != "" {
 		if _, err := a.meetings.SetEntityAuto(start, entity); err != nil {
 			log.Printf("meeting summarize: filing under %q: %v", entity, err)
 		}
 	}
 	if summary == "" {
-		if entity != "" {
+		if entity != "" || title != "" {
 			ui.RefreshMainWindowIfOpen(a.hist, a.meetings, a.tasks)
 		}
 		return

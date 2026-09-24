@@ -148,20 +148,113 @@
   .playhead { position: absolute; top: 2px; bottom: 2px; width: 2px; background: var(--label); border-radius: 1px; }
   .player-bar { display: flex; align-items: center; gap: 10px; color: var(--secondary); font-variant-numeric: tabular-nums; }
 
-  .voice-item { display: grid; grid-template-columns: auto 1fr auto; gap: 11px; align-items: center;
+  /* avatar · play · who · actions. The play control is its own column: the
+     sample is what the row is for, and it must not move as a name grows. */
+  .voice-item { display: grid; grid-template-columns: auto auto 1fr auto; gap: 11px; align-items: center;
     background: var(--card); border: none; border-radius: var(--r-md); padding: 10px 12px; box-shadow: var(--glass-flat); }
   .voice-item .sub { color: var(--secondary); font-size: 11px; }
+  .voice-item > span:nth-child(3) { min-width: 0; }
   .voice-acts { display: flex; gap: 6px; }
   .voice-list { display: flex; flex-direction: column; gap: 8px; }
   .clip-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 8px; margin-top: 10px; }
   .clip {
-    display: grid; grid-template-columns: auto 1fr auto; gap: 9px; align-items: center; text-align: left;
+    display: grid; grid-template-columns: auto auto 1fr auto; gap: 9px; align-items: center; text-align: left;
     border: 1px solid var(--separator); background: var(--field); color: var(--label); font: inherit;
     border-radius: 9px; padding: 8px 10px; cursor: pointer;
   }
-  .clip[aria-pressed="true"] { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, transparent); }
+  /* The card is no longer the button: it holds a "same person?" toggle and
+     a play control of its own, and the tick is what carries the state. */
+  .clip[data-picked="true"] { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, transparent); }
+  .clip .act[aria-pressed="true"] { background: var(--accent); color: #fff; }
   .clip .q { font-variant-numeric: tabular-nums; color: var(--secondary); font-size: 11px; }
   .clip .said { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
+  /* One play control, everywhere a voice can be heard: the library row, a
+     clip inside a voice, a naming candidate, a speaker in a meeting. The
+     sample being one click away in the row is the whole point -- it used to
+     be a button that appeared only on a voice that happened to have a stored
+     clip, on one screen. */
+  .play {
+    flex: none; width: 28px; height: 28px; border-radius: 50%;
+    border: none; background: var(--field); color: var(--label);
+    display: grid; place-items: center; cursor: pointer; position: relative; font-size: 10px;
+  }
+  .play:hover { background: var(--accent); color: #fff; }
+  .play.sm { width: 22px; height: 22px; font-size: 9px; }
+  .play[aria-pressed="true"] { background: var(--accent); color: #fff; }
+  /* The ring is the clip running out. Something has to say it is playing,
+     and a spinner would say "loading" instead. */
+  .play[aria-pressed="true"]::after {
+    content: ""; position: absolute; inset: -3px; border-radius: 50%;
+    border: 2px solid color-mix(in srgb, var(--accent) 45%, transparent);
+    border-top-color: var(--accent); animation: play-spin 1.1s linear infinite;
+  }
+  @keyframes play-spin { to { transform: rotate(360deg); } }
+  .play[disabled] { opacity: .35; cursor: default; }
+  .play[disabled]:hover { background: var(--field); color: var(--label); }
+  @media (prefers-reduced-motion: reduce) { .play[aria-pressed="true"]::after { animation: none; } }
+
+  /* Row actions are quiet until the row is pointed at or focused: four
+     buttons on every row at all times is what made this pane look like a
+     wall of controls. */
+  .voice-acts .act, .spk-acts .act { opacity: .45; transition: opacity .12s; }
+  .voice-item:hover .act, .voice-item:focus-within .act,
+  .spk-row:hover .act, .spk-row:focus-within .act,
+  .voice-item.open .act, .act:focus-visible { opacity: 1; }
+  .act.danger { color: var(--red); }
+  .act.danger:hover:not(:disabled) { background: var(--red); color: #fff; }
+  .act.primary { background: var(--accent); color: #fff; }
+  .act.quiet { background: none; color: var(--accent); }
+  .act.quiet:hover:not(:disabled) { background: color-mix(in srgb, var(--accent) 14%, transparent); color: var(--accent); }
+  .act[disabled] { opacity: .35; cursor: default; }
+  /* A count beside a heading or on a button: the number is context, not the
+     thing being said. */
+  .count { color: var(--tertiary); font-weight: var(--fw-medium); font-variant-numeric: tabular-nums; }
+  /* The date, once a meeting has a name of its own to lead with. */
+  .detail-when { color: var(--secondary); font-variant-numeric: tabular-nums; }
+  .voice-item.open { border-radius: var(--r-md) var(--r-md) 0 0; }
+
+  /* What one voice is made of, opened under the row it belongs to: the
+     clips already attached (each playable, any of them promotable to the
+     stored sample) and the unnamed speakers that could be attached next. */
+  .voice-audio {
+    background: var(--card); box-shadow: var(--glass-flat);
+    border-radius: 0 0 var(--r-md) var(--r-md); margin: -8px 0 0; padding: 11px 13px 12px;
+  }
+  .voice-audio h4 {
+    margin: 0 0 7px; font-size: var(--fs-caption); font-weight: 600;
+    text-transform: uppercase; letter-spacing: .06em; color: var(--secondary);
+  }
+  .voice-audio h4 + h4, .voice-audio .clip-grid + h4 { margin-top: 13px; }
+  .clip-rows { display: flex; flex-direction: column; gap: 3px; }
+  .clip-row { display: grid; grid-template-columns: auto 1fr auto auto; gap: 9px; align-items: center; padding: 4px 6px; border-radius: var(--r-sm); margin: 0 -6px; }
+  .clip-row:hover, .clip-row:focus-within { background: var(--field); }
+  .clip-row .when { color: var(--secondary); font-size: var(--fs-caption); font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .clip-row .said { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .sample-btn {
+    border: none; border-radius: var(--r-pill); padding: 2px 10px; cursor: pointer;
+    background: var(--field); color: var(--secondary); font: inherit; font-size: var(--fs-small); white-space: nowrap;
+  }
+  .sample-btn[aria-pressed="true"] { background: var(--accent); color: #fff; }
+  .attach-bar { display: flex; align-items: center; gap: 9px; margin-top: 10px; }
+  .attach-bar .hint { margin: 0; flex: 1; font-size: var(--fs-caption); }
+  .clip-grid .play { margin-right: -2px; }
+
+  /* "Sounds like Alex, but not surely enough to say so." Go computes this
+     band on every decode and used to throw it away. */
+  .guess {
+    grid-column: 1 / -1; display: flex; align-items: center; gap: 7px; flex-wrap: wrap;
+    background: color-mix(in srgb, var(--yellow) 16%, transparent);
+    border-radius: var(--r-sm); padding: 4px 8px; font-size: var(--fs-caption);
+  }
+  .spk-acts { display: flex; align-items: center; gap: 6px; }
+  .spk-form { grid-column: 1 / -1; display: flex; gap: 6px; margin: 2px 0; }
+  .voice-item .edit-form { grid-column: 2 / -1; display: flex; gap: 6px; }
+  .edit-form input, .spk-form input {
+    flex: 1; min-width: 0; background: var(--field); border: 1px solid var(--accent);
+    border-radius: var(--r-sm); padding: 5px 9px; color: var(--label); font: inherit;
+  }
+  .edit-form input:focus, .spk-form input:focus { outline: none; }
+
   .name-form { display: flex; gap: 8px; margin-top: 12px; }
   .name-form input { flex: 1; background: var(--field); border: 1px solid var(--separator); border-radius: 7px; padding: 6px 9px; color: var(--label); font: inherit; }
   .name-form input:focus { outline: none; border-color: var(--accent); }
@@ -915,7 +1008,10 @@
       // "Not transcribed" tag above already says there is something to do.
 
       return '<button type="button" class="meeting-card" data-id="' + escapeHtml(e.id) + '">' +
-        '<div class="m-top"><span class="m-title">' + escapeHtml(e.time) + '</span>' +
+        // The title leads where there is one, with the clock beside it; a
+        // meeting recorded before titles existed reads as it always did.
+        '<div class="m-top"><span class="m-title">' + escapeHtml(e.title || e.time) + '</span>' +
+          (e.title ? '<span class="m-when">' + escapeHtml(e.time) + '</span>' : '') +
           '<span class="m-when">' + duration(e.recording_seconds) + '</span>' + tags +
         '</div>' +
         summary +
@@ -1065,6 +1161,11 @@
     }
 
     var detailTurns = [], detailSpeakers = [], detailMeeting = null, turnQuery = '';
+    // Who the unnamed speakers might be (Go's 0.55-0.72 band), which speaker
+    // row is being named in place, and whether the list is capped at five.
+    // Module-level, like taskFilter, so a refresh from Go does not close what
+    // the user is in the middle of.
+    var detailSuggestions = [], editingSpeaker = 0, speakersShowAll = false;
 
     function openMeeting(id) {
       var meeting = meetingByID(id);
@@ -1080,6 +1181,9 @@
         stopWaiting();
         detailTurns = (detail && detail.turns) || [];
         detailSpeakers = (detail && detail.speakers) || [];
+        detailSuggestions = (detail && detail.suggestions) || [];
+        editingSpeaker = 0;
+        speakersShowAll = false;
         renderMeetingDetail();
         scrollToPendingTurn();
       }).catch(function (err) {
@@ -1136,7 +1240,12 @@
       var silence = Math.max(total - spoken, 0);
       if (silence > 0) share += '<i style="flex:' + silence + ';background:var(--silence)"></i>';
 
-      var rows = detailSpeakers.map(function (sp) {
+      // Five speakers, then the rest on request. A meeting where the
+      // diarizer heard eight people drew eight rows, and the panel became
+      // the tallest thing on the screen for the sake of somebody who said
+      // two words.
+      var shownSpeakers = speakersShowAll ? detailSpeakers : detailSpeakers.slice(0, VOICE_PAGE);
+      var rows = shownSpeakers.map(function (sp) {
         var pct = total ? Math.round(sp.talk_secs / total * 100) : 0;
         // Naming is only offered where it can mean something: a speaker with
         // no voice fingerprint cannot be recognised anywhere else, so a name
@@ -1148,13 +1257,47 @@
           ? '<button type="button" class="name-btn" data-name-speaker="' + sp.row + '">' +
               (sp.name ? 'Rename' : 'Name this voice') + '</button>'
           : '<span class="tag" title="Too little speech to recognise this voice anywhere else">No voice print</span>';
+        // The sample is this speaker's longest reply, played out of the
+        // recording that is already open -- the same path the transcript's
+        // own play buttons take, so there is one player and one highlight.
+        var longestTurn = longestTurnOf(sp.speaker);
+        var play = '<button type="button" class="play sm"' +
+          (longestTurn < 0 ? ' disabled title="Nothing of theirs is on disk to play"' : ' data-play-turn="' + longestTurn + '"') +
+          ' aria-label="Play a sample of ' + escapeHtml(speakerLabel(sp.speaker, sp.name)) + '">&#9654;</button>';
+
+        var form = editingSpeaker === sp.row
+          ? '<form class="spk-form" data-name-form="' + sp.row + '">' +
+              '<input list="known-voices" value="' + escapeHtml(sp.name || '') + '" autocomplete="off"' +
+                ' placeholder="Their name, or somebody already known" aria-label="Speaker name">' +
+              '<button type="button" class="act primary" data-save-speaker="' + sp.row + '">Save</button>' +
+              '<button type="button" class="act" data-cancel-speaker="1">Cancel</button>' +
+            '</form>'
+          : '';
+
+        // The band Go is not allowed to decide in. It computes this on every
+        // decode and used to throw it away, which left the user retyping a
+        // name the app had already all but worked out.
+        var guess = guessFor(sp.row);
+        var guessHTML = (guess && !sp.name && editingSpeaker !== sp.row)
+          ? '<span class="guess">Sounds like <b>' + escapeHtml(guess.name) + '</b> · ' + guess.score.toFixed(2) +
+              '<button type="button" class="act" data-confirm-speaker="' + sp.row + ':' + guess.voice_id + '">Confirm</button>' +
+              '<button type="button" class="act" data-reject-speaker="' + sp.row + '">Not them</button></span>'
+          : '';
+
         return '<div class="spk-row" data-speaker-row="' + sp.row + '">' +
-          '<span class="spk-name"><span class="swatch" style="background:' + speakerColor(sp.speaker) + '"></span>' +
-            '<b>' + escapeHtml(speakerLabel(sp.speaker, sp.name)) + '</b>' + nameBtn + '</span>' +
+          '<span class="spk-name">' + play +
+            '<span class="swatch" style="background:' + speakerColor(sp.speaker) + '"></span>' +
+            '<b>' + escapeHtml(speakerLabel(sp.speaker, sp.name)) + '</b>' +
+            '<span class="spk-acts">' + nameBtn + '</span></span>' +
           '<span class="spk-figs"><b>' + pct + '%</b> ' + clockTime(sp.talk_secs) + '</span>' +
           '<span class="spk-bar"><i style="width:' + pct + '%;background:' + speakerColor(sp.speaker) + '"></i></span>' +
+          guessHTML + form +
         '</div>';
       }).join('');
+      if (!speakersShowAll && detailSpeakers.length > VOICE_PAGE) {
+        rows += '<button type="button" class="act quiet" id="show-all-speakers">Show all ' +
+          detailSpeakers.length + '</button>';
+      }
 
       var longest = detailTurns.reduce(function (best, t) {
         return (t.end - t.start) > (best ? best.end - best.start : 0) ? t : best;
@@ -1171,6 +1314,24 @@
             (longest ? ' · ' + escapeHtml(speakerLabel(longest.speaker, longest.name)) : '') + '</span></div>' +
           '<div class="fact"><b>' + (total ? Math.round(silence / total * 100) : 0) + '%</b><span>silence</span></div>' +
         '</div></div></div>';
+    }
+
+    // longestTurnOf is the index of the most audio one speaker produced in
+    // one piece: the best few seconds to judge a voice by, and the same
+    // choice Go makes when it cuts a stored sample (unnamedSpeakerSQL).
+    function longestTurnOf(localID) {
+      var best = -1, bestLen = 0;
+      detailTurns.forEach(function (t, i) {
+        var len = t.end - t.start;
+        if (t.speaker === localID && len > bestLen) { best = i; bestLen = len; }
+      });
+      return best;
+    }
+
+    function guessFor(row) {
+      var found = null;
+      detailSuggestions.forEach(function (g) { if (g.row === row) found = g; });
+      return found;
     }
 
     function highlightTurn(text) {
@@ -1240,7 +1401,12 @@
       root.innerHTML =
         '<div class="detail-head">' +
           '<button type="button" class="back-btn" id="detail-back">&#8249; Meetings</button>' +
-          '<span class="detail-title">' + escapeHtml(meeting.day + ' · ' + meeting.time) + '</span>' +
+          // The name summarization gave it, with the date beside it; a
+          // meeting with no title is still the date, exactly as before.
+          (meeting.title
+            ? '<span class="detail-title">' + escapeHtml(meeting.title) + '</span>' +
+              '<span class="detail-when">' + escapeHtml(meeting.day + ' · ' + meeting.time) + '</span>'
+            : '<span class="detail-title">' + escapeHtml(meeting.day + ' · ' + meeting.time) + '</span>') +
           '<input type="search" id="turn-search" class="filter-search" placeholder="Search transcript" value="' + escapeHtml(turnQuery) + '">' +
         '</div>' +
         '<div class="detail-meta"><span>' + duration(meeting.recording_seconds) + '</span>' +
@@ -1253,7 +1419,8 @@
         timelineHTML(meeting) +
         turnsHTML() +
         (!detailTurns.length && meeting.text
-          ? '<div class="panel spaced"><h3>Transcript</h3>' + escapeHtml(meeting.text) + '</div>' : '');
+          ? '<div class="panel spaced"><h3>Transcript</h3>' + escapeHtml(meeting.text) + '</div>' : '') +
+        knownVoicesList();
 
       var picker = root.querySelector('#meeting-entity');
       var names = ((window.voxlog && window.voxlog.settings && window.voxlog.settings.entity_dictionary) || []).slice();
@@ -1271,7 +1438,7 @@
           window.transcribeEntry(meeting.id).catch(function (err) {
             transcribe.disabled = false;
             transcribe.textContent = 'Transcribe';
-            alert(err);
+            toast(String(err));
           });
         });
       }
@@ -1289,9 +1456,52 @@
       root.querySelectorAll('[data-play-turn]').forEach(function (btn) {
         btn.addEventListener('click', function () { playTurn(parseInt(btn.dataset.playTurn, 10)); });
       });
+      // Naming happens in the row now. It used to throw the user into the
+      // Voices pane and back, which lost their place in a transcript they
+      // were reading -- and the pane asked the same question this row does.
       root.querySelectorAll('[data-name-speaker]').forEach(function (btn) {
-        btn.addEventListener('click', function () { openVoices(parseInt(btn.dataset.nameSpeaker, 10)); });
+        btn.addEventListener('click', function () {
+          editingSpeaker = parseInt(btn.dataset.nameSpeaker, 10);
+          renderMeetingDetail();
+          var input = root.querySelector('.spk-form input');
+          if (input) { input.focus(); input.select(); }
+        });
       });
+      root.querySelectorAll('[data-cancel-speaker]').forEach(function (btn) {
+        btn.addEventListener('click', function () { editingSpeaker = 0; renderMeetingDetail(); });
+      });
+      root.querySelectorAll('[data-save-speaker]').forEach(function (btn) {
+        btn.addEventListener('click', function () { saveSpeakerName(parseInt(btn.dataset.saveSpeaker, 10)); });
+      });
+      root.querySelectorAll('[data-name-form]').forEach(function (form) {
+        form.addEventListener('submit', function (ev) {
+          ev.preventDefault();
+          saveSpeakerName(parseInt(form.dataset.nameForm, 10));
+        });
+        form.querySelector('input').addEventListener('keydown', function (ev) {
+          if (ev.key === 'Escape') { editingSpeaker = 0; renderMeetingDetail(); }
+        });
+      });
+      root.querySelectorAll('[data-confirm-speaker]').forEach(function (btn) {
+        btn.addEventListener('click', function () {
+          var parts = btn.dataset.confirmSpeaker.split(':');
+          window.linkSpeaker(parseInt(parts[0], 10), parseInt(parts[1], 10)).then(function () {
+            toast('Linked — every reply they ever spoke reads with that name');
+            reopenMeetingDetail();
+          }).catch(function (err) { toast(String(err)); });
+        });
+      });
+      root.querySelectorAll('[data-reject-speaker]').forEach(function (btn) {
+        btn.addEventListener('click', function () {
+          var row = parseInt(btn.dataset.rejectSpeaker, 10);
+          detailSuggestions = detailSuggestions.filter(function (g) { return g.row !== row; });
+          renderMeetingDetail();
+        });
+      });
+      var showAll = root.querySelector('#show-all-speakers');
+      if (showAll) {
+        showAll.addEventListener('click', function () { speakersShowAll = true; renderMeetingDetail(); });
+      }
 
       var timeline = root.querySelector('#meeting-timeline');
       if (timeline) {
@@ -1302,6 +1512,37 @@
         });
         root.querySelector('#turn-transport').addEventListener('click', toggleTurnPlayer);
       }
+    }
+
+    function saveSpeakerName(row) {
+      var form = document.querySelector('.spk-form[data-name-form="' + row + '"]');
+      if (!form) return;
+      var name = form.querySelector('input').value.trim();
+      if (!name) { form.querySelector('input').focus(); return; }
+      // The voices list is what decides "somebody already known" from "a new
+      // person", so it has to be on hand before the name is acted on.
+      window.voiceList().then(function (list) {
+        voiceData = list || { voices: [], unnamed: [] };
+        return nameOrLink(row, name, []);
+      }).then(function () {
+        editingSpeaker = 0;
+        reopenMeetingDetail();
+      }).catch(function (err) { toast(String(err)); });
+    }
+
+    // reopenMeetingDetail re-reads the meeting after a name changed: the
+    // names live on the speakers and the turns are joined to them, so every
+    // reply in the transcript below has to be redrawn too.
+    function reopenMeetingDetail() {
+      if (!detailMeeting) return;
+      var id = detailMeeting.id;
+      window.meetingDetail(id).then(function (detail) {
+        if (openMeetingID !== id) return;
+        detailTurns = (detail && detail.turns) || [];
+        detailSpeakers = (detail && detail.speakers) || [];
+        detailSuggestions = (detail && detail.suggestions) || [];
+        renderMeetingDetail();
+      }).catch(function (err) { toast(String(err)); });
     }
 
     // ---- playing one reply ---------------------------------------------
@@ -1521,9 +1762,23 @@
     // ---- voices ---------------------------------------------------------
     //
     // Naming a voice once is what makes every meeting it ever spoke in read
-    // with a name on it -- including the ones recorded months ago.
+    // with a name on it -- including the ones recorded months ago. So the
+    // pane is built around hearing a voice before deciding who it is: every
+    // row, clip and candidate plays from where it is drawn.
+
+    // How many rows a section shows before "Show all". A heavy user
+    // accumulates dozens of voices and hundreds of unnamed speakers, and a
+    // list of all of them is a wall nobody reads.
+    var VOICE_PAGE = 5;
 
     var namingRow = 0, similarClips = [], pickedClips = {};
+    var voiceData = { voices: [], unnamed: [] };
+    var voicesShowAll = { named: false, unnamed: false };
+    // Which row is mid-edit, mid-confirmation, or has its audio open. Kept
+    // here rather than in the DOM so a refresh from Go (which re-renders the
+    // whole pane) does not close what the user is in the middle of.
+    var editingVoice = 0, openAudio = 0, forgetArmed = 0, eraseArmed = 0;
+    var audioPanel = { id: 0, clips: [], nearby: [], picked: {}, error: '' };
 
     function openVoices(row) {
       // A number or nothing. This used to be `row || 0`, which let anything
@@ -1534,6 +1789,9 @@
       namingRow = typeof row === 'number' && isFinite(row) && row > 0 ? row : 0;
       similarClips = [];
       pickedClips = {};
+      editingVoice = 0;
+      forgetArmed = 0;
+      eraseArmed = 0;
       showMeetingView('voices');
       showWaiting('voices-pane', 'Loading voices…');
 
@@ -1541,13 +1799,13 @@
       if (namingRow) work.push(window.similarUnnamed(namingRow));
       Promise.all(work).then(function (results) {
         stopWaiting();
-        var list = results[0] || {};
+        voiceData = results[0] || { voices: [], unnamed: [] };
         similarClips = results[1] || [];
         // Everything the naming form offers is pre-ticked: the query already
         // decided these sound like the same person, and unticking the odd one
         // out is less work than ticking nine.
         similarClips.forEach(function (c) { pickedClips[c.row] = true; });
-        renderVoices(list.voices || [], list.unnamed || []);
+        renderVoices();
       }).catch(function (err) {
         // Without this the pane sat on "Loading voices…" forever whenever
         // voiceList rejected -- the error only ever reached the webview
@@ -1557,63 +1815,268 @@
       });
     }
 
-    function renderVoices(voices, unnamed) {
-      var known = voices.length ? voices.map(function (v) {
-        return '<div class="voice-item">' +
+    // reloadVoices refreshes the list under an action without throwing away
+    // what is open: Forget, Rename and attaching audio all happen inside a
+    // row the user is still working in.
+    function reloadVoices() {
+      return window.voiceList().then(function (list) {
+        voiceData = list || { voices: [], unnamed: [] };
+        renderVoices();
+      }).catch(function (err) { toast(String(err)); });
+    }
+
+    // playKey is what is playing, as "kind:id" -- one player for the pane,
+    // so starting a second sample stops the first, and clicking the one that
+    // is playing stops it.
+    var playKey = '';
+
+    function playSampleKey(key, src, from, to) {
+      var wasPlaying = playKey === key;
+      stopTurnPlayer();
+      playKey = '';
+      if (wasPlaying) { paintPlayState(); return; }
+      playKey = key;
+      paintPlayState();
+      playSample(src, from, to, function () {
+        if (playKey !== key) return;
+        playKey = '';
+        paintPlayState();
+      });
+    }
+
+    // Only the pressed state changes, so it is written straight onto the
+    // buttons: re-rendering the pane on every play would close an open edit
+    // form and fight the user for focus.
+    function paintPlayState() {
+      document.querySelectorAll('#voices-pane .play, #meeting-detail .play').forEach(function (btn) {
+        var on = btn.dataset.playKey === playKey && playKey !== '';
+        btn.setAttribute('aria-pressed', String(on));
+        btn.innerHTML = on ? '&#9632;' : '&#9654;';
+      });
+    }
+
+    function voiceBase() { return (window.voxlog && window.voxlog.voiceBase) || ''; }
+    function audioBase() { return (window.voxlog && window.voxlog.audioBase) || ''; }
+
+    function playBtn(key, enabled, label, small) {
+      return '<button type="button" class="play' + (small ? ' sm' : '') + '" data-play-key="' + escapeHtml(key) + '"' +
+        (enabled ? '' : ' disabled title="The recording this came from is no longer on disk"') +
+        ' aria-pressed="' + (playKey === key) + '" aria-label="' + escapeHtml(label) + '">' +
+        (playKey === key ? '&#9632;' : '&#9654;') + '</button>';
+    }
+
+    function showAllBtn(kind, total) {
+      if (total <= VOICE_PAGE || voicesShowAll[kind]) return '';
+      return '<button type="button" class="act quiet" data-show-all="' + kind + '">Show all ' + total + '</button>';
+    }
+
+    // The known voices, as a datalist: typing a name that is already on it is
+    // how a speaker is attached to somebody who exists rather than becoming a
+    // second voice with the same name.
+    function knownVoicesList() {
+      return '<datalist id="known-voices">' + voiceData.voices.map(function (v) {
+        return '<option value="' + escapeHtml(v.name) + '"></option>';
+      }).join('') + '</datalist>';
+    }
+
+    function voiceByName(name) {
+      var key = String(name || '').trim().toLowerCase();
+      var found = null;
+      voiceData.voices.forEach(function (v) {
+        if (v.name.trim().toLowerCase() === key) found = v;
+      });
+      return found;
+    }
+
+    // nameOrLink is the one decision behind every naming form in this pane: a
+    // name already on file means "this is them" (linkSpeaker), anything else
+    // means a new person (nameSpeaker). Without it the only way to grow a
+    // voice was to hope the automatic match cleared 0.72.
+    function nameOrLink(row, name, alsoRows) {
+      var known = voiceByName(name);
+      if (known) {
+        var work = [window.linkSpeaker(row, known.id)];
+        (alsoRows || []).forEach(function (other) { work.push(window.linkSpeaker(other, known.id)); });
+        return Promise.all(work).then(function () {
+          toast('Attached to ' + known.name + ' — every reply they ever spoke reads with that name');
+        });
+      }
+      return window.nameSpeaker(row, name, alsoRows || []).then(function () {
+        toast('Named ' + name);
+      });
+    }
+
+    function renderVoices() {
+      var voices = voiceData.voices || [], unnamed = voiceData.unnamed || [];
+      var shownVoices = voicesShowAll.named ? voices : voices.slice(0, VOICE_PAGE);
+
+      var known = voices.length ? shownVoices.map(function (v) {
+        var head =
           '<span class="avatar" style="background:' + speakerColor(0) + '">' +
             escapeHtml(speakerInitials(0, v.name)) + '</span>' +
+          playBtn('voice:' + v.id, v.has_clip, 'Play a sample of ' + v.name);
+        if (editingVoice === v.id) {
+          return '<div class="voice-item">' + head +
+            '<form class="edit-form" data-rename-voice="' + v.id + '">' +
+              '<input value="' + escapeHtml(v.name) + '" aria-label="Name" autocomplete="off">' +
+              '<button type="button" class="act primary" data-save-rename="' + v.id + '">Save</button>' +
+              '<button type="button" class="act" data-cancel-edit="1">Cancel</button>' +
+            '</form></div>';
+        }
+        // Forget and Erase are two different promises, so they ask twice
+        // rather than once: the first press arms the button, the second does
+        // it. window.confirm cannot be used -- this webview never shows it.
+        var acts =
+          '<button type="button" class="act" data-audio="' + v.id + '" aria-expanded="' + (openAudio === v.id) + '">Audio</button>' +
+          '<button type="button" class="act" data-edit-voice="' + v.id + '">Rename</button>' +
+          '<button type="button" class="act' + (forgetArmed === v.id ? ' danger' : '') + '" data-forget-voice="' + v.id + '"' +
+            ' title="The replies go back to being numbered; the voice can be named again later">' +
+            (forgetArmed === v.id ? 'Forget?' : 'Forget') + '</button>' +
+          '<button type="button" class="act' + (eraseArmed === v.id ? ' danger' : '') + '" data-erase-voice="' + v.id + '"' +
+            ' title="Destroys everything learned about how they sound; they will not be recognised again">' +
+            (eraseArmed === v.id ? 'Erase for good?' : 'Erase') + '</button>';
+        return '<div class="voice-item' + (openAudio === v.id ? ' open' : '') + '">' + head +
           '<span><b>' + escapeHtml(v.name) + '</b><div class="sub">' + duration(v.secs) + ' of speech' +
             (v.has_clip ? '' : ' · no sample stored') + '</div></span>' +
-          '<span class="voice-acts">' +
-            (v.has_clip ? '<button type="button" class="act" data-play-voice="' + v.id + '">&#9654; Sample</button>' : '') +
-            '<button type="button" class="act" data-rename-voice="' + v.id + '" data-name="' + escapeHtml(v.name) + '">Rename</button>' +
-            '<button type="button" class="act" data-forget-voice="' + v.id + '">Forget</button>' +
-            '<button type="button" class="act" data-erase-voice="' + v.id + '">Erase</button>' +
-          '</span></div>';
+          '<span class="voice-acts">' + acts + '</span></div>' +
+          (openAudio === v.id ? audioPanelHTML(v) : '');
       }).join('') : '<div class="empty">No voices named yet.</div>';
 
       var naming = '';
       if (namingRow) {
         var clips = similarClips.map(function (c) {
-          return '<button type="button" class="clip" data-clip="' + c.row + '" aria-pressed="' + !!pickedClips[c.row] + '">' +
-            '<span class="q">' + c.score.toFixed(2) + '</span>' +
+          return '<div class="clip" data-picked="' + !!pickedClips[c.row] + '">' +
+            '<button type="button" class="act" data-clip="' + c.row + '" aria-pressed="' + !!pickedClips[c.row] + '">' +
+              (pickedClips[c.row] ? '&#10003; Same' : 'Same?') + '</button>' +
+            playBtn('cand:' + c.row, !!c.audio, 'Play this clip', true) +
             '<span class="said">' + escapeHtml(c.text || '(no transcript)') + '</span>' +
-            '<span class="q">' + escapeHtml(c.day) + '</span></button>';
+            '<span class="q">' + c.score.toFixed(2) + '</span></div>';
         }).join('');
         naming = '<div class="group-title day">Name this voice</div>' +
           '<div class="panel">' +
             '<p class="hint" style="margin-top:0">Naming one speaker names every reply they ever spoke. ' +
               (similarClips.length
-                ? 'These other unnamed speakers sound like the same person &mdash; untick any that are not.'
+                ? 'These other unnamed speakers sound like the same person &mdash; listen, and untick any that are not.'
                 : 'Nobody else on file sounds like them yet.') + '</p>' +
             (clips ? '<div class="clip-grid">' + clips + '</div>' : '') +
-            '<div class="name-form"><input id="voice-name" placeholder="Their name" aria-label="Voice name">' +
-              '<button type="button" class="act" id="save-voice">Save</button></div>' +
+            '<div class="name-form">' +
+              '<input id="voice-name" list="known-voices" placeholder="Their name, or somebody already known" aria-label="Voice name" autocomplete="off">' +
+              '<button type="button" class="act primary" id="save-voice">Save</button></div>' +
           '</div>';
       }
+
+      var shownUnnamed = voicesShowAll.unnamed ? unnamed : unnamed.slice(0, VOICE_PAGE);
+      var queue = unnamed.length && !namingRow
+        ? '<div class="group-title day">Not named yet <span class="count">' + unnamed.length + '</span></div>' +
+          '<div class="voice-list">' +
+            shownUnnamed.map(function (c) {
+              return '<div class="voice-item">' +
+                '<span class="avatar" style="background:var(--spk-x)">?</span>' +
+                playBtn('cand:' + c.row, !!c.audio, 'Play this voice') +
+                '<span><b>' + escapeHtml(c.text || 'A voice with no transcript') + '</b>' +
+                  '<div class="sub">' + escapeHtml(c.day) + ' · ' + duration(c.talk_secs) + ' of speech' +
+                  (c.audio ? '' : ' · recording already swept') + '</div></span>' +
+                '<span class="voice-acts">' +
+                  '<button type="button" class="act" data-name-row="' + c.row + '">Name</button></span>' +
+              '</div>';
+            }).join('') + '</div>' + showAllBtn('unnamed', unnamed.length)
+        : '';
 
       var root = document.getElementById('voices-pane');
       root.innerHTML =
         '<div class="detail-head"><button type="button" class="back-btn" id="voices-back">&#8249; Meetings</button>' +
           '<span class="detail-title">Voices</span></div>' +
-        '<div class="group-title day">Named</div>' +
+        '<div class="group-title day">Named <span class="count">' + voices.length + '</span></div>' +
         '<div class="voice-list">' + known + '</div>' +
-        naming +
-        (unnamed.length && !namingRow
-          ? '<div class="group-title day">Not named yet</div><div class="voice-list">' +
-              unnamed.map(function (c) {
-                return '<div class="voice-item">' +
-                  '<span class="avatar" style="background:var(--spk-x)">?</span>' +
-                  '<span><b>' + escapeHtml(c.text || 'A voice with no transcript') + '</b>' +
-                    '<div class="sub">' + escapeHtml(c.day) + ' · ' + duration(c.talk_secs) + ' of speech</div></span>' +
-                  '<span class="voice-acts">' +
-                    (c.audio ? '<button type="button" class="act" data-play-clip="' + c.row + '">&#9654;</button>' : '') +
-                    '<button type="button" class="act" data-name-row="' + c.row + '">Name</button></span>' +
-                '</div>';
-              }).join('') + '</div>'
-          : '');
+        showAllBtn('named', voices.length) +
+        naming + queue + knownVoicesList();
 
+      wireVoices(root);
+      var editInput = root.querySelector('.edit-form input');
+      if (editInput) { editInput.focus(); editInput.select(); }
+    }
+
+    // What one voice is made of. Two questions on one panel, because they are
+    // the same question asked twice: which audio is this person, and which
+    // couple of seconds of it stands for them.
+    function audioPanelHTML(v) {
+      if (audioPanel.id !== v.id) return '<div class="voice-audio"><p class="hint">Loading…</p></div>';
+      if (audioPanel.error) return '<div class="voice-audio"><p class="hint">' + escapeHtml(audioPanel.error) + '</p></div>';
+
+      var attached = audioPanel.clips.length
+        ? '<div class="clip-rows">' + audioPanel.clips.map(function (c) {
+            return '<div class="clip-row">' +
+              playBtn('clip:' + c.row, !!c.audio, 'Play this clip', true) +
+              '<span class="said">' + escapeHtml(c.text || '(no transcript)') + '</span>' +
+              '<span class="when">' + escapeHtml(c.day) + ' · ' + duration(c.talk_secs) + '</span>' +
+              '<span class="spk-acts">' +
+                '<button type="button" class="sample-btn" data-sample="' + v.id + ':' + c.row + '"' +
+                  ' aria-pressed="' + !!c.is_sample + '">' + (c.is_sample ? 'Sample' : 'Use as sample') + '</button>' +
+                '<button type="button" class="act" data-detach="' + c.row + '">Not them</button>' +
+              '</span></div>';
+          }).join('') + '</div>'
+        : '<p class="hint">Nothing is attached: this voice has no speaker rows left.</p>';
+
+      var picked = 0;
+      audioPanel.nearby.forEach(function (n) { if (audioPanel.picked[n.row]) picked++; });
+      var nearby = audioPanel.nearby.length
+        ? '<div class="clip-grid">' + audioPanel.nearby.map(function (n) {
+            return '<div class="clip" data-picked="' + !!audioPanel.picked[n.row] + '">' +
+              '<button type="button" class="act" data-near="' + n.row + '" aria-pressed="' + !!audioPanel.picked[n.row] + '">' +
+                (audioPanel.picked[n.row] ? '&#10003; Same' : 'Same?') + '</button>' +
+              playBtn('cand:' + n.row, !!n.audio, 'Play this clip', true) +
+              '<span class="said">' + escapeHtml(n.text || '(no transcript)') + '</span>' +
+              '<span class="q">' + n.score.toFixed(2) + '</span></div>';
+          }).join('') + '</div>' +
+          '<div class="attach-bar"><p class="hint">Attaching re-averages the fingerprint, weighted by how long each clip is.</p>' +
+            '<button type="button" class="act primary" data-attach="' + v.id + '"' + (picked ? '' : ' disabled') + '>' +
+            (picked ? 'Attach ' + picked + (picked === 1 ? ' clip' : ' clips') : 'Attach clips') + '</button></div>'
+        : '<p class="hint">Nothing else on file sounds like them right now.</p>';
+
+      return '<div class="voice-audio">' +
+        '<h4>In this voice <span class="count">' + audioPanel.clips.length + '</span></h4>' + attached +
+        '<h4>Sounds like them — not attached yet</h4>' + nearby + '</div>';
+    }
+
+    // loadAudioPanel fetches both halves at once. is_sample is decided here
+    // rather than in Go: the stored clip is a copy of one speaker's audio and
+    // the database does not record which one, so the longest-talking clip --
+    // the one clipFor would cut -- is shown as the sample until the user
+    // picks another.
+    function loadAudioPanel(id) {
+      audioPanel = { id: id, clips: [], nearby: [], picked: {}, error: '' };
+      Promise.all([window.voiceClips(id), window.similarToVoice(id)]).then(function (r) {
+        if (openAudio !== id) return;
+        audioPanel.clips = r[0] || [];
+        audioPanel.nearby = r[1] || [];
+        if (audioPanel.clips.length) audioPanel.clips[0].is_sample = true;
+        renderVoices();
+      }).catch(function (err) {
+        if (openAudio !== id) return;
+        audioPanel.error = String(err);
+        renderVoices();
+      });
+    }
+
+    function wireVoices(root) {
       root.querySelector('#voices-back').addEventListener('click', function () { showMeetingView('browse'); });
+
+      root.querySelectorAll('[data-show-all]').forEach(function (btn) {
+        btn.addEventListener('click', function () {
+          voicesShowAll[btn.dataset.showAll] = true;
+          renderVoices();
+        });
+      });
+
+      root.querySelectorAll('[data-play-key]').forEach(function (btn) {
+        btn.addEventListener('click', function () {
+          var parts = btn.dataset.playKey.split(':');
+          var kind = parts[0], id = parseInt(parts[1], 10);
+          if (kind === 'voice') { playSampleKey(btn.dataset.playKey, voiceBase() + id); return; }
+          var clip = findClip(kind, id);
+          if (clip) playSampleKey(btn.dataset.playKey, audioBase() + clip.audio, clip.start, clip.end);
+        });
+      });
 
       root.querySelectorAll('[data-name-row]').forEach(function (btn) {
         btn.addEventListener('click', function () { openVoices(parseInt(btn.dataset.nameRow, 10)); });
@@ -1622,63 +2085,166 @@
         btn.addEventListener('click', function () {
           var row = parseInt(btn.dataset.clip, 10);
           pickedClips[row] = !pickedClips[row];
-          btn.setAttribute('aria-pressed', String(!!pickedClips[row]));
+          renderVoices();
         });
       });
-      root.querySelectorAll('[data-play-voice]').forEach(function (btn) {
+
+      root.querySelectorAll('[data-audio]').forEach(function (btn) {
         btn.addEventListener('click', function () {
-          playSample(((window.voxlog && window.voxlog.voiceBase) || '') + btn.dataset.playVoice);
+          var id = parseInt(btn.dataset.audio, 10);
+          openAudio = openAudio === id ? 0 : id;
+          editingVoice = 0;
+          if (openAudio) loadAudioPanel(openAudio);
+          renderVoices();
         });
       });
-      root.querySelectorAll('[data-play-clip]').forEach(function (btn) {
+      root.querySelectorAll('[data-near]').forEach(function (btn) {
         btn.addEventListener('click', function () {
-          var clip = null;
-          (unnamed || []).forEach(function (c) { if (String(c.row) === btn.dataset.playClip) clip = c; });
-          if (clip) playSample(((window.voxlog && window.voxlog.audioBase) || '') + clip.audio, clip.start, clip.end);
+          var row = parseInt(btn.dataset.near, 10);
+          audioPanel.picked[row] = !audioPanel.picked[row];
+          renderVoices();
         });
       });
-      root.querySelectorAll('[data-rename-voice]').forEach(function (btn) {
+      root.querySelectorAll('[data-attach]').forEach(function (btn) {
         btn.addEventListener('click', function () {
-          var name = window.prompt('Name for this voice', btn.dataset.name);
-          if (name) window.renameVoice(parseInt(btn.dataset.renameVoice, 10), name).then(function () { openVoices(namingRow); });
+          var id = parseInt(btn.dataset.attach, 10);
+          var rows = audioPanel.nearby.filter(function (n) { return audioPanel.picked[n.row]; })
+            .map(function (n) { return n.row; });
+          if (!rows.length) return;
+          Promise.all(rows.map(function (row) { return window.linkSpeaker(row, id); })).then(function () {
+            toast('Attached ' + rows.length + (rows.length === 1 ? ' clip' : ' clips') + ' — fingerprint re-averaged');
+            loadAudioPanel(id);
+            return reloadVoices();
+          }).catch(function (err) { toast(String(err)); });
         });
       });
-      // Forget and Erase are two different promises, so they ask two
-      // different questions. Forget can be undone by naming the voice again;
-      // Erase destroys the fingerprints and cannot.
+      root.querySelectorAll('[data-sample]').forEach(function (btn) {
+        btn.addEventListener('click', function () {
+          var parts = btn.dataset.sample.split(':');
+          var id = parseInt(parts[0], 10), row = parseInt(parts[1], 10);
+          window.setVoiceSample(id, row).then(function () {
+            audioPanel.clips.forEach(function (c) { c.is_sample = c.row === row; });
+            toast('That clip is what the row plays now');
+            return reloadVoices();
+          }).catch(function (err) { toast(String(err)); });
+        });
+      });
+      root.querySelectorAll('[data-detach]').forEach(function (btn) {
+        btn.addEventListener('click', function () {
+          var row = parseInt(btn.dataset.detach, 10);
+          window.unlinkSpeaker(row).then(function () {
+            toast('Detached — the fingerprint is rebuilt without it');
+            loadAudioPanel(openAudio);
+            return reloadVoices();
+          }).catch(function (err) { toast(String(err)); });
+        });
+      });
+
+      root.querySelectorAll('[data-edit-voice]').forEach(function (btn) {
+        btn.addEventListener('click', function () {
+          editingVoice = parseInt(btn.dataset.editVoice, 10);
+          forgetArmed = 0;
+          eraseArmed = 0;
+          renderVoices();
+        });
+      });
+      root.querySelectorAll('[data-cancel-edit]').forEach(function (btn) {
+        btn.addEventListener('click', function () { editingVoice = 0; renderVoices(); });
+      });
+      root.querySelectorAll('[data-save-rename]').forEach(function (btn) {
+        btn.addEventListener('click', function () { saveRename(parseInt(btn.dataset.saveRename, 10)); });
+      });
+      root.querySelectorAll('.edit-form').forEach(function (form) {
+        form.addEventListener('submit', function (ev) {
+          ev.preventDefault();
+          saveRename(parseInt(form.dataset.renameVoice, 10));
+        });
+        form.querySelector('input').addEventListener('keydown', function (ev) {
+          if (ev.key === 'Escape') { editingVoice = 0; renderVoices(); }
+        });
+      });
+
       root.querySelectorAll('[data-forget-voice]').forEach(function (btn) {
         btn.addEventListener('click', function () {
-          if (!window.confirm('Forget this name? The replies go back to being numbered, and the voice can be named again later.')) return;
-          window.forgetVoice(parseInt(btn.dataset.forgetVoice, 10)).then(function () { openVoices(namingRow); });
+          var id = parseInt(btn.dataset.forgetVoice, 10);
+          if (forgetArmed !== id) { forgetArmed = id; eraseArmed = 0; renderVoices(); return; }
+          forgetArmed = 0;
+          window.forgetVoice(id).then(function () {
+            toast('Forgot the name — those replies are numbered again');
+            if (openAudio === id) openAudio = 0;
+            return reloadVoices();
+          }).catch(function (err) { toast(String(err)); });
         });
       });
       root.querySelectorAll('[data-erase-voice]').forEach(function (btn) {
         btn.addEventListener('click', function () {
-          if (!window.confirm('Erase this voice? Everything learned about how they sound is deleted, and they will not be recognised again.')) return;
-          window.eraseVoice(parseInt(btn.dataset.eraseVoice, 10)).then(function () { openVoices(0); });
+          var id = parseInt(btn.dataset.eraseVoice, 10);
+          if (eraseArmed !== id) { eraseArmed = id; forgetArmed = 0; renderVoices(); return; }
+          eraseArmed = 0;
+          window.eraseVoice(id).then(function () {
+            toast('Erased — nothing about how they sound is kept');
+            if (openAudio === id) openAudio = 0;
+            return reloadVoices();
+          }).catch(function (err) { toast(String(err)); });
         });
       });
 
       var save = root.querySelector('#save-voice');
       if (save) {
-        save.addEventListener('click', function () {
-          var name = root.querySelector('#voice-name').value.trim();
-          if (!name) { root.querySelector('#voice-name').focus(); return; }
+        var field = root.querySelector('#voice-name');
+        var submit = function () {
+          var name = field.value.trim();
+          if (!name) { field.focus(); return; }
           var also = similarClips.filter(function (c) { return pickedClips[c.row]; })
             .map(function (c) { return c.row; });
-          window.nameSpeaker(namingRow, name, also).then(function () { openVoices(0); });
-        });
+          nameOrLink(namingRow, name, also)
+            .then(function () { openVoices(0); })
+            .catch(function (err) { toast(String(err)); });
+        };
+        save.addEventListener('click', submit);
+        field.addEventListener('keydown', function (ev) { if (ev.key === 'Enter') submit(); });
+        field.focus();
       }
     }
 
+    function saveRename(id) {
+      var form = document.querySelector('.edit-form[data-rename-voice="' + id + '"]');
+      if (!form) return;
+      var name = form.querySelector('input').value.trim();
+      if (!name) { form.querySelector('input').focus(); return; }
+      window.renameVoice(id, name).then(function () {
+        editingVoice = 0;
+        toast('Renamed to ' + name + ' — every meeting they spoke in follows');
+        return reloadVoices();
+      }).catch(function (err) { toast(String(err)); });
+    }
+
+    // findClip looks a playable clip up by where it was drawn: the naming
+    // queue and the similar-voices grid ("cand"), or the audio panel of one
+    // voice ("clip").
+    function findClip(kind, row) {
+      var pools = kind === 'clip'
+        ? [audioPanel.clips]
+        : [voiceData.unnamed || [], similarClips, audioPanel.nearby];
+      var found = null;
+      pools.forEach(function (pool) {
+        pool.forEach(function (c) { if (c.row === row && !found) found = c; });
+      });
+      return found && found.audio ? found : null;
+    }
+
     // playSample plays a stored voice clip, or a stretch of a recording.
-    function playSample(src, from, to) {
+    function playSample(src, from, to, onEnd) {
       stopTurnPlayer();
       var audio = document.createElement('audio');
       audio.preload = 'none';
       audio.src = src;
       document.getElementById('voices-pane').appendChild(audio);
       turnPlayer = audio;
+      if (onEnd) {
+        audio.addEventListener('ended', onEnd);
+        audio.addEventListener('pause', onEnd);
+      }
       if (from) {
         audio.currentTime = from;
         turnStopAt = to || null;
@@ -2359,7 +2925,11 @@
       }
       el.innerHTML =
         '<div class="live"><span class="pulse"></span>' +
-          '<div><div class="what">Meeting recording</div><div class="sub">Microphone + system audio · dictation still works</div></div>' +
+          // Say the thing the banner is for: the others on the call have to
+          // be told, and the macOS notice that says so can be refused by the
+          // system without a word. This line cannot be.
+          '<div><div class="what">Meeting recording</div>' +
+            '<div class="sub">Let the others on the call know &middot; microphone + system audio &middot; dictation still works</div></div>' +
           '<div class="elapsed">' + clockTime(status.seconds) + '</div>' +
           '<button type="button" class="act" id="overview-stop">Stop</button>' +
         '</div>';

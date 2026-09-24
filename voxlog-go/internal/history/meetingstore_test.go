@@ -320,3 +320,33 @@ func TestAutoEntityLeavesWhatItCannotImproveOn(t *testing.T) {
 		t.Fatalf("entity = %q, want the hand-cleared empty", m.Entity)
 	}
 }
+
+// Summarization is the only thing that names a meeting, and a model that
+// came back with nothing must not take away a name an earlier pass produced.
+func TestSetTitleAutoNamesAMeetingAndRefusesAnEmptyName(t *testing.T) {
+	s := NewMeetingStore(t.TempDir())
+	at := time.Date(2026, 9, 22, 10, 4, 0, 0, time.Local)
+	if err := s.Append(Meeting{Start: at, RecordingSeconds: 2748}); err != nil {
+		t.Fatal(err)
+	}
+
+	// A meeting recorded before titles existed shows its date, not a name.
+	if m, err := s.Get(at); err != nil || m.Title != "" {
+		t.Fatalf("Get = %q, %v; want an untitled meeting", m.Title, err)
+	}
+	if err := s.SetTitleAuto(at, "CSV importer scope"); err != nil {
+		t.Fatal(err)
+	}
+	if m, _ := s.Get(at); m.Title != "CSV importer scope" {
+		t.Errorf("title = %q", m.Title)
+	}
+	if err := s.SetTitleAuto(at, ""); err != nil {
+		t.Fatal(err)
+	}
+	if m, _ := s.Get(at); m.Title != "CSV importer scope" {
+		t.Errorf("an empty answer cleared the title: %q", m.Title)
+	}
+	if err := s.SetTitleAuto(at.Add(time.Hour), "nobody"); err == nil {
+		t.Error("naming a meeting that does not exist reported success")
+	}
+}

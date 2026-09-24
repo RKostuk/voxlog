@@ -408,8 +408,10 @@ func (s *MeetingStore) UnnamedSpeakers(limit int) ([]SpeakerCandidate, error) {
 
 // The longest turn stands in for the speaker: it is the most audio of them in
 // one piece, which is both the best thing to listen to and the best thing to
-// read when deciding who they are.
-const unnamedSpeakerSQL = `
+// read when deciding who they are. Every query that hands a speaker to the
+// window wants exactly this shape, so it is written once here and each caller
+// adds its own WHERE.
+const candidateSelectSQL = `
 	SELECT ms.id, ms.meeting_ns, ms.talk_secs, ms.embed,
 	       COALESCE(t.text, ''), COALESCE(t.channel, 0),
 	       COALESCE(t.start_secs, 0), COALESCE(t.end_secs, 0),
@@ -421,8 +423,37 @@ const unnamedSpeakerSQL = `
 		WHERE speaker_id = ms.id
 		ORDER BY (end_secs - start_secs) DESC
 		LIMIT 1
-	)
+	)`
+
+const unnamedSpeakerSQL = candidateSelectSQL + `
 	WHERE ms.voice_id IS NULL AND ms.embed IS NOT NULL AND ms.local_id >= 0`
+
+// SpeakersByVoice is the other direction: everything currently attached to
+// one voice, longest-talking first. It is what the voice is actually made of
+// -- the rows recomputeVoice averages -- so the window can play each of them,
+// promote one to the stored sample, or say "that was not them" about it.
+func (s *MeetingStore) SpeakersByVoice(voiceID int64) ([]SpeakerCandidate, error) {
+	db, err := s.open()
+	if err != nil {
+		return nil, err
+	}
+	rows, err := db.sql.Query(candidateSelectSQL+`
+		WHERE ms.voice_id = ? ORDER BY ms.talk_secs DESC`, voiceID)
+	if err != nil {
+		return nil, fmt.Errorf("history: reading the speakers of voice %d: %w", voiceID, err)
+	}
+	defer rows.Close()
+
+	var out []SpeakerCandidate
+	for rows.Next() {
+		c, _, err := scanCandidate(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, c)
+	}
+	return out, rows.Err()
+}
 
 func scanCandidate(rows rowScanner) (SpeakerCandidate, []float32, error) {
 	var (
@@ -451,19 +482,44 @@ func scanCandidate(rows rowScanner) (SpeakerCandidate, []float32, error) {
 // Run right after a meeting's turns are written, so a transcript opened a
 // minute later already reads with names on it.
 func (s *MeetingStore) IdentifySpeakers(start time.Time) ([]SpeakerSuggestion, error) {
-	speakers, err := s.Speakers(start)
+	sure, unsure, err := s.matchSpeakers(start)
 	if err != nil {
 		return nil, err
+	}
+	for _, m := range sure {
+		if err := s.LinkSpeaker(m.SpeakerRow, m.VoiceID); err != nil {
+			return unsure, err
+		}
+	}
+	return unsure, nil
+}
+
+// SpeakerSuggestions is IdentifySpeakers without the linking: the same
+// "this might be Ірина" answers, for a meeting the window is showing right
+// now. Read-only on purpose -- opening a meeting must not quietly rename
+// anybody, and 0.55-0.72 is exactly the band where the app is not allowed to
+// decide by itself.
+func (s *MeetingStore) SpeakerSuggestions(start time.Time) ([]SpeakerSuggestion, error) {
+	_, unsure, err := s.matchSpeakers(start)
+	return unsure, err
+}
+
+// matchSpeakers scores every unnamed speaker of one meeting against every
+// known voice and splits the answers at the two thresholds: sure enough to
+// apply, and only worth asking about.
+func (s *MeetingStore) matchSpeakers(start time.Time) (sure, unsure []SpeakerSuggestion, err error) {
+	speakers, err := s.Speakers(start)
+	if err != nil {
+		return nil, nil, err
 	}
 	voices, err := s.Voices()
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	if len(voices) == 0 {
-		return nil, nil
+		return nil, nil, nil
 	}
 
-	var unsure []SpeakerSuggestion
 	for _, sp := range speakers {
 		if sp.VoiceID != 0 || len(sp.Embed) == 0 {
 			continue
@@ -474,21 +530,15 @@ func (s *MeetingStore) IdentifySpeakers(start time.Time) ([]SpeakerSuggestion, e
 				best, bestScore = v, score
 			}
 		}
+		match := SpeakerSuggestion{SpeakerRow: sp.ID, VoiceID: best.ID, Name: best.Name, Score: bestScore}
 		switch {
 		case bestScore >= IdentifyThreshold:
-			if err := s.LinkSpeaker(sp.ID, best.ID); err != nil {
-				return unsure, err
-			}
+			sure = append(sure, match)
 		case bestScore >= SuggestThreshold:
-			unsure = append(unsure, SpeakerSuggestion{
-				SpeakerRow: sp.ID,
-				VoiceID:    best.ID,
-				Name:       best.Name,
-				Score:      bestScore,
-			})
+			unsure = append(unsure, match)
 		}
 	}
-	return unsure, nil
+	return sure, unsure, nil
 }
 
 // SpeakerSuggestion is "this might be Ірина, ask before you say so".
