@@ -1201,7 +1201,12 @@ func onReady(store *settings.Store, histStore *history.Store, meetStore *history
 	if !openSettings && needsSetup(cfg, modelsDir) {
 		openSettings = true
 	}
-	if openSettings {
+	if !cfg.WelcomeDone {
+		// A first run, or a restart asked for halfway through one (granting
+		// Accessibility needs it): the welcome walks through what the
+		// Settings window would otherwise have been opened for.
+		go ui.ShowMainWindow(ui.PaneWelcome, histStore, meetStore, a.tasks, store, knownModels, modelsDir, recordingsDir)
+	} else if openSettings {
 		go ui.ShowMainWindow("settings", histStore, meetStore, a.tasks, store, knownModels, modelsDir, recordingsDir)
 	}
 

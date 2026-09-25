@@ -808,6 +808,16 @@
         </div>
       </div>
     </div>
+    <div class="group">
+      <div class="card">
+        <div class="item">
+          <div class="title">Welcome tour
+            <div class="subtext">Microphone, mode, shortcuts and indicator, one step at a time</div>
+          </div>
+          <button type="button" id="show-welcome">Show&hellip;</button>
+        </div>
+      </div>
+    </div>
       </div>
         <span id="status"></span>
       </form>
@@ -2272,6 +2282,10 @@
     // DOMContentLoaded has already fired, so nothing would ever call a
     // handler bound to that event. The shell calls this directly once the
     // fragment is in the document.
+    document.getElementById('show-welcome').addEventListener('click', function () {
+      if (window.openWelcome) window.openWelcome();
+    });
+
     window.initSettingsPane = function () {
       settings = (window.voxlog && window.voxlog.settings) || {};
       models = (window.voxlog && window.voxlog.models) || [];

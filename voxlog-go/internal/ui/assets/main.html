@@ -874,6 +874,7 @@
       </div>
     </main>
   </div>
+  <!-- WELCOME -->
   <script>
     // Anything this page throws goes to the app's log. There is no console
     // and no inspector in this webview, so an exception inside a click
@@ -3443,6 +3444,11 @@
     // its own nav, scoped to itself, so the two never see each other's
     // clicks.
     function selectPane(name) {
+      // The welcome is a sheet over Overview, not a pane of its own.
+      if (name === 'welcome') {
+        if (window.openWelcome) window.openWelcome();
+        name = 'overview';
+      }
       document.querySelectorAll('#shell-nav .navitem').forEach(function (n) {
         n.setAttribute('aria-selected', String(n.dataset.pane === name));
       });

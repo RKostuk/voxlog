@@ -18,6 +18,7 @@ const (
 	settingsCSSMarker  = "  /* SETTINGS_CSS */"
 	indicatorCSSMarker = "  /* INDICATOR_CSS */"
 	settingsMarkup     = "  <!-- SETTINGS_PANE -->"
+	welcomeMarkup      = "  <!-- WELCOME -->"
 )
 
 // injectAsset splices assets/<name> into a page at its marker. A missing file

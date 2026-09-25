@@ -256,12 +256,21 @@ type Settings struct {
 	// Settings pane re-adds every entity it finds on every open, resurrecting
 	// names the user has just deleted.
 	EntityDictionarySeeded bool `json:"entity_dictionary_seeded"`
+	// WelcomeDone is set once the first-run welcome has been finished or
+	// dismissed. A fresh install has no settings file and so starts false,
+	// which is what opens the welcome; an install that already had a file
+	// is moved to true by migrate, since that user set the app up without it.
+	// Owned by the app, not the Settings form -- see the saveSettings binding.
+	WelcomeDone bool `json:"welcome_done"`
+	// WelcomeStep is the step the welcome was last on, so the relaunch that
+	// granting Accessibility needs reopens it there rather than at the start.
+	WelcomeStep int `json:"welcome_step"`
 }
 
 // currentSettingsVersion is what a freshly written file carries. Bump it and
 // add a step to migrate when a default changes in a way that has to reach
 // files already on disk.
-const currentSettingsVersion = 2
+const currentSettingsVersion = 3
 
 // DefaultTasksKeyID is the quick-tasks binding a fresh install gets, and the
 // one a file written before it existed is migrated onto: Command-/ ("vk:44"
@@ -456,6 +465,10 @@ func (s *Store) Load() error {
 // has an empty tasks_key that was never a decision -- nobody turned the
 // drawer's hotkey off, it simply never had one. Only an empty binding is
 // moved onto Command-/; a key the user actually set is left alone.
+//
+// Version 3: the first-run welcome arrived. A file written before it belongs
+// to someone who already found their way around, so they are not walked
+// through setup again; they can still open it from Settings > Advanced.
 func migrate(v *Settings, fileVersion int) {
 	if fileVersion < 1 {
 		if v.AlwaysOnSystemAudio == "" || v.AlwaysOnSystemAudio == AlwaysOnTapSession {
@@ -464,6 +477,9 @@ func migrate(v *Settings, fileVersion int) {
 	}
 	if fileVersion < 2 && v.TasksKeyID == "" {
 		v.TasksKeyID = DefaultTasksKeyID
+	}
+	if fileVersion < 3 {
+		v.WelcomeDone = true
 	}
 	v.Version = currentSettingsVersion
 }

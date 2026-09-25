@@ -1,0 +1,700 @@
+  <!-- The first-run welcome (TASKS.md §17): a sheet over the shell, one step
+       at a time, every step skippable. It owns no settings of its own -- each
+       choice is written through the same saveSettings binding the Settings
+       pane uses, and the pane is re-filled after, so the two never disagree.
+       Opened by the app on a first run (PaneWelcome) and from Settings >
+       Advanced. -->
+  <style>
+    #welcome {
+      position: fixed; inset: 0; z-index: 50;
+      display: flex; align-items: center; justify-content: center;
+      padding: var(--sp-8);
+      background:
+        radial-gradient(60rem 40rem at 12% -10%, var(--wash-a), transparent 60%),
+        radial-gradient(50rem 36rem at 92% 4%, var(--wash-b), transparent 62%),
+        radial-gradient(46rem 34rem at 50% 108%, var(--wash-c), transparent 60%),
+        var(--bg);
+    }
+    #welcome[hidden] { display: none; }
+    .wl-sheet {
+      width: 100%; max-width: 880px; height: 100%; max-height: 580px;
+      display: grid; grid-template-columns: 200px 1fr;
+      background: var(--card);
+      -webkit-backdrop-filter: blur(40px) saturate(160%);
+      backdrop-filter: blur(40px) saturate(160%);
+      border-radius: 14px; box-shadow: var(--glass);
+      overflow: hidden;
+    }
+    .wl-side {
+      background: var(--sidebar); border-right: 0.5px solid var(--separator);
+      padding: var(--sp-6) var(--sp-4); display: flex; flex-direction: column; gap: var(--sp-1);
+    }
+    .wl-side ol { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--sp-1); }
+    .wl-side ol button {
+      width: 100%; display: flex; align-items: center; gap: var(--sp-4);
+      border: 0; background: none; color: var(--label); font: inherit; font-size: var(--fs-body);
+      text-align: left; padding: var(--sp-3) var(--sp-4); border-radius: var(--r-sm); cursor: pointer;
+    }
+    .wl-side ol button:hover { background: var(--field); }
+    .wl-side ol button[aria-current="step"] { background: var(--accent); color: #fff; }
+    .wl-dot {
+      width: 18px; height: 18px; flex: none; border-radius: 50%;
+      display: grid; place-items: center; font-size: 10px; font-weight: var(--fw-semi);
+      border: 1.5px solid var(--tertiary); color: var(--secondary);
+    }
+    .wl-side .done .wl-dot { background: var(--green); border-color: var(--green); color: #fff; }
+    .wl-side .skipped .wl-dot { border-style: dashed; }
+    .wl-side [aria-current="step"] .wl-dot { border-color: #fff; color: #fff; }
+    .wl-side-foot { margin-top: auto; padding: var(--sp-4); font-size: var(--fs-caption); color: var(--secondary); }
+
+    .wl-main { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+    .wl-pane { flex: 1; overflow-y: auto; padding: var(--sp-8) 36px var(--sp-6); display: flex; flex-direction: column; gap: var(--sp-6); }
+    .wl-eyebrow { font-size: var(--fs-caption); font-weight: var(--fw-semi); letter-spacing: .06em; text-transform: uppercase; color: var(--accent); }
+    .wl-pane h1 { margin: 0; font-size: 24px; line-height: 1.15; font-weight: var(--fw-bold); letter-spacing: -.02em; text-wrap: balance; }
+    .wl-lede { margin: 0; color: var(--secondary); font-size: 13.5px; max-width: 60ch; }
+    .wl-foot { display: flex; align-items: center; gap: var(--sp-4); padding: var(--sp-5) 36px; border-top: 0.5px solid var(--separator); }
+    .wl-foot .wl-spacer { flex: 1; }
+    .wl-progress { height: 3px; flex: 1; max-width: 160px; background: var(--field); border-radius: 2px; overflow: hidden; }
+    .wl-progress i { display: block; height: 100%; background: var(--accent); transition: width .25s; }
+
+    #welcome button.wl-btn {
+      font: inherit; font-size: var(--fs-body); padding: 5px 14px; border-radius: var(--r-sm);
+      border: none; background: var(--field); color: var(--label); cursor: pointer; white-space: nowrap;
+    }
+    #welcome button.wl-btn:hover:not(:disabled) { background: color-mix(in srgb, var(--field) 60%, var(--separator)); }
+    #welcome button.wl-btn:disabled { color: var(--tertiary); cursor: default; }
+    #welcome button.wl-primary { background: var(--accent); color: #fff; font-weight: var(--fw-medium); }
+    #welcome button.wl-primary:hover:not(:disabled) { background: color-mix(in srgb, var(--accent) 86%, #000); }
+    #welcome button.wl-ghost { background: none; color: var(--secondary); }
+    #welcome button:focus-visible, #welcome select:focus-visible, #welcome input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+    .wl-group { background: var(--card); border-radius: var(--r-md); box-shadow: var(--glass-flat); }
+    .wl-row { display: flex; align-items: center; gap: var(--sp-5); padding: 10px 14px; }
+    .wl-row + .wl-row { border-top: 0.5px solid var(--separator); }
+    .wl-row[hidden] { display: none; }
+    .wl-grow { flex: 1; min-width: 0; }
+    .wl-t { font-weight: var(--fw-medium); }
+    .wl-s { color: var(--secondary); font-size: var(--fs-caption); }
+    #welcome select, #welcome input[type=text], #welcome input[type=password] {
+      font: inherit; padding: 4px 8px; border-radius: 6px; border: 0.5px solid var(--separator);
+      background: var(--field); color: var(--label); max-width: 240px;
+    }
+    #welcome input[type=range] { accent-color: var(--accent); width: 150px; }
+    .wl-pill { font-size: var(--fs-caption); font-weight: var(--fw-semi); padding: 2px 8px; border-radius: var(--r-pill); white-space: nowrap; }
+    .wl-pill.ok { background: color-mix(in srgb, var(--green) 18%, transparent); color: var(--green-ink); }
+    .wl-pill.need { background: color-mix(in srgb, var(--yellow) 25%, transparent); color: var(--yellow-ink); }
+    .wl-pill.off { background: var(--field); color: var(--secondary); }
+
+    .wl-choices { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: var(--sp-5); }
+    .wl-choice {
+      position: relative; display: flex; flex-direction: column; gap: var(--sp-3);
+      padding: 14px; border-radius: 12px; background: var(--card); box-shadow: var(--glass-flat);
+      border: 1.5px solid transparent; cursor: pointer;
+    }
+    .wl-choice input { position: absolute; opacity: 0; pointer-events: none; }
+    .wl-choice:has(input:checked) { border-color: var(--accent); }
+    .wl-choice:has(input:focus-visible) { outline: 2px solid var(--accent); outline-offset: 2px; }
+    .wl-choice .wl-t { font-size: 14px; font-weight: var(--fw-semi); }
+    .wl-art { height: 64px; border-radius: 8px; background: var(--field); display: grid; place-items: center; }
+
+    .wl-seg { display: inline-flex; background: var(--field); border-radius: var(--r-sm); padding: 2px; flex: none; }
+    .wl-seg label { position: relative; padding: 3px 11px; border-radius: 5px; cursor: pointer; font-size: 12px; white-space: nowrap; }
+    .wl-seg input { position: absolute; opacity: 0; pointer-events: none; }
+    .wl-seg label:has(input:checked) { background: var(--bg); box-shadow: 0 1px 2px var(--glass-shadow); font-weight: var(--fw-medium); }
+    .wl-seg label:has(input:focus-visible) { outline: 2px solid var(--accent); }
+
+    .wl-kbd {
+      font: var(--fw-semi) 12px/1 -apple-system, system-ui, sans-serif; display: inline-flex; align-items: center;
+      padding: 5px 9px; border-radius: 6px; background: var(--field);
+      border: 0.5px solid var(--separator); border-bottom-width: 2px; white-space: nowrap; color: var(--label);
+    }
+    #welcome button.wl-keybtn { font: inherit; background: none; border: 0; padding: 0; cursor: pointer; }
+    #welcome button.wl-keybtn.listening .wl-kbd { border-color: var(--accent); color: var(--accent); }
+    .wl-err { color: var(--red-ink); font-size: var(--fs-caption); min-height: 1em; }
+
+    .wl-meter { display: flex; gap: 3px; align-items: flex-end; height: 28px; }
+    .wl-meter i { width: 6px; height: 100%; border-radius: 2px; background: var(--field); }
+
+    .wl-hero { display: flex; gap: 24px; align-items: center; flex-wrap: wrap; }
+    .wl-logo {
+      width: 80px; height: 80px; border-radius: 20px; flex: none; display: grid; place-items: center;
+      background: linear-gradient(160deg, #7b7cf8, #6552e0); box-shadow: 0 12px 30px rgba(101, 82, 224, .32);
+    }
+    .wl-features { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: var(--sp-4); }
+    .wl-feature { padding: 12px 14px; border-radius: var(--r-md); background: var(--card); box-shadow: var(--glass-flat); }
+    .wl-feature b { display: block; margin-bottom: 2px; }
+    .wl-feature span { color: var(--secondary); font-size: 12px; }
+
+    /* A sketch of the screen, not the real overlay: it shows where, and the
+       Settings > Indicator preview shows exactly what. */
+    .wl-screen { position: relative; height: 150px; border-radius: var(--r-md); background: var(--field); overflow: hidden; }
+    .wl-screen .wl-bar { position: absolute; inset: 0 0 auto; height: 14px; background: color-mix(in srgb, var(--label) 7%, transparent); }
+    .wl-screen .wl-notch { position: absolute; top: 0; left: 50%; translate: -50%; width: 96px; height: 14px; background: #000; border-radius: 0 0 8px 8px; }
+    .wl-screen .wl-dock { position: absolute; bottom: 5px; left: 50%; translate: -50%; width: 44%; height: 16px; border-radius: 6px; background: color-mix(in srgb, var(--label) 7%, transparent); }
+    .wl-screen .wl-lines { position: absolute; left: 18%; top: 38px; width: 64%; display: flex; flex-direction: column; gap: 7px; }
+    .wl-screen .wl-lines i { height: 6px; border-radius: 3px; background: color-mix(in srgb, var(--label) 11%, transparent); }
+    .wl-ind {
+      position: absolute; display: flex; align-items: center; gap: 6px; padding: 4px 10px;
+      font-size: 10px; font-weight: var(--fw-semi); color: #fff; background: #000;
+      border-radius: var(--r-pill); white-space: nowrap; transition: left .25s, top .25s;
+    }
+    .wl-ind.glass { background: rgba(40, 40, 50, .6); -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px); }
+    .wl-ind.transcript { flex-direction: column; align-items: stretch; width: 200px; border-radius: 10px; white-space: normal; font-weight: var(--fw-medium); }
+    .wl-rec { width: 7px; height: 7px; border-radius: 50%; background: var(--red); }
+
+    .wl-flow { display: grid; grid-template-columns: 1fr auto 1fr auto 1fr; gap: var(--sp-4); }
+    .wl-flow .wl-arrow { align-self: center; color: var(--tertiary); }
+    .wl-card { padding: 12px; border-radius: var(--r-md); background: var(--card); box-shadow: var(--glass-flat); font-size: 12px; display: flex; flex-direction: column; gap: var(--sp-3); }
+    .wl-card h4 { margin: 0; font-size: var(--fs-caption); font-weight: var(--fw-semi); text-transform: uppercase; letter-spacing: .05em; color: var(--secondary); }
+    .wl-card mark { background: color-mix(in srgb, var(--yellow) 40%, transparent); color: inherit; border-radius: 3px; padding: 0 2px; }
+    .wl-task { display: flex; gap: 7px; }
+    .wl-task .wl-box { width: 12px; height: 12px; margin-top: 2px; flex: none; border: 1.5px solid var(--tertiary); border-radius: 4px; }
+    .wl-task .wl-proj { font-size: 10px; font-weight: var(--fw-semi); color: var(--purple); }
+    .wl-summary { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); }
+    .wl-summary .wl-row { border-top: 0.5px solid var(--separator); }
+    progress.wl-prog { width: 120px; accent-color: var(--accent); }
+    @media (prefers-reduced-motion: reduce) { .wl-ind, .wl-progress i { transition: none; } }
+  </style>
+
+  <div id="welcome" hidden role="dialog" aria-modal="true" aria-label="Welcome to Voxlog">
+    <div class="wl-sheet">
+      <nav class="wl-side" aria-label="Setup steps">
+        <ol id="wl-steps"></ol>
+        <div class="wl-side-foot">Every step can be skipped. Open this again from Settings &rsaquo; Advanced.</div>
+      </nav>
+      <section class="wl-main">
+        <div class="wl-pane" id="wl-pane"></div>
+        <div class="wl-foot">
+          <button type="button" class="wl-btn wl-ghost" id="wl-back">Back</button>
+          <div class="wl-progress" aria-hidden="true"><i id="wl-bar"></i></div>
+          <span class="wl-spacer"></span>
+          <button type="button" class="wl-btn wl-ghost" id="wl-later">Set up later</button>
+          <button type="button" class="wl-btn wl-ghost" id="wl-skip">Skip</button>
+          <button type="button" class="wl-btn wl-primary" id="wl-next">Continue</button>
+        </div>
+      </section>
+    </div>
+  </div>
+
+  <script>
+  (function () {
+    window.voxlog = window.voxlog || {};
+    var STEPS = [
+      { id: 'welcome', label: 'Welcome' },
+      { id: 'perms', label: 'Permissions' },
+      { id: 'mic', label: 'Microphone' },
+      { id: 'mode', label: 'How it listens' },
+      { id: 'keys', label: 'Shortcuts' },
+      { id: 'indicator', label: 'Indicator' },
+      { id: 'meetings', label: 'Meetings' },
+      { id: 'tasks', label: 'Tasks & summaries' },
+      { id: 'done', label: 'Ready' }
+    ];
+    var KEY_FIELDS = { dictate_key: 'Dictate', history_key: 'History', tasks_key: 'Quick task', meeting_key: 'Record meeting' };
+    var POSITIONS = {
+      capsule: ['top_centre', 'cursor', 'follow', 'top_right', 'bottom_right', 'bottom_centre'],
+      transcript: ['bottom_centre', 'top_centre', 'cursor']
+    };
+    var POSITION_LABELS = {
+      top_centre: 'Under the notch', bottom_centre: 'Above the Dock', cursor: 'Beside the pointer',
+      follow: 'Following the pointer', top_right: 'Top right', bottom_right: 'Bottom right'
+    };
+
+    var root = document.getElementById('welcome');
+    var pane = document.getElementById('wl-pane');
+    var S = {};            // the settings being edited, saved as they change
+    var step = 0;
+    var status = {};       // step id -> 'done' | 'skipped'
+    var perms = {};
+    var devices = [];
+    var labels = {};       // raw key id -> label, filled lazily
+    var capturing = null;  // key field waiting on captureKey
+    var keyError = '';
+    var micOn = false, micLevel = 0, micSmooth = 0, micFrame = null;
+    var permTimer = null;
+    var speechProgress = null, llmProgress = null, llmStage = '';
+    var saveTimer = null;
+
+    function esc(s) { return window.escapeHtml ? window.escapeHtml(String(s)) : String(s); }
+    function v() { return window.voxlog || {}; }
+
+    // --- saving ----------------------------------------------------------
+    // Written through the same binding as the Settings pane, then the pane
+    // is re-filled from the result: it builds its payload from its own form,
+    // so a form left stale would quietly undo these choices on its next save.
+    function saveNow() {
+      clearTimeout(saveTimer);
+      saveTimer = null;
+      var payload = JSON.parse(JSON.stringify(S));
+      return window.saveSettings(payload).then(function () {
+        window.voxlog.settings = payload;
+        if (window.initSettingsPane) window.initSettingsPane();
+      }).catch(function (err) { window.logJS && window.logJS('welcome save: ' + err); });
+    }
+    function save() {
+      clearTimeout(saveTimer);
+      saveTimer = setTimeout(saveNow, 250);
+    }
+    // A change still inside the debounce when the welcome closes or the app
+    // relaunches is written first, not dropped.
+    function flush() { return saveTimer ? saveNow() : Promise.resolve(); }
+    function set(field, value) { S[field] = value; save(); }
+
+    // --- hooks shared with the Settings pane ------------------------------
+    // The app pushes results through a single global callback each. The
+    // welcome takes them while it is the one asking and hands everything
+    // else on, so the Settings pane keeps working underneath.
+    var prevKey = v().onKeyCaptured;
+    window.voxlog.onKeyCaptured = function (p) {
+      if (!capturing) { if (prevKey) prevKey(p); return; }
+      var field = capturing;
+      capturing = null;
+      keyError = '';
+      if (p.error) {
+        keyError = 'No key captured: ' + p.error;
+      } else {
+        var clash = Object.keys(KEY_FIELDS).filter(function (f) { return f !== field && S[f] && S[f] === p.keyId; })[0];
+        if (clash) keyError = 'That key is already the ' + KEY_FIELDS[clash] + ' key.';
+        else set(field, p.keyId);
+      }
+      render();
+    };
+    var prevLevel = v().onMicLevel;
+    window.voxlog.onMicLevel = function (x) {
+      if (micOn) micLevel = Math.max(0, Math.min(1, x));
+      else if (prevLevel) prevLevel(x);
+    };
+    function chain(name, mine) {
+      var prev = v()[name];
+      window.voxlog[name] = function (p) { if (prev) prev(p); mine(p); };
+    }
+    chain('onProgress', function (p) {
+      if (p.file_family !== S.model_family || p.file_variant !== S.model_variant) return;
+      if (p.total > 0) speechProgress = Math.round(p.downloaded / p.total * 100);
+      var el = document.getElementById('wl-speech-prog');
+      if (el && speechProgress !== null) el.value = speechProgress;
+    });
+    chain('onDownloadDone', function (p) {
+      (v().models || []).forEach(function (m) {
+        if (m.family === p.family && m.variant === p.variant && !p.error) m.downloaded = true;
+      });
+      speechProgress = p.error ? null : 100;
+      if (p.error) keyError = 'Download failed: ' + p.error;
+      if (!root.hidden) render();
+    });
+    chain('onLLMStage', function (p) { llmStage = p.stage; var el = document.getElementById('wl-llm-stage'); if (el) el.textContent = p.stage; });
+    chain('onLLMProgress', function (p) {
+      if (p.total > 0) llmProgress = Math.round(p.downloaded / p.total * 100);
+      var el = document.getElementById('wl-llm-prog');
+      if (el && llmProgress !== null) el.value = llmProgress;
+    });
+    chain('onLLMDownloadDone', function () { llmProgress = null; if (!root.hidden) render(); });
+
+    // --- side effects per step --------------------------------------------
+    function stopMic() {
+      if (micOn) { micOn = false; window.stopMicTest(); }
+      cancelAnimationFrame(micFrame);
+    }
+    function startMic() {
+      stopMic();
+      micOn = true;
+      window.startMicTest(S.input_device || '', S.mic_gain || 1).catch(function (err) {
+        micOn = false;
+        var el = document.getElementById('wl-heard');
+        if (el) el.textContent = 'Could not open the microphone: ' + err;
+      });
+      (function frame() {
+        // Instant rise, fixed decay: the ballistics the overlay and the
+        // Settings meter use, so all three read the same voice the same way.
+        micSmooth = micLevel > micSmooth ? micLevel : Math.max(micLevel, micSmooth - 0.035);
+        var bars = document.querySelectorAll('#wl-meter i');
+        for (var i = 0; i < bars.length; i++) {
+          var on = micSmooth > i / bars.length;
+          bars[i].style.background = on ? 'var(' + (i >= bars.length - 3 ? '--red' : i >= bars.length - 7 ? '--yellow' : '--green') + ')' : '';
+        }
+        var heard = document.getElementById('wl-heard');
+        if (heard && micOn) heard.textContent = micSmooth > 0.85 ? 'Clipping. Turn the gain down.' : micSmooth > 0.12 ? 'Hearing you.' : 'Listening. Say something.';
+        micFrame = requestAnimationFrame(frame);
+      })();
+    }
+    function refreshPerms() {
+      window.checkPermissions().then(function (p) { perms = p; if (STEPS[step].id === 'perms') render(); });
+    }
+    function stopPermPolling() { clearInterval(permTimer); permTimer = null; }
+
+    // --- views --------------------------------------------------------------
+    function seg(name, value, options) {
+      return '<span class="wl-seg" role="radiogroup">' + options.map(function (o) {
+        return '<label><input type="radio" name="wl-' + name + '" value="' + o[0] + '"' + (value === o[0] ? ' checked' : '') + '>' + o[1] + '</label>';
+      }).join('') + '</span>';
+    }
+    function sw(id, on) {
+      return '<input type="checkbox" class="switch" id="wl-' + id + '"' + (on ? ' checked' : '') + '>';
+    }
+    function row(title, sub, control) {
+      return '<div class="wl-row"><div class="wl-grow"><div class="wl-t">' + title + '</div>' + (sub ? '<div class="wl-s">' + sub + '</div>' : '') + '</div>' + control + '</div>';
+    }
+    function keyLabel(id) {
+      if (!id) return 'Not set';
+      if (labels[id]) return labels[id];
+      window.keyLabel(id).then(function (l) { labels[id] = l; render(); });
+      return '…';
+    }
+    function keyRow(field, sub) {
+      var listening = capturing === field;
+      return '<div class="wl-row"><div class="wl-grow"><div class="wl-t">' + KEY_FIELDS[field] + '</div><div class="wl-s">' + sub + '</div></div>' +
+        '<button type="button" class="wl-keybtn' + (listening ? ' listening' : '') + '" data-key="' + field + '"' + (capturing && !listening ? ' disabled' : '') + '>' +
+        '<span class="wl-kbd">' + (listening ? 'Press a key or combination…' : esc(keyLabel(S[field]))) + '</span></button>' +
+        (field !== 'dictate_key' && S[field] && !listening ? '<button type="button" class="wl-btn wl-ghost" data-clear="' + field + '" aria-label="Clear the ' + KEY_FIELDS[field] + ' key">Clear</button>' : '') +
+        '</div>';
+    }
+    function currentModel() {
+      return (v().models || []).filter(function (m) { return m.family === S.model_family && m.variant === S.model_variant; })[0];
+    }
+    function styleName() { return S.indicator_style === 'transcript' ? 'transcript' : 'capsule'; }
+
+    var VIEWS = {
+      welcome: function () {
+        return '<div class="wl-hero"><div class="wl-logo" aria-hidden="true">' +
+          '<svg width="44" height="44" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round"><path d="M4 10v4M8 7v10M12 4v16M16 7v10M20 10v4"/></svg></div>' +
+          '<div style="display:flex;flex-direction:column;gap:6px;flex:1;min-width:240px">' +
+          '<div class="wl-eyebrow">Welcome to Voxlog</div>' +
+          '<h1>Speak, and the text, the meetings and the tasks write themselves</h1>' +
+          '<p class="wl-lede">Everything is transcribed on this Mac. Two minutes to set up the microphone, how Voxlog listens and its keys. Any step can be skipped.</p></div></div>' +
+          '<div class="wl-features">' +
+          '<div class="wl-feature"><b>Dictation</b><span>Press a key, speak, and the text lands where your cursor is.</span></div>' +
+          '<div class="wl-feature"><b>Meetings</b><span>Both sides of a call, who spoke and for how long, every line searchable.</span></div>' +
+          '<div class="wl-feature"><b>Tasks</b><span>"Need this by Friday…" turns into a task on its own.</span></div></div>';
+      },
+
+      perms: function () {
+        function p(key, grantName, title, sub, required, ok) {
+          return row(title, sub,
+            ok ? '<span class="wl-pill ok">Granted</span>'
+               : '<span class="wl-pill ' + (required ? 'need' : 'off') + '">' + (required ? 'Required' : 'Optional') + '</span>' +
+                 '<button type="button" class="wl-btn" data-grant="' + grantName + '">Grant…</button>');
+        }
+        var accessOK = perms.accessibility === 'granted';
+        return '<div class="wl-eyebrow">Permissions</div>' +
+          '<h1>Three permissions, and what each one is for</h1>' +
+          '<p class="wl-lede">macOS asks once. Say no and that feature simply stays out of the way; nothing else breaks.</p>' +
+          '<div class="wl-group">' +
+          p('mic', 'microphone', 'Microphone', 'To hear you. Without it Voxlog records nothing.', true, perms.microphone === 'authorized') +
+          p('access', 'accessibility', 'Accessibility', 'Global shortcuts, and typing the text into other apps.', true, accessOK) +
+          p('screen', 'screenrecording', 'Screen &amp; System Audio Recording', 'The other side of a call. Nothing on screen is recorded.', false, perms.screenrecording === 'granted') +
+          (accessOK ? '' : '<div class="wl-row"><div class="wl-grow wl-s">macOS only notices Accessibility and Screen Recording after a restart. This welcome picks up where you left it.</div><button type="button" class="wl-btn" id="wl-restart">Restart Voxlog</button></div>') +
+          '</div>';
+      },
+
+      mic: function () {
+        var opts = ['<option value="">System default</option>'].concat(devices.map(function (d) {
+          return '<option' + (d === S.input_device ? ' selected' : '') + '>' + esc(d) + '</option>';
+        }));
+        var gain = S.mic_gain || 1;
+        return '<div class="wl-eyebrow">Microphone</div>' +
+          '<h1>Say something. The bar should move.</h1>' +
+          '<p class="wl-lede">Speak the way you would on a call. Green is right, yellow is loud, red means turn the gain down.</p>' +
+          '<div class="wl-group">' +
+          row('Input device', '"System default" follows macOS when you plug in headphones.', '<select id="wl-device" aria-label="Input device">' + opts.join('') + '</select>') +
+          '<div class="wl-row"><div class="wl-grow"><div class="wl-t">Level</div><div class="wl-s" id="wl-heard">Listening. Say something.</div></div>' +
+          '<div class="wl-meter" id="wl-meter" aria-hidden="true">' + new Array(21).join('<i></i>') + '</div></div>' +
+          row('Gain', 'Voxlog starts at ×2.0: at ×1 a normal voice is quiet enough to lose word endings.',
+            '<input type="range" id="wl-gain" min="0.5" max="4" step="0.1" value="' + gain + '" aria-label="Gain">' +
+            '<span id="wl-gain-v" style="width:34px;text-align:right;font-variant-numeric:tabular-nums">×' + gain.toFixed(1) + '</span>') +
+          '</div>';
+      },
+
+      mode: function () {
+        var always = !!S.always_on;
+        var outNote = { paste: 'Typed in where your cursor is.', copy: 'Put on the clipboard; paste it with ⌘V.', none: 'Kept in Voxlog\'s history only.' };
+        var out = S.output_mode === 'copy' || S.output_mode === 'none' ? S.output_mode : 'paste';
+        return '<div class="wl-eyebrow">How it listens</div>' +
+          '<h1>When should Voxlog listen?</h1>' +
+          '<p class="wl-lede">Change it any time in Settings › Listening.</p>' +
+          '<div class="wl-choices" role="radiogroup">' +
+          '<label class="wl-choice"><input type="radio" name="wl-mode" value="key"' + (always ? '' : ' checked') + '>' +
+          '<div class="wl-art"><span class="wl-kbd">' + esc(keyLabel(S.dictate_key)) + '</span></div>' +
+          '<span class="wl-t">When I press a key</span><span class="wl-s">Records only when you ask. The predictable one, and a good place to start.</span></label>' +
+          '<label class="wl-choice"><input type="radio" name="wl-mode" value="always"' + (always ? ' checked' : '') + '>' +
+          '<div class="wl-art"><span class="wl-pill ok">◦ listening</span></div>' +
+          '<span class="wl-t">Always on</span><span class="wl-s">Starts recording when someone speaks and closes the conversation after ' + (S.always_on_split_minutes || 5) + ' minutes of quiet. Recordings with nothing in them are deleted after ' + (S.always_on_retention_hours || 24) + ' hours.</span></label>' +
+          '</div>' +
+          '<div class="wl-group">' +
+          (always ? '' : row('Dictate key', S.dictate_activation === 'hold' ? 'Recording lasts as long as the key is held.' : 'Press to start, press again to stop.',
+            seg('act', S.dictate_activation === 'hold' ? 'hold' : 'toggle', [['toggle', 'Tap to toggle'], ['hold', 'Hold to talk']]))) +
+          row('Finished text', outNote[out], seg('out', out, [['paste', 'Paste'], ['copy', 'Copy'], ['none', 'History only']])) +
+          '</div>';
+      },
+
+      keys: function () {
+        return '<div class="wl-eyebrow">Shortcuts</div>' +
+          '<h1>Check the keys, or pick your own</h1>' +
+          '<p class="wl-lede">Click a key and press the new one. A lone modifier like the right ⌘ works too, and leaves your usual shortcuts alone.</p>' +
+          '<div class="wl-group">' +
+          keyRow('dictate_key', S.always_on ? 'Still works in always-on, for a note outside a conversation.' : 'Start and stop a dictation.') +
+          keyRow('history_key', 'Your recent dictations, ready to paste again.') +
+          keyRow('tasks_key', 'Write a task down without reaching for the mouse.') +
+          keyRow('meeting_key', 'Unset by default, so no key you already use is taken.') +
+          '</div><div class="wl-err" role="status">' + esc(keyError) + '</div>';
+      },
+
+      indicator: function () {
+        var style = styleName();
+        var list = POSITIONS[style];
+        var pos = list.indexOf(S.overlay_position) >= 0 ? S.overlay_position : list[0];
+        return '<div class="wl-eyebrow">Recording indicator</div>' +
+          '<h1>Always know when Voxlog is recording</h1>' +
+          '<p class="wl-lede">It shows that a take is running, how loud it is and which mode it is in. Under the notch, solid black merges with the hardware and covers none of your windows.</p>' +
+          '<div class="wl-screen" id="wl-screen" aria-hidden="true"><div class="wl-bar"></div><div class="wl-notch"></div>' +
+          '<div class="wl-lines"><i style="width:90%"></i><i style="width:70%"></i><i style="width:82%"></i><i style="width:40%"></i></div><div class="wl-dock"></div>' +
+          '<div class="wl-ind ' + style + (S.indicator_solid ? '' : ' glass') + '" id="wl-ind">' +
+          (style === 'transcript' ? 'need to finish the welcome by Friday…' : '<span class="wl-rec"></span>' + (S.always_on ? 'Listening' : 'Dictate')) + '</div></div>' +
+          '<div class="wl-group">' +
+          row('Style', style === 'transcript' ? 'Your words as you say them, with the level under them.' : 'State, level and mode in a small pill.',
+            seg('style', style, [['capsule', 'Capsule'], ['transcript', 'Live text']])) +
+          row('Where', '', '<select id="wl-pos" aria-label="Indicator position">' + list.map(function (p) {
+            return '<option value="' + p + '"' + (p === pos ? ' selected' : '') + '>' + POSITION_LABELS[p] + '</option>';
+          }).join('') + '</select>') +
+          row('Solid black', 'Turn off to draw it as glass.', sw('solid', S.indicator_solid)) +
+          '</div><div class="wl-s">Sound bar, timer and stop button are in Settings › Indicator.</div>';
+      },
+
+      meetings: function () {
+        var screenOK = perms.screenrecording === 'granted';
+        return '<div class="wl-eyebrow">Meetings</div>' +
+          '<h1>Calls are recorded from both sides</h1>' +
+          '<p class="wl-lede">Your voice comes from the microphone, everyone else\'s from system audio. Afterwards Voxlog works out who spoke and for how long.' +
+          (S.always_on ? ' In always-on a call is picked up by itself.' : ' Start one from the menu bar, or give it a key.') + '</p>' +
+          '<div class="wl-group">' +
+          row('Record the other side', screenOK ? 'Captures what you hear on the call.' : 'Needs Screen &amp; System Audio Recording, from the Permissions step.', sw('sysaudio', S.capture_system_audio)) +
+          keyRow('meeting_key', 'Start and stop a meeting recording.') +
+          row('Transcribe', S.meeting_transcribe === 'manual' ? 'Only when you press Transcribe inside the meeting.' : 'As soon as the call ends.',
+            seg('mt', S.meeting_transcribe === 'manual' ? 'manual' : 'stop', [['stop', 'After the call'], ['manual', 'Manually']])) +
+          row('Tell the others', 'Show a notice that the call is being recorded.', sw('notice', S.recording_notice)) +
+          '</div><div class="wl-err" role="status">' + esc(keyError) + '</div>';
+      },
+
+      tasks: function () {
+        var local = S.llm_provider !== 'api';
+        var llm = v().llmModel || {};
+        var modelRow = local
+          ? row('Local model', llm.downloaded ? 'Downloaded. Runs on this Mac with no internet.' : '<span id="wl-llm-stage">' + esc(llmStage || 'Downloaded once, then runs on this Mac with no internet.') + '</span>',
+              llm.downloaded ? '<span class="wl-pill ok">Ready</span>'
+                : llmProgress !== null ? '<progress class="wl-prog" id="wl-llm-prog" max="100" value="' + llmProgress + '"></progress>'
+                : '<button type="button" class="wl-btn" id="wl-llm-dl">Download</button>')
+          : '<div class="wl-row"><input type="text" id="wl-baseurl" placeholder="https://api.openai.com" aria-label="Base URL" value="' + esc(S.llm_base_url || '') + '" style="flex:1">' +
+            '<input type="text" id="wl-llmmodel" placeholder="Model id" aria-label="Model id" value="' + esc(S.llm_model || '') + '" style="flex:1"></div>' +
+            '<div class="wl-row"><input type="password" id="wl-apikey" placeholder="API key" aria-label="API key" style="flex:1"><span class="wl-s" id="wl-key-state"></span></div>';
+        return '<div class="wl-eyebrow">Tasks &amp; summaries</div>' +
+          '<h1>What you say turns into tasks</h1>' +
+          '<p class="wl-lede">After each dictation or meeting a language model reads the text, writes a short summary and pulls out the tasks, with the project and the date when they were said.</p>' +
+          '<div class="wl-flow">' +
+          '<div class="wl-card"><h4>You said</h4><span>"Right, on Voxlog: <mark>the welcome has to be done by Friday</mark>, and <mark>check speaker labels</mark> on three meetings."</span></div>' +
+          '<div class="wl-arrow" aria-hidden="true">→</div>' +
+          '<div class="wl-card"><h4>Summary</h4><span>The release: the welcome is this week\'s priority; speaker labels need checking on real recordings.</span></div>' +
+          '<div class="wl-arrow" aria-hidden="true">→</div>' +
+          '<div class="wl-card"><h4>Tasks</h4>' +
+          '<div class="wl-task"><span class="wl-box"></span><span>Finish the welcome<br><span class="wl-proj">Voxlog</span> <span class="wl-s">· Friday</span></span></div>' +
+          '<div class="wl-task"><span class="wl-box"></span><span>Check speaker labels on 3 meetings<br><span class="wl-proj">Voxlog</span></span></div></div>' +
+          '</div>' +
+          '<div class="wl-group">' +
+          row('Find tasks', 'Experimental. They show up under Tasks.', sw('taskhub', S.task_hub_enabled)) +
+          row('Summarize meetings', '', sw('summary', S.summary_enabled)) +
+          row('Model', local ? 'On this Mac.' : 'Any OpenAI-compatible endpoint. The text is sent there.', seg('llm', local ? 'local' : 'api', [['local', 'Local'], ['api', 'API key']])) +
+          modelRow +
+          '</div>';
+      },
+
+      done: function () {
+        var skipped = STEPS.filter(function (s) { return status[s.id] === 'skipped'; }).map(function (s) { return s.label; });
+        var m = currentModel();
+        var speech = !m ? '<span class="wl-pill need">Pick one in Settings › Model</span>'
+          : m.downloaded ? '<span class="wl-pill ok">Ready</span>'
+          : speechProgress !== null ? '<progress class="wl-prog" id="wl-speech-prog" max="100" value="' + speechProgress + '"></progress>'
+          : '<button type="button" class="wl-btn wl-primary" id="wl-speech-dl">Download</button>';
+        function r(t, val) { return '<div class="wl-row"><div class="wl-grow wl-s">' + t + '</div><div class="wl-t">' + val + '</div></div>'; }
+        return '<div class="wl-eyebrow">Ready</div>' +
+          '<h1>Press <span class="wl-kbd">' + esc(keyLabel(S.dictate_key)) + '</span> and say your first sentence</h1>' +
+          '<p class="wl-lede">Voxlog lives in the menu bar. Everything here can be changed in Settings.' +
+          (skipped.length ? ' Skipped: ' + esc(skipped.join(', ')) + '.' : '') + '</p>' +
+          '<div class="wl-group">' + row('Speech model', m ? esc(m.family + ' ' + m.variant) + (m.downloaded ? '' : ' has to be downloaded before the first dictation.') : '', speech) + '</div>' +
+          '<div class="wl-group wl-summary">' +
+          r('Microphone', esc(S.input_device || 'System default') + ' · ×' + (S.mic_gain || 1).toFixed(1)) +
+          r('Listening', S.always_on ? 'Always on' : (S.dictate_activation === 'hold' ? 'Hold the key' : 'Tap the key')) +
+          r('Text goes', { paste: 'Where the cursor is', copy: 'To the clipboard', none: 'History only' }[S.output_mode] || 'Where the cursor is') +
+          r('Indicator', styleName() === 'transcript' ? 'Live text' : 'Capsule') +
+          r('Quick task', '<span class="wl-kbd">' + esc(keyLabel(S.tasks_key)) + '</span>') +
+          r('Tasks', S.task_hub_enabled ? (S.llm_provider === 'api' ? 'Through an API' : 'Local model') : 'Off') +
+          '</div><div class="wl-err" role="status">' + esc(keyError) + '</div>';
+      }
+    };
+
+    function placeIndicator() {
+      var el = document.getElementById('wl-ind');
+      var box = document.getElementById('wl-screen');
+      if (!el || !box) return;
+      var W = box.clientWidth, H = box.clientHeight, w = el.offsetWidth, h = el.offsetHeight;
+      var style = styleName();
+      var list = POSITIONS[style];
+      var pos = list.indexOf(S.overlay_position) >= 0 ? S.overlay_position : list[0];
+      var at = {
+        top_centre: [(W - w) / 2, 14], bottom_centre: [(W - w) / 2, H - h - 26],
+        cursor: [W * 0.6, 58], follow: [W * 0.6, 80],
+        top_right: [W - w - 10, 20], bottom_right: [W - w - 10, H - h - 26]
+      }[pos];
+      if (pos === 'top_centre' && style === 'capsule' && S.indicator_solid) {
+        el.style.borderRadius = '0 0 12px 12px';
+      } else {
+        el.style.borderRadius = '';
+      }
+      el.style.left = at[0] + 'px';
+      el.style.top = at[1] + 'px';
+    }
+
+    function render() {
+      var id = STEPS[step].id;
+      pane.innerHTML = VIEWS[id]();
+      pane.scrollTop = 0;
+      document.getElementById('wl-steps').innerHTML = STEPS.map(function (s, i) {
+        var st = status[s.id] || '';
+        return '<li class="' + st + '"><button type="button" data-i="' + i + '"' + (i === step ? ' aria-current="step"' : '') + '>' +
+          '<span class="wl-dot">' + (st === 'done' ? '✓' : i + 1) + '</span>' + s.label + '</button></li>';
+      }).join('');
+      document.getElementById('wl-bar').style.width = (step / (STEPS.length - 1) * 100) + '%';
+      document.getElementById('wl-back').hidden = step === 0;
+      document.getElementById('wl-skip').hidden = step === 0 || id === 'done';
+      document.getElementById('wl-next').textContent = step === 0 ? 'Get started' : id === 'done' ? 'Start using Voxlog' : 'Continue';
+      if (id === 'indicator') requestAnimationFrame(placeIndicator);
+      if (id === 'tasks' && S.llm_provider === 'api') {
+        window.llmAPIKeyStored().then(function (ok) {
+          var el = document.getElementById('wl-key-state');
+          if (el) el.textContent = ok ? 'A key is stored.' : '';
+        });
+      }
+    }
+
+    // Entering a step starts what it needs and leaving it stops it: the
+    // microphone is not left open behind the next step, and permissions are
+    // polled only while they are on screen.
+    function go(i) {
+      var was = STEPS[step].id;
+      capturing = null;
+      keyError = '';
+      step = Math.max(0, Math.min(STEPS.length - 1, i));
+      var id = STEPS[step].id;
+      // Kept by the app, not the page: the page's origin changes with every
+      // launch, and the relaunch Accessibility needs should land back here.
+      window.welcomeStep(step);
+      if (was === 'mic' && id !== 'mic') stopMic();
+      if (was === 'perms' && id !== 'perms') stopPermPolling();
+      render();
+      if (id === 'mic') {
+        window.inputDevices().then(function (list) { devices = list || []; if (STEPS[step].id === 'mic') { render(); startMic(); } });
+      }
+      if (id === 'perms' || id === 'meetings') refreshPerms();
+      if (id === 'perms' && !permTimer) permTimer = setInterval(refreshPerms, 2000);
+    }
+
+    function close() {
+      stopMic();
+      stopPermPolling();
+      root.hidden = true;
+      flush().then(function () { window.finishWelcome(); });
+    }
+
+    window.openWelcome = function () {
+      S = JSON.parse(JSON.stringify(v().settings || {}));
+      // The Settings form shows "cuff" (the old name) as a capsule, and so
+      // does the overlay; the welcome writes the name it shows.
+      if (S.indicator_style !== 'transcript') S.indicator_style = 'capsule';
+      status = {};
+      root.hidden = false;
+      var resume = Math.min(STEPS.length - 1, Math.max(0, S.welcome_step || 0));
+      for (var i = 0; i < resume; i++) status[STEPS[i].id] = 'done';
+      go(resume);
+    };
+
+    document.getElementById('wl-next').addEventListener('click', function () {
+      var id = STEPS[step].id;
+      if (id === 'done') { close(); return; }
+      status[id] = 'done';
+      go(step + 1);
+    });
+    document.getElementById('wl-back').addEventListener('click', function () { go(step - 1); });
+    document.getElementById('wl-skip').addEventListener('click', function () { status[STEPS[step].id] = 'skipped'; go(step + 1); });
+    document.getElementById('wl-later').addEventListener('click', close);
+    document.getElementById('wl-steps').addEventListener('click', function (e) {
+      var b = e.target.closest('button[data-i]');
+      if (b) go(parseInt(b.dataset.i, 10));
+    });
+
+    pane.addEventListener('click', function (e) {
+      var t = e.target.closest('button');
+      if (!t) return;
+      if (t.dataset.grant) {
+        window.requestPermission(t.dataset.grant).then(function () { setTimeout(refreshPerms, 800); });
+      } else if (t.dataset.key) {
+        if (capturing) return;
+        capturing = t.dataset.key;
+        keyError = '';
+        render();
+        window.captureKey();
+      } else if (t.dataset.clear) {
+        set(t.dataset.clear, '');
+        render();
+      } else if (t.id === 'wl-restart') {
+        // Save first: the relaunch does not wait for the debounce.
+        saveNow().then(function () { window.restartApp(); });
+      } else if (t.id === 'wl-speech-dl') {
+        speechProgress = 0;
+        render();
+        window.downloadModel(S.model_family, S.model_variant).catch(function (err) {
+          speechProgress = null; keyError = 'Download failed: ' + err; render();
+        });
+      } else if (t.id === 'wl-llm-dl') {
+        llmProgress = 0;
+        render();
+        window.downloadLLMModel().catch(function (err) { llmProgress = null; llmStage = 'Download failed: ' + err; render(); });
+      }
+    });
+
+    pane.addEventListener('input', function (e) {
+      var t = e.target;
+      if (t.id === 'wl-gain') {
+        S.mic_gain = parseFloat(t.value);
+        document.getElementById('wl-gain-v').textContent = '×' + S.mic_gain.toFixed(1);
+        save();
+        return;
+      }
+      if (t.id === 'wl-baseurl') { set('llm_base_url', t.value.trim()); return; }
+      if (t.id === 'wl-llmmodel') { set('llm_model', t.value.trim()); return; }
+      if (t.id === 'wl-apikey') return;
+      var rerender = true;
+      if (t.id === 'wl-device') { set('input_device', t.value); if (micOn) startMic(); rerender = false; }
+      else if (t.name === 'wl-mode') set('always_on', t.value === 'always');
+      else if (t.name === 'wl-act') set('dictate_activation', t.value);
+      else if (t.name === 'wl-out') set('output_mode', t.value);
+      else if (t.name === 'wl-style') { set('indicator_style', t.value); S.overlay_position = POSITIONS[t.value][0]; }
+      else if (t.id === 'wl-pos') set('overlay_position', t.value);
+      else if (t.id === 'wl-solid') set('indicator_solid', t.checked);
+      else if (t.id === 'wl-sysaudio') set('capture_system_audio', t.checked);
+      else if (t.name === 'wl-mt') set('meeting_transcribe', t.value);
+      else if (t.id === 'wl-notice') set('recording_notice', t.checked);
+      else if (t.id === 'wl-taskhub') set('task_hub_enabled', t.checked);
+      else if (t.id === 'wl-summary') set('summary_enabled', t.checked);
+      else if (t.name === 'wl-llm') set('llm_provider', t.value);
+      else return;
+      if (rerender) render();
+    });
+    // The key goes straight to the keychain, never into the settings payload.
+    pane.addEventListener('change', function (e) {
+      if (e.target.id !== 'wl-apikey' || !e.target.value) return;
+      window.setLLMAPIKey(e.target.value).then(function () {
+        e.target.value = '';
+        var el = document.getElementById('wl-key-state');
+        if (el) el.textContent = 'Key stored.';
+      });
+    });
+    window.addEventListener('resize', function () { if (!root.hidden && STEPS[step].id === 'indicator') placeIndicator(); });
+  })();
+  </script>

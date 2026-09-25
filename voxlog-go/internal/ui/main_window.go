@@ -673,6 +673,10 @@ const (
 	PaneMeetings = "meetings"
 	PaneTasks    = "tasks"
 	PaneSettings = "settings"
+	// PaneWelcome is not a pane in the sidebar: it is the first-run welcome,
+	// drawn over Overview (see assets/welcome.html). It rides the same pane
+	// argument so the app can open the window straight onto it.
+	PaneWelcome = "welcome"
 )
 
 // normalizePane maps anything unrecognised -- including "" -- onto Overview.
@@ -683,7 +687,7 @@ const (
 // by an older build, so an unknown pane has to land somewhere real.
 func normalizePane(pane string) string {
 	switch pane {
-	case PaneOverview, PaneHistory, PaneMeetings, PaneTasks, PaneSettings:
+	case PaneOverview, PaneHistory, PaneMeetings, PaneTasks, PaneSettings, PaneWelcome:
 		return pane
 	}
 	return PaneOverview
@@ -947,6 +951,17 @@ func refreshMainWindow(w webview.WebView, pane string, store *history.Store, mee
 	})
 }
 
+// keepAppOwned carries over the fields the page never sends. The Settings
+// form builds its payload field by field, so anything it does not list
+// arrives zeroed -- and a zeroed settings_version re-runs every migration on
+// the next launch, while a zeroed welcome_done would open the welcome again.
+func keepAppOwned(v, stored settings.Settings) settings.Settings {
+	v.Version = stored.Version
+	v.WelcomeDone = stored.WelcomeDone
+	v.WelcomeStep = stored.WelcomeStep
+	return v
+}
+
 // humanBytes renders a byte count the way the settings pane shows it
 // ("4.6 GB"). Decimal (1000-based), not binary, to match AudioMaxGB's own
 // gigabyte-to-byte conversion (see app.sweepRecordings) -- the number on
@@ -1040,7 +1055,8 @@ func buildMainPage() string {
 	out = injectAsset(out, kitJSMarker, "kit.js")
 	out = injectAsset(out, settingsCSSMarker, "settings.css")
 	out = injectAsset(out, indicatorCSSMarker, "indicator.css")
-	return injectAsset(out, settingsMarkup, "settings-pane.html")
+	out = injectAsset(out, settingsMarkup, "settings-pane.html")
+	return injectAsset(out, welcomeMarkup, "welcome.html")
 }
 
 // runMainWindow builds the window and its bindings. Runs inside a runOnMain
@@ -1177,6 +1193,7 @@ func runMainWindow(pane string, store *history.Store, meetings *history.MeetingS
 	})
 
 	w.Bind("saveSettings", func(v settings.Settings) error {
+		v = keepAppOwned(v, cfgStore.Get())
 		if err := cfgStore.Set(v); err != nil {
 			return err
 		}
@@ -1185,6 +1202,20 @@ func runMainWindow(pane string, store *history.Store, meetings *history.MeetingS
 		// listener cannot wait to be noticed.
 		settingsApplied(v)
 		return nil
+	})
+
+	// finishWelcome records that the first-run welcome was finished or
+	// dismissed, so the next launch opens on the menu bar alone.
+	w.Bind("finishWelcome", func() error {
+		v := cfgStore.Get()
+		v.WelcomeDone = true
+		v.WelcomeStep = 0
+		return cfgStore.Set(v)
+	})
+	w.Bind("welcomeStep", func(step int) error {
+		v := cfgStore.Get()
+		v.WelcomeStep = step
+		return cfgStore.Set(v)
 	})
 
 	// The API key never travels back to the window: it goes in, and after
