@@ -19,7 +19,11 @@ type chatRequest struct {
 	// Model is omitted for the local mlx_lm server, which serves exactly the
 	// one model it was started with and needs no naming. Every remote
 	// OpenAI-compatible endpoint requires it.
-	Model       string        `json:"model,omitempty"`
+	Model string `json:"model,omitempty"`
+	// Models is OpenRouter's fallback list: the primary model first, then the
+	// ones to try when it is down or rate-limited. Other providers never see
+	// it -- it is only filled when Endpoint.Fallbacks is.
+	Models      []string      `json:"models,omitempty"`
 	Messages    []chatMessage `json:"messages"`
 	Temperature float64       `json:"temperature"`
 	MaxTokens   int           `json:"max_tokens"`
@@ -44,6 +48,36 @@ type Endpoint struct {
 	// APIKey travels as a bearer token and is never stored in settings.json
 	// -- it lives in the keychain (internal/keychain).
 	APIKey string
+	// Fallbacks are further model ids for the provider to try, in order,
+	// when Model cannot answer. Only OpenRouter reads them (as "models").
+	Fallbacks []string
+}
+
+// OpenRouterBaseURL is OpenRouter's OpenAI-compatible root; chat appends
+// "/v1/chat/completions" like it does for every other endpoint.
+const OpenRouterBaseURL = "https://openrouter.ai/api"
+
+// modelList is Model followed by the distinct, non-blank Fallbacks, or nil
+// when there are no fallbacks -- a one-model list is just Model said twice.
+func (e Endpoint) modelList() []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, m := range append([]string{e.Model}, e.Fallbacks...) {
+		m = strings.TrimSpace(m)
+		if m == "" || seen[m] {
+			continue
+		}
+		seen[m] = true
+		out = append(out, m)
+	}
+	if len(out) < 2 {
+		return nil
+	}
+	return out
+}
+
+func (e Endpoint) isOpenRouter() bool {
+	return strings.HasPrefix(strings.TrimSpace(e.BaseURL), OpenRouterBaseURL)
 }
 
 // Remote reports whether this endpoint is somebody else's server. What makes
@@ -75,6 +109,7 @@ func chatCompletion(ep Endpoint, prompt string) (string, error) {
 func chat(ep Endpoint, prompt string, maxTokens int) (string, error) {
 	body, err := json.Marshal(chatRequest{
 		Model:       ep.Model,
+		Models:      ep.modelList(),
 		Messages:    []chatMessage{{Role: "user", Content: prompt}},
 		Temperature: 0,
 		MaxTokens:   maxTokens,
@@ -94,6 +129,11 @@ func chat(ep Endpoint, prompt string, maxTokens int) (string, error) {
 	if key := strings.TrimSpace(ep.APIKey); key != "" {
 		req.Header.Set("Authorization", "Bearer "+key)
 	}
+	if ep.isOpenRouter() {
+		// OpenRouter's attribution header: optional, and it makes the
+		// requests recognisable on the user's own activity page.
+		req.Header.Set("X-Title", "Voxlog")
+	}
 
 	client := &http.Client{Timeout: 60 * time.Second}
 	resp, err := client.Do(req)
@@ -104,6 +144,11 @@ func chat(ep Endpoint, prompt string, maxTokens int) (string, error) {
 	raw, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return "", err
+	}
+	if resp.StatusCode == http.StatusTooManyRequests {
+		// The everyday failure of a free tier, and the provider's own words
+		// for it do not say what to do about it.
+		return "", fmt.Errorf("%s: rate limit reached -- try again later, or switch to another account or model: %s", ep.Label(), string(raw))
 	}
 	if resp.StatusCode != http.StatusOK {
 		return "", fmt.Errorf("%s: %s: %s", ep.Label(), resp.Status, string(raw))

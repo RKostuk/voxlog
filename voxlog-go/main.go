@@ -22,6 +22,7 @@ import (
 	"voxlog-go/internal/history"
 	"voxlog-go/internal/hotkey"
 	"voxlog-go/internal/keychain"
+	"voxlog-go/internal/llm"
 	"voxlog-go/internal/permissions"
 	"voxlog-go/internal/settings"
 	"voxlog-go/internal/sfsymbol"
@@ -1237,6 +1238,18 @@ func onReady(store *settings.Store, histStore *history.Store, meetStore *history
 		},
 	)
 	ui.SetLLMTestFunc(a.testLLM)
+	ui.SetOpenRouterFuncs(
+		func(id, key string) error { return keychain.Set(keychain.OpenRouterService, id, key) },
+		func(ids []string) map[string]bool {
+			stored := make(map[string]bool, len(ids))
+			for _, id := range ids {
+				_, err := keychain.Get(keychain.OpenRouterService, id)
+				stored[id] = err == nil
+			}
+			return stored
+		},
+		func() ([]llm.ModelInfo, error) { return llm.FreeModels(llm.OpenRouterBaseURL) },
+	)
 
 	// Always-on listening. The supervisor runs for the life of the app and
 	// decides on each tick whether the microphone should be open at all --

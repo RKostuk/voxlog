@@ -238,6 +238,24 @@ type Settings struct {
 	// LLMModel is the provider's model id. The local server needs none: it
 	// serves the one model it was started with.
 	LLMModel string `json:"llm_model"`
+	// OpenRouterAccounts are the OpenRouter keys the user has stored, by
+	// label; the keys themselves are in the keychain under each ID (see
+	// keychain.OpenRouterService). Several, switched by hand, because a free
+	// tier's daily limit is per account -- at most MaxOpenRouterAccounts.
+	OpenRouterAccounts []OpenRouterAccount `json:"openrouter_accounts"`
+	// OpenRouterActive is the ID of the account requests go out on.
+	OpenRouterActive string `json:"openrouter_active"`
+	// OpenRouterModel is the model id asked first, e.g.
+	// "meta-llama/llama-3.3-70b-instruct:free".
+	OpenRouterModel string `json:"openrouter_model"`
+	// OpenRouterFallbacks are tried in order when OpenRouterModel is down or
+	// rate-limited -- free models are both, often. At most
+	// MaxOpenRouterFallbacks are sent.
+	OpenRouterFallbacks []string `json:"openrouter_fallbacks"`
+	// TaskPromptExtra is the user's own rules for what counts as a task,
+	// from Settings > LLM model. Appended to Task Hub's built-in prompt,
+	// never a replacement, for the same reason SummaryPromptExtra isn't.
+	TaskPromptExtra string `json:"task_prompt_extra"`
 	// The API key itself is deliberately not here. settings.json is a plain
 	// file in Application Support that gets opened, copied and synced; the
 	// key lives in the login keychain instead (internal/keychain).
@@ -304,6 +322,21 @@ const (
 const (
 	LLMProviderLocal = "local"
 	LLMProviderAPI   = "api"
+	// LLMProviderOpenRouter is OpenRouter with a fixed address, the user's
+	// own accounts and (by design of the pane) its free models.
+	LLMProviderOpenRouter = "openrouter"
+)
+
+// OpenRouterAccount names one stored OpenRouter key. ID is what the keychain
+// item is filed under; Label is what the user calls it.
+type OpenRouterAccount struct {
+	ID    string `json:"id"`
+	Label string `json:"label"`
+}
+
+const (
+	MaxOpenRouterAccounts  = 4
+	MaxOpenRouterFallbacks = 2
 )
 
 // How much of a summary to ask the model for.

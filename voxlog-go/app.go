@@ -162,25 +162,58 @@ func currentLLMJobs() []ui.DecodeStatus {
 }
 
 // llmEndpoint is where this app's prompts go: the zero Endpoint for the
-// downloaded model (llm starts and owns that server itself), or the API the
-// user configured. The key is read here, per call, rather than held in
+// downloaded model (llm starts and owns that server itself), or the API or
+// OpenRouter account the user configured. The key is read here, per call, rather than held in
 // memory for the life of the process -- it changes in Settings, and the
 // keychain is the one copy of it.
 func (a *app) llmEndpoint(cfg settings.Settings) llm.Endpoint {
-	if cfg.LLMProvider != settings.LLMProviderAPI || strings.TrimSpace(cfg.LLMBaseURL) == "" {
-		return llm.Endpoint{}
+	return endpointFor(cfg, keychain.Get)
+}
+
+// endpointFor is llmEndpoint with the keychain passed in, so which key and
+// which address a configuration ends up using can be tested without one.
+func endpointFor(cfg settings.Settings, getKey func(service, account string) (string, error)) llm.Endpoint {
+	readKey := func(service, account string) string {
+		key, err := getKey(service, account)
+		if err != nil && !errors.Is(err, keychain.ErrNotFound) {
+			// Not fatal: an endpoint on the local network may want no key at
+			// all, and a provider that does will say so itself in the reply.
+			log.Printf("llm: reading the API key: %v", err)
+		}
+		return key
 	}
-	key, err := keychain.Get(keychain.LLMService, keychain.LLMAccount)
-	if err != nil && !errors.Is(err, keychain.ErrNotFound) {
-		// Not fatal: an endpoint on the local network may want no key at all,
-		// and a provider that does will say so itself in the reply.
-		log.Printf("llm: reading the API key: %v", err)
+	switch cfg.LLMProvider {
+	case settings.LLMProviderAPI:
+		if strings.TrimSpace(cfg.LLMBaseURL) == "" {
+			return llm.Endpoint{}
+		}
+		return llm.Endpoint{
+			BaseURL: cfg.LLMBaseURL,
+			Model:   cfg.LLMModel,
+			APIKey:  readKey(keychain.LLMService, keychain.LLMAccount),
+		}
+	case settings.LLMProviderOpenRouter:
+		// No model picked means nothing to ask: the zero endpoint keeps
+		// llmReady honest instead of sending every prompt to a 400.
+		if strings.TrimSpace(cfg.OpenRouterModel) == "" {
+			return llm.Endpoint{}
+		}
+		fallbacks := cfg.OpenRouterFallbacks
+		if len(fallbacks) > settings.MaxOpenRouterFallbacks {
+			fallbacks = fallbacks[:settings.MaxOpenRouterFallbacks]
+		}
+		key := ""
+		if cfg.OpenRouterActive != "" {
+			key = readKey(keychain.OpenRouterService, cfg.OpenRouterActive)
+		}
+		return llm.Endpoint{
+			BaseURL:   llm.OpenRouterBaseURL,
+			Model:     cfg.OpenRouterModel,
+			APIKey:    key,
+			Fallbacks: fallbacks,
+		}
 	}
-	return llm.Endpoint{
-		BaseURL: cfg.LLMBaseURL,
-		Model:   cfg.LLMModel,
-		APIKey:  key,
-	}
+	return llm.Endpoint{}
 }
 
 // llmReady reports whether there is a model to ask at all. With an API
@@ -217,7 +250,7 @@ func (a *app) classifyForTasks(sourceKind, sourceKey, text string) {
 		log.Printf("task classify: rejected examples: %v", err)
 	}
 	modelDir := asr.ModelDir(a.modelsDir, llm.Spec)
-	result, err := a.llm.Classify(modelDir, text, entities, rejected, time.Now(), a.llmEndpoint(cfg))
+	result, err := a.llm.Classify(modelDir, text, entities, rejected, cfg.TaskPromptExtra, time.Now(), a.llmEndpoint(cfg))
 	if err != nil {
 		log.Printf("task classify: %v", err)
 		return

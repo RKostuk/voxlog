@@ -64,14 +64,15 @@ const maxTranscriptChars = 3000
 // is a short list of past task texts the user explicitly marked "Not a
 // task" (see task.Store.LoadRejected) -- a bounded negative-example nudge,
 // not training, so it stays short enough to not meaningfully grow the
-// prompt.
-func (c *Cache) Classify(modelDir, text string, entities, rejected []string, now time.Time, ep Endpoint) (Result, error) {
+// prompt. rules is the user's own "what counts as a task" text from Settings
+// (see buildPrompt), "" for none.
+func (c *Cache) Classify(modelDir, text string, entities, rejected []string, rules string, now time.Time, ep Endpoint) (Result, error) {
 	target, err := c.resolve(modelDir, ep)
 	if err != nil {
 		return Result{}, err
 	}
 
-	content, err := chatCompletion(target, buildPrompt(text, entities, rejected, now))
+	content, err := chatCompletion(target, buildPrompt(text, entities, rejected, rules, now))
 	if err != nil {
 		return Result{}, err
 	}
@@ -166,7 +167,28 @@ func rejectedBlock(rejected []string) string {
 		"is_task=false: " + strings.Join(quoted, "; ") + "\n"
 }
 
-func buildPrompt(text string, entities, rejected []string, now time.Time) string {
+// maxTaskRulesChars bounds the user's rules the way maxTranscriptChars bounds
+// the transcript: a pasted essay would crowd out the transcript it is meant
+// to judge in a small model's context.
+const maxTaskRulesChars = 1500
+
+// rulesBlock is the user's own instructions for telling a task from a
+// passing remark. Added to the built-in prompt, never in place of it: the
+// reply is parsed as JSON, so the format has to outlive whatever the rules
+// say -- the same bargain SummaryOptions.Extra makes.
+func rulesBlock(rules string) string {
+	rules = strings.TrimSpace(rules)
+	if rules == "" {
+		return ""
+	}
+	if len(rules) > maxTaskRulesChars {
+		rules = strings.ToValidUTF8(rules[:maxTaskRulesChars], "")
+	}
+	return "\nAdditional rules from the user, to follow as long as they do not\n" +
+		"contradict the JSON format asked for below:\n" + rules + "\n"
+}
+
+func buildPrompt(text string, entities, rejected []string, rules string, now time.Time) string {
 	if len(text) > maxTranscriptChars {
 		text = text[:maxTranscriptChars]
 	}
@@ -178,7 +200,7 @@ func buildPrompt(text string, entities, rejected []string, now time.Time) string
 Decide if it contains a concrete, actionable task the speaker (or someone
 they mention) needs to do. Casual notes, questions, or general discussion
 are NOT tasks.
-%s
+%s%s
 The only allowed projects are this fixed list: %s.
 You MUST set entity to one of these EXACTLY as written, matching by meaning
 even if the transcript spells or pronounces it differently. Never invent a
@@ -205,5 +227,5 @@ Transcript:
 Respond with ONLY a single JSON object, nothing before or after it, no
 markdown code fence, exactly these keys:
 {"is_task": true or false, "text": "...", "entity": "...", "status": "todo" or "in_progress" or "blocked" or "done", "reminder": "RFC3339 timestamp or null"}`,
-		rejectedBlock(rejected), entityList, now.Format(time.RFC3339), text)
+		rejectedBlock(rejected), rulesBlock(rules), entityList, now.Format(time.RFC3339), text)
 }

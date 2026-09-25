@@ -120,3 +120,40 @@ func TestRemoteNeedsAnAddress(t *testing.T) {
 		t.Errorf("local label = %q", got)
 	}
 }
+
+// Fallback models travel as OpenRouter's "models" list, primary first, so a
+// free model that is down or rate-limited hands over to the next one on the
+// provider's side instead of failing the request here.
+func TestFallbacksTravelAsModelsList(t *testing.T) {
+	srv, got := fakeEndpoint(t, http.StatusOK, `{"choices":[{"message":{"role":"assistant","content":"hi"}}]}`)
+
+	ep := Endpoint{BaseURL: srv.URL, Model: "a:free", Fallbacks: []string{"b:free", " ", "a:free", "c:free"}}
+	if _, err := chatCompletion(ep, "prompt"); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"a:free", "b:free", "c:free"}
+	if strings.Join(got.body.Models, ",") != strings.Join(want, ",") {
+		t.Errorf("models = %v, want %v", got.body.Models, want)
+	}
+
+	srv2, got2 := fakeEndpoint(t, http.StatusOK, `{"choices":[{"message":{"role":"assistant","content":"hi"}}]}`)
+	if _, err := chatCompletion(Endpoint{BaseURL: srv2.URL, Model: "gpt-4o-mini"}, "prompt"); err != nil {
+		t.Fatal(err)
+	}
+	if got2.body.Models != nil {
+		t.Errorf("models = %v, want it omitted with no fallbacks", got2.body.Models)
+	}
+}
+
+// A 429 is the everyday failure of a free tier, and the provider's own words
+// for it do not say what to do next.
+func TestRateLimitSaysWhatToDo(t *testing.T) {
+	srv, _ := fakeEndpoint(t, http.StatusTooManyRequests, `{"error":{"message":"Rate limit exceeded"}}`)
+	_, err := chatCompletion(Endpoint{BaseURL: srv.URL, Model: "m", APIKey: "k"}, "prompt")
+	if err == nil {
+		t.Fatal("a 429 came back as success")
+	}
+	if !strings.Contains(err.Error(), "rate limit") || !strings.Contains(err.Error(), "another account or model") {
+		t.Errorf("error = %q, want it to say to switch account or model", err)
+	}
+}

@@ -285,6 +285,7 @@
           <select id="llm_provider">
             <option value="local">On this Mac &mdash; the downloaded model</option>
             <option value="api">Through an API &mdash; your own endpoint and key</option>
+            <option value="openrouter">Through OpenRouter &mdash; free models</option>
           </select>
         </div>
         <div class="item stacked" id="llm-api-warning" style="display:none">
@@ -310,6 +311,33 @@
             <div class="subtext" id="llm-key-state">Stored in your login keychain, not in Voxlog's settings file.</div>
           </div>
           <input type="password" id="llm_api_key" placeholder="sk-…">
+        </div>
+        <!-- OpenRouter: a fixed address, the user's own accounts and a model
+             picked from what is free today. Several accounts because a free
+             tier's daily limit is per account; switching is by hand. -->
+        <div class="item stacked" id="or-accounts-row" style="display:none">
+          <div class="title">OpenRouter accounts
+            <div class="subtext">Up to 4. Requests go out on the selected one &mdash; switch when one runs out
+              of its free daily requests. Keys are stored in your login keychain.</div>
+          </div>
+          <div id="or-accounts-list"></div>
+          <div style="display:flex; justify-content:flex-end; margin-top:6px;">
+            <button type="button" id="or-account-add">Add account</button>
+          </div>
+        </div>
+        <div class="item stacked" id="or-models-row" style="display:none">
+          <div class="title">Model
+            <div class="subtext" id="or-models-state">Free models only. Fallbacks are tried in order when the
+              model above is busy or rate-limited.</div>
+          </div>
+          <div style="display:flex; flex-direction:column; gap:6px;">
+            <select id="or_model"></select>
+            <select id="or_fallback_1"></select>
+            <select id="or_fallback_2"></select>
+          </div>
+          <div style="display:flex; justify-content:flex-end; margin-top:6px;">
+            <button type="button" id="or-models-refresh">Refresh free models</button>
+          </div>
         </div>
         <div class="item stacked">
           <div class="title">Test the connection
@@ -338,6 +366,18 @@
             <div class="subtext">~4.5 GB &middot; used only for Task Hub classification</div>
           </div>
           <div id="llm-model"></div>
+        </div>
+        <div class="item stacked">
+          <div class="title">Task detection rules
+            <div class="subtext">Your own rules for what counts as a task, which project it belongs to and when
+              to remind you. Added to Voxlog's own prompt, not a replacement for it. Leave empty for the
+              default.</div>
+          </div>
+          <textarea id="task_prompt_extra" rows="4"
+            placeholder="e.g. &quot;Створи задачу&quot; always means a task. Thinking out loud is not a task. &quot;Завтра зранку&quot; means 9:00."></textarea>
+          <div style="display:flex; justify-content:flex-end; margin-top:6px;">
+            <button type="button" id="task_prompt_reset">Reset to default</button>
+          </div>
         </div>
       </div>
     </div>
@@ -970,8 +1010,9 @@
     // never have to download 4.5 GB.
     function syncTaskHubAvailable() {
       var enable = document.getElementById('task_hub_enabled');
-      var api = document.getElementById('llm_provider').value === 'api';
-      enable.disabled = !(llmModel.downloaded || api);
+      var provider = document.getElementById('llm_provider').value;
+      var remote = provider === 'api' || (provider === 'openrouter' && !!document.getElementById('or_model').value);
+      enable.disabled = !(llmModel.downloaded || remote);
       if (enable.disabled) enable.checked = false;
     }
 
@@ -1543,6 +1584,13 @@
         summary_enabled: document.getElementById('summary_enabled').checked,
         summary_length: document.getElementById('summary_length').value,
         summary_prompt_extra: document.getElementById('summary_prompt_extra').value,
+        task_prompt_extra: document.getElementById('task_prompt_extra').value,
+        openrouter_accounts: orAccounts.map(function (a) { return { id: a.id, label: a.label }; }),
+        openrouter_active: orActive,
+        openrouter_model: document.getElementById('or_model').value,
+        openrouter_fallbacks: ['or_fallback_1', 'or_fallback_2'].map(function (id) {
+          return document.getElementById(id).value;
+        }).filter(function (v) { return v; }),
         always_on: document.getElementById('always_on').checked,
         always_on_split_minutes: parseFloat(document.getElementById('always_on_split_minutes').value),
         always_on_note_gap_seconds: parseFloat(document.getElementById('always_on_note_gap_seconds').value),
@@ -1957,11 +2005,22 @@
     // base URL and a key are meaningless for a model running on this Mac, and
     // a visible empty key field invites filling one in for nothing.
     function syncLLMProvider() {
-      var api = document.getElementById('llm_provider').value === 'api';
-      ['llm-api-warning', 'llm-base-url-row', 'llm-model-row', 'llm-api-key-row'].forEach(function (id) {
+      var provider = document.getElementById('llm_provider').value;
+      var api = provider === 'api';
+      var or = provider === 'openrouter';
+      document.getElementById('llm-api-warning').style.display = (api || or) ? '' : 'none';
+      ['llm-base-url-row', 'llm-model-row', 'llm-api-key-row'].forEach(function (id) {
         document.getElementById(id).style.display = api ? '' : 'none';
       });
+      ['or-accounts-row', 'or-models-row'].forEach(function (id) {
+        document.getElementById(id).style.display = or ? '' : 'none';
+      });
       if (api) refreshLLMKeyState();
+      if (or) {
+        renderORAccounts();
+        refreshORKeyState();
+        if (!orModels.length) refreshORModels();
+      }
       syncTaskHubAvailable();
     }
 
@@ -2020,6 +2079,142 @@
       document.getElementById('summary_prompt_extra').value = '';
       save();
     });
+
+    document.getElementById('task_prompt_reset').addEventListener('click', function () {
+      document.getElementById('task_prompt_extra').value = '';
+      save();
+    });
+
+    // --- OpenRouter ---------------------------------------------------------
+    // orAccounts is the pane's copy of settings.openrouter_accounts; the keys
+    // never come back into the window, only orKeyStored[id] saying one is
+    // there. orSelected holds the saved model + two fallbacks, so a model
+    // that has left the free list is still shown rather than silently lost.
+    var orAccounts = [];
+    var orActive = '';
+    var orKeyStored = {};
+    var orModels = [];
+    var orSelected = ['', '', ''];
+    var MAX_OR_ACCOUNTS = 4;
+
+    function renderORAccounts() {
+      var root = document.getElementById('or-accounts-list');
+      if (!orAccounts.length) {
+        root.innerHTML = '<div class="subtext">No accounts yet. Create a key at openrouter.ai/keys and add it here.</div>';
+      } else {
+        root.innerHTML = orAccounts.map(function (a, i) {
+          return '<div class="or-account" style="display:flex; gap:6px; align-items:center; margin-bottom:6px;">' +
+            '<input type="radio" name="or_active" data-index="' + i + '"' + (a.id === orActive ? ' checked' : '') + ' aria-label="Use this account">' +
+            '<input type="text" class="or-label" data-index="' + i + '" value="' + escapeHtml(a.label) + '" placeholder="Account name" style="flex:1">' +
+            '<input type="password" class="or-key" data-index="' + i + '" placeholder="' + (orKeyStored[a.id] ? 'Key stored &mdash; type to replace' : 'sk-or-…') + '" style="flex:1.4">' +
+            '<button type="button" class="or-remove" data-index="' + i + '">Remove</button>' +
+            '</div>';
+        }).join('');
+      }
+      document.getElementById('or-account-add').disabled = orAccounts.length >= MAX_OR_ACCOUNTS;
+
+      root.querySelectorAll('input[name=or_active]').forEach(function (r) {
+        r.addEventListener('change', function () {
+          orActive = orAccounts[parseInt(r.dataset.index, 10)].id;
+        });
+      });
+      root.querySelectorAll('.or-label').forEach(function (inp) {
+        inp.addEventListener('input', function () {
+          orAccounts[parseInt(inp.dataset.index, 10)].label = inp.value;
+        });
+      });
+      // Same rule as the API key: straight to the keychain, then emptied.
+      root.querySelectorAll('.or-key').forEach(function (inp) {
+        inp.addEventListener('change', function (ev) {
+          ev.stopPropagation();
+          var key = inp.value;
+          if (!key) return;
+          var id = orAccounts[parseInt(inp.dataset.index, 10)].id;
+          window.setOpenRouterKey(id, key).then(function () {
+            inp.value = '';
+            refreshORKeyState();
+          }).catch(function (e) {
+            inp.value = '';
+            inp.placeholder = 'Could not store the key: ' + e;
+          });
+        });
+      });
+      root.querySelectorAll('.or-remove').forEach(function (btn) {
+        btn.addEventListener('click', function () {
+          var i = parseInt(btn.dataset.index, 10);
+          var gone = orAccounts.splice(i, 1)[0];
+          // An empty key deletes the keychain item: a removed account should
+          // not leave its secret behind.
+          window.setOpenRouterKey(gone.id, '').catch(function () {});
+          if (orActive === gone.id) orActive = orAccounts[0] ? orAccounts[0].id : '';
+          renderORAccounts();
+          save();
+        });
+      });
+    }
+
+    function refreshORKeyState() {
+      var ids = orAccounts.map(function (a) { return a.id; });
+      if (!ids.length) return;
+      window.openRouterKeysStored(ids).then(function (stored) {
+        orKeyStored = stored || {};
+        renderORAccounts();
+      }).catch(function () {});
+    }
+
+    document.getElementById('or-account-add').addEventListener('click', function () {
+      if (orAccounts.length >= MAX_OR_ACCOUNTS) return;
+      var id = 'acc-' + Date.now().toString(36);
+      orAccounts.push({ id: id, label: 'Account ' + (orAccounts.length + 1) });
+      if (!orActive) orActive = id;
+      renderORAccounts();
+      save();
+    });
+
+    // renderORModels fills the model and fallback selects from orModels,
+    // keeping whatever was chosen even when it is no longer on the list.
+    function renderORModels() {
+      ['or_model', 'or_fallback_1', 'or_fallback_2'].forEach(function (id, slot) {
+        var sel = document.getElementById(id);
+        var current = sel.value || orSelected[slot];
+        var ids = orModels.map(function (m) { return m.id; });
+        var html = '<option value="">' + (slot === 0 ? 'Choose a model' : 'No fallback ' + slot) + '</option>';
+        if (current && ids.indexOf(current) === -1) {
+          html += '<option value="' + escapeHtml(current) + '">' + escapeHtml(current) + ' (not on the free list now)</option>';
+        }
+        html += orModels.map(function (m) {
+          var ctx = m.context_length ? ' \u00b7 ' + Math.round(m.context_length / 1000) + 'k' : '';
+          return '<option value="' + escapeHtml(m.id) + '">' + escapeHtml(m.name || m.id) + ctx + '</option>';
+        }).join('');
+        sel.innerHTML = html;
+        sel.value = current;
+      });
+    }
+
+    function refreshORModels() {
+      var state = document.getElementById('or-models-state');
+      var btn = document.getElementById('or-models-refresh');
+      ['or_model', 'or_fallback_1', 'or_fallback_2'].forEach(function (id, slot) {
+        orSelected[slot] = document.getElementById(id).value || orSelected[slot];
+      });
+      btn.disabled = true;
+      state.classList.remove('warn');
+      state.textContent = 'Loading free models…';
+      window.openRouterFreeModels().then(function (models) {
+        orModels = models || [];
+        renderORModels();
+        state.textContent = orModels.length + ' free models. Fallbacks are tried in order when the model ' +
+          'above is busy or rate-limited.';
+      }).catch(function (e) {
+        state.classList.add('warn');
+        state.textContent = 'Could not load the model list: ' + e;
+      }).then(function () {
+        btn.disabled = false;
+      });
+    }
+
+    document.getElementById('or-models-refresh').addEventListener('click', refreshORModels);
+    document.getElementById('or_model').addEventListener('change', syncTaskHubAvailable);
 
     document.getElementById('form').addEventListener('change', save);
     document.getElementById('form').addEventListener('input', save);
@@ -2108,6 +2303,12 @@
       document.getElementById('llm_provider').value = settings.llm_provider || 'local';
       document.getElementById('llm_base_url').value = settings.llm_base_url || '';
       document.getElementById('llm_model').value = settings.llm_model || '';
+      orAccounts = (settings.openrouter_accounts || []).map(function (a) { return { id: a.id, label: a.label }; });
+      orActive = settings.openrouter_active || (orAccounts[0] ? orAccounts[0].id : '');
+      var fb = settings.openrouter_fallbacks || [];
+      orSelected = [settings.openrouter_model || '', fb[0] || '', fb[1] || ''];
+      renderORModels();
+      document.getElementById('task_prompt_extra').value = settings.task_prompt_extra || '';
       syncLLMProvider();
       document.getElementById('summary_enabled').checked = settings.summary_enabled !== false;
       document.getElementById('summary_length').value = settings.summary_length || 'normal';

@@ -1224,6 +1224,13 @@ func runMainWindow(pane string, store *history.Store, meetings *history.MeetingS
 	w.Bind("setLLMAPIKey", func(key string) error { return llmKeySet(key) })
 	w.Bind("llmAPIKeyStored", func() (bool, error) { return llmKeyStored(), nil })
 
+	// The OpenRouter accounts. A key goes straight to the keychain under its
+	// account's ID (an empty key removes it, which is how Remove cleans up);
+	// the pane only ever asks which accounts have one.
+	w.Bind("setOpenRouterKey", func(id, key string) error { return orKeySet(id, key) })
+	w.Bind("openRouterKeysStored", func(ids []string) (map[string]bool, error) { return orKeysStored(ids), nil })
+	w.Bind("openRouterFreeModels", func() ([]llm.ModelInfo, error) { return orFreeModels() })
+
 	// testLLMConnection sends one tiny prompt to whatever the pane currently
 	// shows, unsaved values included -- the point is to try a key or an
 	// address before committing to it. Returns the provider's own words on

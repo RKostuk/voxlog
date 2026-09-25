@@ -18,3 +18,8 @@ const (
 	LLMService = "Voxlog LLM API"
 	LLMAccount = "api-key"
 )
+
+// OpenRouter keys are one item per account the user added, filed under
+// settings.OpenRouterAccount.ID -- several free-tier accounts is the point of
+// that provider's pane, so the one-item rule above does not hold for it.
+const OpenRouterService = "Voxlog OpenRouter"

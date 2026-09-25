@@ -346,3 +346,24 @@ func TestMeetingSystemAudioIsOptInOnlyForAFreshInstall(t *testing.T) {
 		t.Errorf("model family = %q, a chosen model must survive", got.ModelFamily)
 	}
 }
+
+func TestOpenRouterSettingsPersist(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "settings.json")
+	s := NewStore(path)
+	v := s.Get()
+	v.LLMProvider = LLMProviderOpenRouter
+	v.OpenRouterAccounts = []OpenRouterAccount{{ID: "acc-1", Label: "Main"}, {ID: "acc-2", Label: "Spare"}}
+	v.OpenRouterActive = "acc-2"
+	v.OpenRouterModel = "a/alpha:free"
+	v.OpenRouterFallbacks = []string{"b/beta:free"}
+	v.TaskPromptExtra = "«створи задачу» is always a task"
+	if err := s.Set(v); err != nil {
+		t.Fatalf("Set: %v", err)
+	}
+	got := NewStore(path).Get()
+	if !reflect.DeepEqual(got.OpenRouterAccounts, v.OpenRouterAccounts) || got.OpenRouterActive != "acc-2" ||
+		got.OpenRouterModel != v.OpenRouterModel || !reflect.DeepEqual(got.OpenRouterFallbacks, v.OpenRouterFallbacks) ||
+		got.TaskPromptExtra != v.TaskPromptExtra || got.LLMProvider != LLMProviderOpenRouter {
+		t.Fatalf("got %+v, want the OpenRouter fields back", got)
+	}
+}

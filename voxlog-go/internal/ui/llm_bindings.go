@@ -3,6 +3,7 @@ package ui
 import (
 	"errors"
 
+	"voxlog-go/internal/llm"
 	"voxlog-go/internal/settings"
 )
 
@@ -20,7 +21,56 @@ var (
 	// key itself is never read back into the window.
 	llmKeySetFn    func(string) error
 	llmKeyStoredFn func() bool
+
+	// The OpenRouter accounts' keys, one per account ID, under the same
+	// write-only rule: the pane stores and removes them, and learns only
+	// which accounts have one.
+	orKeySetFn     func(id, key string) error
+	orKeysStoredFn func(ids []string) map[string]bool
+	// orFreeModelsFn fetches OpenRouter's current free models.
+	orFreeModelsFn func() ([]llm.ModelInfo, error)
 )
+
+// SetOpenRouterFuncs installs the OpenRouter accounts' key storage and the
+// free-model list behind the pane's Refresh button.
+func SetOpenRouterFuncs(setKey func(id, key string) error, stored func(ids []string) map[string]bool, freeModels func() ([]llm.ModelInfo, error)) {
+	winMu.Lock()
+	orKeySetFn, orKeysStoredFn, orFreeModelsFn = setKey, stored, freeModels
+	winMu.Unlock()
+}
+
+func orKeySet(id, key string) error {
+	winMu.Lock()
+	fn := orKeySetFn
+	winMu.Unlock()
+	if fn == nil {
+		return errors.New("this build cannot store an OpenRouter key")
+	}
+	if id == "" {
+		return errors.New("no account to store the key under")
+	}
+	return fn(id, key)
+}
+
+func orKeysStored(ids []string) map[string]bool {
+	winMu.Lock()
+	fn := orKeysStoredFn
+	winMu.Unlock()
+	if fn == nil {
+		return map[string]bool{}
+	}
+	return fn(ids)
+}
+
+func orFreeModels() ([]llm.ModelInfo, error) {
+	winMu.Lock()
+	fn := orFreeModelsFn
+	winMu.Unlock()
+	if fn == nil {
+		return nil, errors.New("this build cannot list OpenRouter models")
+	}
+	return fn()
+}
 
 // SetLLMTestFunc installs what the Test connection button does.
 func SetLLMTestFunc(fn func(settings.Settings) error) {
