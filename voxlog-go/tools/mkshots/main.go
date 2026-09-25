@@ -31,6 +31,10 @@ import (
 
 // The markers internal/ui/assets.go splices at, and the file each one takes.
 var injections = []struct{ marker, file string }{
+	// kit.js first: the page's shared helpers (escapeHtml, duration, toast).
+	// Missing it renders a blank window rather than a broken one -- the first
+	// render throws on escapeHtml and every pane stays empty.
+	{"  /* KIT_JS */", "kit.js"},
 	{"  /* KIT_CSS */", "kit.css"},
 	{"  /* SETTINGS_CSS */", "settings.css"},
 	{"  /* INDICATOR_CSS */", "indicator.css"},

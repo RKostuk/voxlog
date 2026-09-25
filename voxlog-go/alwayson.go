@@ -916,7 +916,7 @@ func (a *app) noteSystemAudioFailure(err error) {
 		log.Printf("always-on: system audio: %v", err)
 	}
 	if tell {
-		notifyPane("Voxlog cannot hear system audio. Grant Screen Recording in Settings.", "settings")
+		notifyPane("Voxlog cannot hear system audio. Grant Screen Recording in Settings.", ui.PaneSettings)
 	}
 }
 
@@ -1165,7 +1165,7 @@ func (a *app) fileAutoNote(sess *session, micPath, sysPath string, seconds float
 			return
 		}
 		ui.RefreshMainWindowIfOpen(a.hist, a.meetings, a.tasks)
-		notifyPane("Noted something you said.", "history")
+		notifyPane("Noted something you said.", ui.PaneHistory)
 		go a.classifyForTasks(history.KindDictation, key, text)
 	})
 }
@@ -1279,7 +1279,7 @@ func (a *app) fetchVADModel() {
 		a.listen.mu.Unlock()
 		if err != nil {
 			log.Printf("always-on: download failed: %v", err)
-			notify("Could not download the voice-activity model, so always-on listening is off.")
+			notifyPane("Could not download the voice-activity model, so always-on listening is off.", ui.PaneSettings)
 			return
 		}
 		log.Print("always-on: voice-activity model ready")

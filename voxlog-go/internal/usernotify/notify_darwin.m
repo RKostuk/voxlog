@@ -55,6 +55,12 @@ static volatile int gAuthorized = 0;
 // split-second before the answer is known, instead of routing it into the
 // osascript fallback purely because gAuthorized still happened to read 0.
 static volatile int gDecided = 0;
+// 1 once an authorization request has actually been issued, so an answer --
+// granted or refused -- is coming. 0 means nobody will ever call the
+// completion handler: no app bundle, or no notification centre to ask. Go
+// uses this to tell "the user has not answered the prompt yet" from "there is
+// nothing to wait for", which decide whether a queued banner is worth holding.
+static volatile int gWillDecide = 0;
 
 // voxlogNotifyInit asks for permission, on the main thread and without
 // waiting for the answer.
@@ -85,6 +91,9 @@ void voxlogNotifyInit(void) {
       }
       gDelegate = [[VoxlogNotifyDelegate alloc] init];
       center.delegate = gDelegate;
+      // Set before asking, not after: the answer can arrive on another
+      // thread before this line would otherwise run.
+      gWillDecide = 1;
       // Sound is requested alongside Alert because voxlogNotifyPost sets
       // content.sound; without the option the system drops the sound and
       // keeps the banner.
@@ -105,6 +114,10 @@ void voxlogNotifyInit(void) {
     });
   }
 }
+
+// voxlogNotifyWillDecide reports whether an authorization answer is on its
+// way. Read from Go while deciding how long to hold a queued banner.
+int voxlogNotifyWillDecide(void) { return gWillDecide; }
 
 // voxlogNotifyPost returns 1 if the notification was handed to the system, 0
 // if the caller should fall back. 0 covers the window before the user has

@@ -1,8 +1,12 @@
 package main
 
 import (
+	"path/filepath"
+	"strings"
 	"testing"
 	"time"
+
+	"voxlog-go/internal/settings"
 )
 
 // Mute is per recording, not a setting: the next meeting starts unmuted no
@@ -65,5 +69,91 @@ func TestTheMuteItemsTitleFollowsTheRunningMeeting(t *testing.T) {
 		if got := muteMicLabel(a.meetingMuted()); got != muteMicLabel(true) {
 			t.Fatalf("redraw %d reads %q, want the muted title", i, got)
 		}
+	}
+}
+
+// The recording notice is a courtesy the user asked for -- and in some places
+// the law. It goes out once, when the recording starts, and not at all if
+// they turned it off.
+func TestTheRecordingNoticeFollowsItsSetting(t *testing.T) {
+	var posted []string
+	real := postRecordingNotice
+	postRecordingNotice = func(msg string) { posted = append(posted, msg) }
+	t.Cleanup(func() { postRecordingNotice = real })
+
+	store := settings.NewStore(filepath.Join(t.TempDir(), "settings.json"))
+	a := &app{store: store}
+
+	cfg := store.Get()
+	cfg.RecordingNotice = true
+	if err := store.Set(cfg); err != nil {
+		t.Fatal(err)
+	}
+	a.warnAboutRecording()
+	if len(posted) != 1 {
+		t.Fatalf("notice posted %d times with the setting on, want 1", len(posted))
+	}
+	if !strings.Contains(posted[0], "let the others on the call know") {
+		t.Errorf("the notice reads %q", posted[0])
+	}
+
+	cfg.RecordingNotice = false
+	if err := store.Set(cfg); err != nil {
+		t.Fatal(err)
+	}
+	a.warnAboutRecording()
+	if len(posted) != 1 {
+		t.Fatalf("the notice went out %d times with the setting off", len(posted)-1)
+	}
+}
+
+// The menu bar and the window's banner are both redrawn from inside
+// startMeeting and stopMeeting, which hold a.mu for the whole of their work.
+// Anything they read that needs a.mu deadlocks the app against itself on the
+// first meeting: the recording runs, and the Stop item, the meeting hotkey
+// and the Overview poll all wait on a lock nobody will release.
+//
+// The fields are set directly rather than through startedMeeting/setMicMuted
+// because those repaint the menu bar icon, which means systray and a status
+// item this test has neither of.
+func TestMenuStateIsReadableWhileTheAppLockIsHeld(t *testing.T) {
+	tr := &tray{meeting: true, meetingSince: time.Now(), micMuted: true}
+	a := &app{tray: tr}
+
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
+	done := make(chan struct{})
+	var muted, running bool
+	var since time.Time
+	go func() {
+		defer close(done)
+		muted = a.tray.meetingMicMuted()
+		running, since, _ = a.tray.meetingSnapshot()
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("reading the menu's own state blocked on a.mu")
+	}
+	if !muted {
+		t.Error("the menu would draw an unmuted microphone for a muted recording")
+	}
+	if !running || since.IsZero() {
+		t.Errorf("snapshot says running=%v since=%v", running, since)
+	}
+}
+
+// Always-on's mute counts in the same snapshot: to the user there is one
+// fact, "the app is recording and cannot hear me".
+func TestTheSnapshotCoversEitherMute(t *testing.T) {
+	tr := &tray{meeting: true, meetingSince: time.Now(), listenMuted: true}
+	if _, _, muted := tr.meetingSnapshot(); !muted {
+		t.Error("always-on's mute did not reach the banner")
+	}
+	stopped := &tray{}
+	if running, _, muted := stopped.meetingSnapshot(); running || muted {
+		t.Errorf("with nothing recording: running=%v muted=%v", running, muted)
 	}
 }

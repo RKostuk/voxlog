@@ -119,14 +119,25 @@ func (s *MeetingStore) ReplaceTurns(start time.Time, speakers []MeetingSpeaker, 
 		if id, ok := rowByLocal[t.LocalID]; ok {
 			speakerID = id
 		}
+		// speaker_id and decoded_speaker_id start out the same: the pipeline's
+		// answer is the transcript until somebody says otherwise. Corrections,
+		// applied just below, move the first and never the second.
 		_, err := tx.Exec(`
 			INSERT INTO turns
-				(meeting_ns, seq, channel, start_secs, end_secs, speaker_id, text)
-			VALUES (?, ?, ?, ?, ?, ?, ?)`,
-			ns, i, t.Channel, t.StartSecs, t.EndSecs, speakerID, t.Text)
+				(meeting_ns, seq, channel, start_secs, end_secs, speaker_id, decoded_speaker_id, text)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+			ns, i, t.Channel, t.StartSecs, t.EndSecs, speakerID, speakerID, t.Text)
 		if err != nil {
 			return fmt.Errorf("history: writing turn %d: %w", i, err)
 		}
+	}
+
+	// Corrections go back on inside the same transaction as the decode that
+	// wiped them. A decode either lands with what the user knows already
+	// applied, or does not land at all -- there is no window where the
+	// transcript says something a person has explicitly denied.
+	if err := applyCorrections(tx, ns); err != nil {
+		return err
 	}
 
 	if _, err := tx.Exec("UPDATE meetings SET turns_version = ? WHERE start_ns = ?", version, ns); err != nil {

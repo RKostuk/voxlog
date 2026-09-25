@@ -13,9 +13,22 @@ import (
 // fortnight of daily columns was a lot of numbers for very little of one.
 const overviewWeeks = 8
 
+// And twelve months behind the All time toggle. A week is the right grain for
+// "what have I been doing lately" and hopeless for "how much of this have I
+// done at all": a year of weekly columns is 52 slivers, and a day of history
+// is one. Months answer the second question at the same width.
+const overviewMonths = 12
+
 type overviewWeek struct {
 	Week       string `json:"week"`  // the Monday, "2006-01-02"
 	Label      string `json:"label"` // "4 Aug" where the month turns over, else "11"
+	Dictations int    `json:"dictations"`
+	Meetings   int    `json:"meetings"`
+}
+
+type overviewMonth struct {
+	Month      string `json:"month"` // "2006-01"
+	Label      string `json:"label"` // "Jan 26" where the year turns over, else "Jan"
 	Dictations int    `json:"dictations"`
 	Meetings   int    `json:"meetings"`
 }
@@ -36,6 +49,10 @@ type overview struct {
 	AllTime overviewSpan `json:"all_time"`
 
 	Weeks []overviewWeek `json:"weeks"` // oldest first, always overviewWeeks long
+
+	// Oldest first, at most overviewMonths long: months entirely before the
+	// first recording are dropped rather than drawn as a year of nothing.
+	Months []overviewMonth `json:"months"`
 
 	// The legend under the chart: what fell inside the eight weeks drawn.
 	WindowRecordings int     `json:"window_recordings"`
@@ -69,6 +86,16 @@ func buildOverview(entries []history.Entry, meetings []history.Meeting, now time
 	}
 	labelWeeks(weeks)
 
+	months := make([]overviewMonth, overviewMonths)
+	monthIndex := make(map[string]int, overviewMonths)
+	thisMonth := startOfMonth(now)
+	for i := 0; i < overviewMonths; i++ {
+		at := thisMonth.AddDate(0, -(overviewMonths - 1 - i), 0)
+		key := at.Format("2006-01")
+		months[i] = overviewMonth{Month: key}
+		monthIndex[key] = i
+	}
+
 	var out overview
 	var todayDecodes, allDecodes []float64
 	var first time.Time
@@ -87,6 +114,10 @@ func buildOverview(entries []history.Entry, meetings []history.Meeting, now time
 		active[day] = struct{}{}
 		if first.IsZero() || e.Timestamp.Before(first) {
 			first = e.Timestamp
+		}
+
+		if i, ok := monthIndex[e.Timestamp.Format("2006-01")]; ok {
+			months[i].Dictations++
 		}
 
 		if i, ok := index[startOfWeek(e.Timestamp).Format("2006-01-02")]; ok {
@@ -114,6 +145,10 @@ func buildOverview(entries []history.Entry, meetings []history.Meeting, now time
 			first = m.Start
 		}
 
+		if i, ok := monthIndex[m.Start.Format("2006-01")]; ok {
+			months[i].Meetings++
+		}
+
 		if i, ok := index[startOfWeek(m.Start).Format("2006-01-02")]; ok {
 			weeks[i].Meetings++
 			out.WindowRecordings++
@@ -127,6 +162,8 @@ func buildOverview(entries []history.Entry, meetings []history.Meeting, now time
 	}
 
 	out.Weeks = weeks
+	out.Months = trimLeadingEmptyMonths(months, first)
+	labelMonths(out.Months)
 	out.Today.MedianDecode = median(todayDecodes)
 	out.AllTime.MedianDecode = median(allDecodes)
 	out.Today.TypingMinutes = typingMinutes(out.Today.Words)
@@ -163,6 +200,45 @@ func startOfWeek(t time.Time) time.Time {
 	// Go counts Sunday as 0; shift so Monday is 0 and Sunday is 6.
 	back := (int(day.Weekday()) + 6) % 7
 	return day.AddDate(0, 0, -back)
+}
+
+// The first of the month, in local time, clock thrown away.
+func startOfMonth(t time.Time) time.Time {
+	return time.Date(t.Year(), t.Month(), 1, 0, 0, 0, 0, t.Location())
+}
+
+// Months before anything was ever recorded say nothing except how long the
+// user has not had the app. The current month always survives, so the chart
+// is never empty once there is a single recording.
+func trimLeadingEmptyMonths(months []overviewMonth, first time.Time) []overviewMonth {
+	if first.IsZero() {
+		return months[len(months)-1:]
+	}
+	from := first.Format("2006-01")
+	for i := range months {
+		if months[i].Month >= from {
+			return months[i:]
+		}
+	}
+	return months[len(months)-1:]
+}
+
+// The axis names the year only where it changes -- and on the first column,
+// which has no predecessor to have changed from.
+func labelMonths(months []overviewMonth) {
+	var year int
+	for i := range months {
+		at, err := time.Parse("2006-01", months[i].Month)
+		if err != nil {
+			continue
+		}
+		if i == 0 || at.Year() != year {
+			months[i].Label = at.Format("Jan 06")
+		} else {
+			months[i].Label = at.Format("Jan")
+		}
+		year = at.Year()
+	}
 }
 
 // The axis names the month only where it changes -- and on the first column,

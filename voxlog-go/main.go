@@ -33,12 +33,19 @@ import (
 // notify shows a native macOS notification banner -- the smallest way to
 // surface a dictation failure the user can actually see, instead of it only
 // landing in a log file nobody's watching.
+//
+// Every banner goes out with a pane on it, this one included. An empty action
+// is not "no destination", it is a banner the delegate refuses to route (see
+// internal/usernotify/notify_darwin.m): it looks like the ones that work and
+// does nothing at all when clicked, which is indistinguishable from the app
+// being broken. Overview is the fallback destination for the messages that
+// are not about one part of the app.
 func notify(message string) {
-	usernotify.Post(message, "")
+	usernotify.Post(message, ui.PaneOverview)
 }
 
-// notifyPane is notify for the banners that have somewhere to go: clicking one
-// opens the main window on the named pane, the same names ShowMainWindow takes.
+// notifyPane is notify aimed somewhere in particular: clicking the banner
+// opens the main window on that pane.
 func notifyPane(message, pane string) {
 	usernotify.Post(message, pane)
 }
@@ -322,7 +329,7 @@ func (c *diarizerCache) get(modelsDir string) *diarize.Diarizer {
 				c.mu.Unlock()
 				if err != nil {
 					log.Printf("diarization: download failed: %v", err)
-					notify("Could not download the speaker models.")
+					notifyPane("Could not download the speaker models.", ui.PaneSettings)
 					return
 				}
 				log.Printf("diarization: models ready")
@@ -578,7 +585,41 @@ func wordTurns(words []asr.Word, segments []diarize.Segment, speaker int, keepSp
 		turns = append(turns, turn{start: w.Start, end: end, speaker: id, channel: ch, text: w.Text})
 		last = at
 	}
-	return turns
+	return stitchTurns(turns, maxSpeakerGap)
+}
+
+// stitchTurns joins turns the segmenter split but a reader would not: the same
+// person, on the same channel, with less than maxGap of silence between them.
+//
+// The segmenter cuts on breath as much as on speaker, so one person answering
+// a question came back as four or five labelled lines with their name on each
+// -- the transcript read as a crowd taking it in turns rather than as somebody
+// talking. Anything longer than the gap is left alone: that is a real pause,
+// and it is what lets the other channel's replies fall between two things one
+// person said.
+func stitchTurns(turns []turn, maxGap float32) []turn {
+	if len(turns) < 2 {
+		return turns
+	}
+	out := turns[:1]
+	for _, t := range turns[1:] {
+		prev := &out[len(out)-1]
+		if t.speaker == prev.speaker && t.channel == prev.channel && t.start-prev.end <= maxGap {
+			if t.text != "" {
+				if prev.text == "" {
+					prev.text = t.text
+				} else {
+					prev.text += " " + t.text
+				}
+			}
+			if t.end > prev.end {
+				prev.end = t.end
+			}
+			continue
+		}
+		out = append(out, t)
+	}
+	return out
 }
 
 // renderTurns decodes the turns in time order and labels each line. This is
@@ -874,10 +915,13 @@ func onReady(store *settings.Store, histStore *history.Store, meetStore *history
 	// it invites. The Meetings pane stays; only the recorder goes.
 	applyMeetingItems := func(recording bool) {
 		listening := a.store.Get().AlwaysOn
-		// Read off the main thread, next to the other state this closure
-		// needs: a.meetingMuted takes a.mu, and taking a lock inside the
-		// main-thread block is how the menu ends up waiting on a recorder.
-		muted := a.meetingMuted()
+		// The tray's copy, not a.meetingMuted(): this closure is called from
+		// inside startMeeting and stopMeeting, both of which hold a.mu for
+		// the length of their work, so anything here that takes a.mu
+		// deadlocks the app against itself on the first meeting -- see
+		// tray.meetingMicMuted. The tray is kept in step by every toggle, so
+		// it is the same answer without the lock.
+		muted := a.tray.meetingMicMuted()
 		ui.RunOnMain(func() {
 			if listening {
 				mMeetingHeader.Hide()
@@ -1029,16 +1073,35 @@ func onReady(store *settings.Store, histStore *history.Store, meetStore *history
 	// Transcribing a past meeting is driven from the History window, which
 	// cannot reach into this package -- hand it the entry point instead.
 	ui.SetTranscribeHandler(a.transcribeStoredMeeting)
+	// What a correction in the transcript reaches beyond the transcript: the
+	// fingerprints of everyone whose replies moved, and the voices behind
+	// them. The window cannot do it -- describing a voice needs the model.
+	ui.SetRefingerprintHandler(a.refreshSpeakerEmbeds)
 
 	// The Overview banner polls this to show a running meeting's elapsed
 	// time -- ui cannot reach a.meeting itself, the same reason
 	// SetTranscribeHandler exists.
-	ui.SetMeetingStatusHandler(func() (bool, float64) {
-		// One question -- "is anything being recorded right now" -- answered
-		// in one place, so the banner covers an always-on session as well as
-		// a meeting the user started (see meetingElapsed).
-		running, elapsed := a.meetingElapsed()
-		return running, elapsed.Seconds()
+	ui.SetMeetingStatusHandler(func() (bool, float64, bool) {
+		// Answered from the tray's copy rather than from a.meeting: this
+		// runs on the main thread, once a second, for as long as the
+		// Overview pane is on screen. a.mu is held for the whole of a
+		// meeting starting, so a tick that waited for it froze the window --
+		// which is exactly what opening Overview during a recording did.
+		// The tray is told about every start, stop and mute, including
+		// always-on's, so the answer is the same one.
+		running, since, muted := a.tray.meetingSnapshot()
+		if !running {
+			return false, 0, false
+		}
+		return true, time.Since(since).Seconds(), muted
+	})
+	// The banner's Mute button. Same flip the menu bar item makes, tray glyph
+	// included -- the menu item's own title follows on the next poll tick
+	// (see applyMeetingItems), so a mute made here is not undone by it.
+	ui.SetToggleMuteHandler(func() bool {
+		muted := a.toggleMeetingMute()
+		a.tray.setMicMuted(muted)
+		return muted
 	})
 	// The banner's Stop button goes through the same method the tray menu's
 	// "Stop meeting recording" item and the meeting hotkey already use.
@@ -1062,7 +1125,7 @@ func onReady(store *settings.Store, histStore *history.Store, meetStore *history
 	// if already trusted); notify() is a backup for when that system dialog
 	// gets dismissed or missed.
 	if !hotkey.PromptAccessibilityTrust() {
-		notify("Voxlog needs Accessibility permission for hotkeys to work. Grant it in System Settings, then restart Voxlog.")
+		notifyPane("Voxlog needs Accessibility permission for hotkeys to work. Grant it in System Settings, then restart Voxlog.", ui.PaneSettings)
 	}
 
 	// The drawer opens where the settings say, refreshes the main window

@@ -392,7 +392,25 @@ func ReadRange(path string, startSeconds, endSeconds float64) ([]float32, error)
 func EncodeWAV(samples []float32) []byte {
 	dataBytes := uint32(len(samples) * bytesPerSample)
 	out := make([]byte, wavHeaderSize+int(dataBytes))
+	copy(out, wavHeader(dataBytes))
 
+	for i, s := range samples {
+		if s > 1 {
+			s = 1
+		} else if s < -1 {
+			s = -1
+		}
+		binary.LittleEndian.PutUint16(out[wavHeaderSize+i*bytesPerSample:], uint16(int16(s*32767)))
+	}
+	return out
+}
+
+// wavHeader is the 44 bytes in front of mono 16-bit PCM at SampleRate. One
+// copy of it, because there are two callers that are not the same shape: a
+// clip encoded whole in memory, and a mix streamed out of two files whose
+// length is known before a single sample of it exists.
+func wavHeader(dataBytes uint32) []byte {
+	out := make([]byte, wavHeaderSize)
 	copy(out[0:], "RIFF")
 	binary.LittleEndian.PutUint32(out[4:], 36+dataBytes)
 	copy(out[8:], "WAVE")
@@ -406,14 +424,5 @@ func EncodeWAV(samples []float32) []byte {
 	binary.LittleEndian.PutUint16(out[34:], 8*bytesPerSample)
 	copy(out[36:], "data")
 	binary.LittleEndian.PutUint32(out[40:], dataBytes)
-
-	for i, s := range samples {
-		if s > 1 {
-			s = 1
-		} else if s < -1 {
-			s = -1
-		}
-		binary.LittleEndian.PutUint16(out[wavHeaderSize+i*bytesPerSample:], uint16(int16(s*32767)))
-	}
 	return out
 }

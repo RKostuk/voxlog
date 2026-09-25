@@ -445,6 +445,16 @@ import (
 // forever-blocked item). Window visibility doesn't need Run() anyway: per
 // the vendored webview.h, set_up_window() calls makeKeyAndOrderFront:
 // during construction, independent of run_impl().
+//
+// This is also the app's replacement for webview_go's own w.Dispatch, which
+// every main-thread hop in this package used to go through. Dispatch keeps
+// its pending closures in one process-wide map keyed by a counter and calls
+// whatever it finds there without checking (webview.go:221) -- so a callback
+// that arrives for an index the map no longer holds calls a nil func, and the
+// process dies with a nil-pointer panic inside
+// _webviewDispatchGoCallback. That crash is in the log for 2026-09-24
+// 00:38. runtime/cgo.Handle has no shared map and no reuse, so the same
+// mistake is not representable here.
 func runOnMain(f func()) {
 	h := cgo.NewHandle(f)
 	C.runOnMainC(C.uintptr_t(h))

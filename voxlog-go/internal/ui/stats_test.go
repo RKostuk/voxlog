@@ -199,3 +199,69 @@ func TestTodayEndsAtLocalMidnight(t *testing.T) {
 		t.Errorf("Today.Recordings = %d, want 1 -- the 23:30 take belongs to yesterday", got)
 	}
 }
+
+func TestOverviewBucketsAllTimeByMonth(t *testing.T) {
+	now := time.Date(2026, 9, 24, 12, 0, 0, 0, time.Local)
+	entries := []history.Entry{
+		{Timestamp: now, Text: "сьогодні"},
+		{Timestamp: now.AddDate(0, -2, 0), Text: "два місяці тому"},
+		// Older than the twelve months drawn: counted in All time, not on
+		// the chart.
+		{Timestamp: now.AddDate(-2, 0, 0), Text: "позаминулого року"},
+	}
+	meetings := []history.Meeting{{Start: now.AddDate(0, -2, -1), RecordingSeconds: 60}}
+
+	ov := buildOverview(entries, meetings, now)
+	if len(ov.Months) == 0 {
+		t.Fatal("no monthly buckets at all")
+	}
+	if len(ov.Months) > overviewMonths {
+		t.Fatalf("got %d months, want at most %d", len(ov.Months), overviewMonths)
+	}
+	last := ov.Months[len(ov.Months)-1]
+	if last.Month != now.Format("2006-01") {
+		t.Errorf("last column is %q, want this month %q", last.Month, now.Format("2006-01"))
+	}
+	if last.Dictations != 1 || last.Meetings != 0 {
+		t.Errorf("this month = %+v", last)
+	}
+	var found bool
+	for _, m := range ov.Months {
+		if m.Month == now.AddDate(0, -2, 0).Format("2006-01") {
+			found = true
+			if m.Dictations != 1 || m.Meetings != 1 {
+				t.Errorf("two months ago = %+v, want one of each", m)
+			}
+		}
+	}
+	if !found {
+		t.Error("the month two months back is missing from the chart")
+	}
+	if ov.AllTime.Recordings != 4 {
+		t.Errorf("all time counts %d recordings, want 4", ov.AllTime.Recordings)
+	}
+}
+
+func TestOverviewDropsMonthsBeforeTheFirstRecording(t *testing.T) {
+	// A user two months in should not be shown ten empty columns explaining
+	// how long they did not have the app.
+	now := time.Date(2026, 9, 24, 12, 0, 0, 0, time.Local)
+	ov := buildOverview([]history.Entry{{Timestamp: now.AddDate(0, -1, 0), Text: "перший"}}, nil, now)
+	if len(ov.Months) != 2 {
+		t.Fatalf("got %d months, want 2 (last month and this one): %+v", len(ov.Months), ov.Months)
+	}
+	if ov.Months[0].Label != "Aug 26" {
+		t.Errorf("first label is %q, want the year named once at the left", ov.Months[0].Label)
+	}
+	if ov.Months[1].Label != "Sep" {
+		t.Errorf("second label is %q, want the year left off inside one year", ov.Months[1].Label)
+	}
+}
+
+func TestOverviewWithNoHistoryStillDrawsThisMonth(t *testing.T) {
+	now := time.Date(2026, 9, 24, 12, 0, 0, 0, time.Local)
+	ov := buildOverview(nil, nil, now)
+	if len(ov.Months) != 1 || ov.Months[0].Month != "2026-09" {
+		t.Fatalf("empty history gave %+v, want this month alone", ov.Months)
+	}
+}

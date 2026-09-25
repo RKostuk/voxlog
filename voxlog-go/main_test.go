@@ -613,6 +613,55 @@ func TestWordTurnsSplitsTheMicByPauseNotBySpeaker(t *testing.T) {
 	}
 }
 
+func TestWordTurnsStitchesOneSpeakerAcrossABreath(t *testing.T) {
+	// The segmenter cuts on breath as well as on speaker, so one person
+	// answering a question came back as several labelled lines in a row --
+	// a crowd taking turns, rather than somebody talking.
+	segments := []diarize.Segment{
+		{Start: 0, End: 1, Speaker: 3},
+		{Start: 1.6, End: 4, Speaker: 3},
+	}
+	words := []asr.Word{
+		{Text: "так", Start: 0.2},
+		{Text: "звичайно", Start: 1.8},
+	}
+	turns := wordTurns(words, segments, 0, true)
+	if len(turns) != 1 {
+		t.Fatalf("got %d turns, want 1: %+v", len(turns), turns)
+	}
+	if turns[0].text != "так звичайно" {
+		t.Errorf("stitched turn = %q", turns[0].text)
+	}
+	if turns[0].end < 1.8 {
+		t.Errorf("stitched turn ends at %v, before its own last word", turns[0].end)
+	}
+}
+
+func TestStitchTurnsLeavesARealPauseAlone(t *testing.T) {
+	// Longer than maxSpeakerGap is a pause somebody else can speak into, and
+	// joining across it would pile the other channel's replies after a turn
+	// that had already ended.
+	turns := stitchTurns([]turn{
+		{start: 0, end: 1, speaker: 3, text: "питання"},
+		{start: 9, end: 10, speaker: 3, text: "ще одне"},
+	}, maxSpeakerGap)
+	if len(turns) != 2 {
+		t.Fatalf("got %d turns, want 2: %+v", len(turns), turns)
+	}
+}
+
+func TestStitchTurnsKeepsTheTwoChannelsApart(t *testing.T) {
+	// The mic and the call are two recordings of the same seconds: back to
+	// back in time means they overlapped, not that one followed the other.
+	turns := stitchTurns([]turn{
+		{start: 0, end: 1, speaker: youSpeaker, channel: channelMic, text: "привіт"},
+		{start: 1.1, end: 2, speaker: youSpeaker, channel: channelSystem, text: "вітаю"},
+	}, maxSpeakerGap)
+	if len(turns) != 2 {
+		t.Fatalf("got %d turns, want 2: %+v", len(turns), turns)
+	}
+}
+
 func TestRenderTurnsUsesTextThatIsAlreadyDecoded(t *testing.T) {
 	// The word-labelling path has no audio to hand a decoder, and must not
 	// need one.

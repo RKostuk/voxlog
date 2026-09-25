@@ -92,7 +92,7 @@ func ShowTasksDrawer(tasks *task.Store) {
 
 	if w != nil && windowUsable(w) {
 		refreshDrawer()
-		w.Dispatch(func() {
+		runOnMain(func() {
 			placeDrawer(w, placement)
 			activateApp()
 			makeKeyAndOrderFront(w.Window())
@@ -117,7 +117,7 @@ func HideTasksDrawer() {
 	if w == nil || !windowUsable(w) {
 		return
 	}
-	w.Dispatch(func() { hideWindow(w.Window()) })
+	runOnMain(func() { hideWindow(w.Window()) })
 }
 
 // placeDrawer puts the window where the placement setting says. Runs on the
@@ -267,7 +267,7 @@ func refreshDrawer() {
 		return
 	}
 	queue := decodeQueueJSON()
-	w.Dispatch(func() {
+	runOnMain(func() {
 		w.Eval(fmt.Sprintf(
 			"window.voxlog = window.voxlog || {}; window.voxlog.tasks = %s; window.voxlog.decodeQueue = %s; typeof render === 'function' && render();",
 			data, queue))

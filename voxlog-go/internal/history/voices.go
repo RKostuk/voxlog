@@ -7,6 +7,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"voxlog-go/internal/voiceprint"
 )
 
 // Voices are people, as far as this program can tell them apart: a name and
@@ -87,6 +89,44 @@ func scanVoice(row rowScanner) (Voice, error) {
 // not. Two people who genuinely share a first name are the user's problem to
 // disambiguate ("Alex (design)"); the alternative -- silently keeping two
 // voices with one name -- makes the Voices pane unreadable.
+// CreateVoice returns the voice with this name, making it if there is none.
+//
+// Naming a person who is not in a transcript yet: the picker's "Someone
+// else...", where a correction needs a voice to point at before there is any
+// speaker row to attach it to. Matching by name_key rather than by name means
+// saying the same name twice does not make two people.
+func (s *MeetingStore) CreateVoice(name string) (Voice, error) {
+	db, err := s.open()
+	if err != nil {
+		return Voice{}, err
+	}
+	if name == "" {
+		return Voice{}, errors.New("history: a voice needs a name")
+	}
+
+	var v Voice
+	err = db.sql.QueryRow("SELECT id, name FROM voices WHERE name_key = ?", nameKey(name)).Scan(&v.ID, &v.Name)
+	if err == nil {
+		return v, nil
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return Voice{}, fmt.Errorf("history: creating voice %q: %w", name, err)
+	}
+
+	now := time.Now().UnixNano()
+	res, err := db.sql.Exec(`
+		INSERT INTO voices (name, name_key, created_ns, updated_ns, embed, secs)
+		VALUES (?, ?, ?, ?, ?, 0)`, name, nameKey(name), now, now, []byte(nil))
+	if err != nil {
+		return Voice{}, fmt.Errorf("history: creating voice %q: %w", name, err)
+	}
+	id, err := res.LastInsertId()
+	if err != nil {
+		return Voice{}, fmt.Errorf("history: creating voice %q: %w", name, err)
+	}
+	return Voice{ID: id, Name: name}, nil
+}
+
 func (s *MeetingStore) NameSpeaker(speakerRow int64, name string) (Voice, error) {
 	db, err := s.open()
 	if err != nil {
@@ -365,7 +405,7 @@ func (s *MeetingStore) SimilarUnnamed(embed []float32, limit int) ([]SpeakerCand
 		if err != nil {
 			return nil, err
 		}
-		c.Score = Cosine(embed, vec)
+		c.Score = voiceprint.Similarity(embed, vec)
 		if c.Score < SuggestThreshold {
 			continue
 		}
@@ -526,7 +566,7 @@ func (s *MeetingStore) matchSpeakers(start time.Time) (sure, unsure []SpeakerSug
 		}
 		best, bestScore := Voice{}, float32(0)
 		for _, v := range voices {
-			if score := Cosine(sp.Embed, v.Embed); score > bestScore {
+			if score := voiceprint.Similarity(sp.Embed, v.Embed); score > bestScore {
 				best, bestScore = v, score
 			}
 		}

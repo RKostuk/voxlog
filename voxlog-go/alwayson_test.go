@@ -11,7 +11,7 @@ import (
 	"voxlog-go/internal/history"
 	"voxlog-go/internal/settings"
 	"voxlog-go/internal/vad"
-	"voxlog-go/internal/voiceid"
+	"voxlog-go/internal/voiceprint"
 )
 
 func TestExcludedMatchesByNameCaseInsensitively(t *testing.T) {
@@ -185,7 +185,7 @@ func unitVec(dim, axis int, bleed float32) []float32 {
 		v[i] = bleed
 	}
 	v[axis] = 1
-	return voiceid.Normalize(v)
+	return voiceprint.Normalize(v)
 }
 
 func newTestSession(t *testing.T) *session {
@@ -441,13 +441,13 @@ func TestOnePersonAtTwoDistancesIsStillOnePerson(t *testing.T) {
 	// themselves escalated to a conversation, and the note then waited for
 	// the five-minute conversation gap instead of the one-minute note gap.
 	// A cluster far enough from the first to stand on its own (below
-	// voiceid.MergeThreshold) can still be plainly the same voice.
+	// voiceprint.MergeThreshold) can still be plainly the same voice.
 	s := newTestSession(t)
 	me := unitVec(64, 0, 0)
 	// Cosine 0.5 to me: its own cluster, but nothing like a second person.
 	nearlyMe := make([]float32, 64)
 	nearlyMe[0], nearlyMe[1] = 0.5, 0.866
-	nearlyMe = voiceid.Normalize(nearlyMe)
+	nearlyMe = voiceprint.Normalize(nearlyMe)
 
 	s.noteVoice(me, 10)
 	for i := 0; i < 6; i++ {

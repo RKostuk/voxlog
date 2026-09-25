@@ -85,6 +85,22 @@ func (a *app) conversationTurns(spec asr.ModelSpec, language string, mic, call [
 	}
 	micSegments := diarize.Merge(d.Process(mic), maxSpeakerGap, minSpeakerSegment)
 	callSegments := diarize.Merge(d.Process(call), maxSpeakerGap, minSpeakerSegment)
+	turns := a.turnsFromSegments(spec, language, mic, call, micSegments, callSegments)
+	// Fingerprints for the far end only: who is holding the microphone was
+	// never in question, and a far-end voice bleeding through the speakers
+	// must not teach the user's own profile somebody else's voice.
+	//
+	// Only on this path. A meeting is diarized whole (see diarizeRecording),
+	// so its speakers are already one person each and are fingerprinted once,
+	// from continuous speech, after the decode.
+	a.embedTurns(turns, call, callSegments)
+	return turns
+}
+
+// turnsFromSegments is the part of a conversation that does not care where the
+// speaker segments came from: this block's own diarization, or one pass over
+// the whole recording made before any of it was decoded.
+func (a *app) turnsFromSegments(spec asr.ModelSpec, language string, mic, call []float32, micSegments, callSegments []diarize.Segment) []turn {
 	if len(micSegments) == 0 && len(callSegments) == 0 {
 		return nil
 	}
@@ -104,10 +120,6 @@ func (a *app) conversationTurns(spec asr.ModelSpec, language string, mic, call [
 
 	turns = a.resolveTurns(spec, language, turns)
 	sortTurns(turns)
-	// Fingerprints for the far end only: who is holding the microphone was
-	// never in question, and a far-end voice bleeding through the speakers
-	// must not teach the user's own profile somebody else's voice.
-	a.embedTurns(turns, call, callSegments)
 	return turns
 }
 
@@ -206,6 +218,19 @@ func (a *app) transcribeBlockTurns(spec asr.ModelSpec, language string, mic, sys
 	return []turn{{end: blockSeconds(mic), speaker: mixedSpeaker, channel: channelMic, text: text}}
 }
 
+// blockTurnsFromSegments is transcribeBlockTurns for a recording that has
+// already been diarized whole: same fallbacks, but the speakers of this block
+// were decided with the rest of the call in view rather than from the minute
+// in hand.
+func (a *app) blockTurnsFromSegments(spec asr.ModelSpec, language string, mic, system []float32, separate bool, micSegments, callSegments []diarize.Segment) []turn {
+	if separate {
+		if turns := a.turnsFromSegments(spec, language, mic, system, micSegments, callSegments); len(turns) > 0 {
+			return turns
+		}
+	}
+	return a.transcribeBlockTurns(spec, language, mic, system, separate)
+}
+
 func blockSeconds(samples []float32) float32 {
 	return float32(len(samples)) / float32(audio.SampleRate)
 }
@@ -223,6 +248,17 @@ func blockSeconds(samples []float32) float32 {
 // the moment the user starts recording something; it returns errStopped, and
 // nothing is written.
 func (a *app) transcribeFilesTurns(spec asr.ModelSpec, language, micPath, systemPath string, separate bool, yield func(), stop <-chan struct{}) ([]turn, error) {
+	// Who spoke when, for the whole call, before a word of it is decoded. The
+	// microphone is diarized too -- not to tell speakers apart there, there is
+	// only ever one, but to find out WHEN the user spoke, which is the only
+	// way their turns can be placed among the replies instead of stacked above
+	// them.
+	var micSegments, callSegments []diarize.Segment
+	if separate {
+		micSegments = a.diarizeRecording(micPath)
+		callSegments = a.diarizeRecording(systemPath)
+	}
+
 	var systemR *audio.WAVReader
 	if systemPath != "" {
 		r, err := audio.OpenWAV(systemPath)
@@ -261,7 +297,10 @@ func (a *app) transcribeFilesTurns(spec asr.ModelSpec, language, micPath, system
 			system = block
 		}
 
-		for _, t := range a.transcribeBlockTurns(spec, language, mic, system, separate && len(system) > 0) {
+		blockEnd := offset + blockSeconds(mic)
+		turns := a.blockTurnsFromSegments(spec, language, mic, system, separate && len(system) > 0,
+			blockSegments(micSegments, offset, blockEnd), blockSegments(callSegments, offset, blockEnd))
+		for _, t := range turns {
 			t.start += offset
 			t.end += offset
 			t.block = block
@@ -276,6 +315,25 @@ func (a *app) transcribeFilesTurns(spec asr.ModelSpec, language, micPath, system
 			return nil, err
 		}
 		log.Printf("meeting: reading %s: %v", micPath, err)
+	}
+
+	// Turns come back with meeting-wide speakers either way, so no caller has
+	// to know which path produced them.
+	if len(callSegments) > 0 {
+		// Already meeting-wide: the numbering was decided once, over the whole
+		// recording. All that is left is to describe each speaker, which is
+		// done from their longest continuous speech rather than from whatever
+		// happened to fall inside a decode block.
+		embeds := a.speakerEmbeds(systemPath, callSegments)
+		for i := range out {
+			if v, ok := embeds[out[i].speaker]; ok && out[i].channel == channelSystem {
+				out[i].embed = v
+			}
+		}
+	} else {
+		// No diarization models, or a recording decoded the older way: the
+		// speaker numbers are per block and have to be reconciled afterwards.
+		linkSpeakers(out)
 	}
 	return out, nil
 }

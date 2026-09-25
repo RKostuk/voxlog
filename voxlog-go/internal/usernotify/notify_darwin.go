@@ -11,6 +11,7 @@ package usernotify
 
 void voxlogNotifyInit(void);
 int voxlogNotifyPost(const char *message, const char *action);
+int voxlogNotifyWillDecide(void);
 */
 import "C"
 
@@ -72,7 +73,19 @@ var warnFallbackOnce sync.Once
 // unbundled dev build, per voxlogNotifyInit's early return -- gDecided is
 // never set in that case). Past this, queued messages are flushed via the
 // osascript fallback rather than held forever.
+//
+// It is armed only when no answer is coming at all. It used to be armed
+// unconditionally, which meant the permission prompt merely being on screen
+// -- the user had three seconds to answer it -- sent every banner in that
+// window out through osascript: wrong icon, and a click that opens Finder
+// instead of Voxlog. A late banner in Voxlog's own clothes beats a prompt one
+// that goes nowhere.
 const pendingTimeout = 3 * time.Second
+
+// willDecide reports whether an authorization answer is on its way. Behind a
+// variable so a test can say "no answer is coming" without a notification
+// centre to ask.
+var willDecide = func() bool { return C.voxlogNotifyWillDecide() == 1 }
 
 // Init asks for permission to post notifications. Call it once, early --
 // before anything that could call Post, ideally before whatever might
@@ -140,7 +153,10 @@ func Post(message, action string) {
 	mu.Lock()
 	if !decided {
 		pending = append(pending, pendingPost{message, action})
-		if pendingWait == nil {
+		// No timer while an answer is still coming: the prompt can sit on
+		// screen for as long as the user leaves it there, and the queue is
+		// drained by goNotifyAuthDecided the moment they answer.
+		if pendingWait == nil && !willDecide() {
 			pendingWait = time.AfterFunc(pendingTimeout, flushPendingTimedOut)
 		}
 		mu.Unlock()
@@ -167,7 +183,12 @@ func flushPendingTimedOut() {
 	}
 }
 
-func postNow(message, action string) {
+// postNow is a variable so the queue's own behaviour -- what is held, what is
+// delivered, and in which order -- can be tested without posting real banners
+// at whoever is running the tests.
+var postNow = postNowReal
+
+func postNowReal(message, action string) {
 	cMessage, cAction := C.CString(message), C.CString(action)
 	defer C.free(unsafe.Pointer(cMessage))
 	defer C.free(unsafe.Pointer(cAction))
@@ -185,6 +206,10 @@ func postNow(message, action string) {
 			"(Finder) instead of Voxlog. Run the app bundle (make bundle), " +
 			"then check System Settings > Notifications for Voxlog")
 	})
+	// Named per message, not once per run: "that one banner looked different
+	// and did nothing" is a question about a particular notification, and the
+	// one-off explanation above scrolls away.
+	log.Printf("notify: %q went out through osascript", message)
 	postViaOSAScript(message)
 }
 

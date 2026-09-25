@@ -149,7 +149,6 @@ func (a *app) backfillMeeting(m history.Meeting) time.Duration {
 			}
 			return
 		}
-		linkSpeakers(turns)
 
 		if err := a.meetings.ReplaceTurns(m.Start, meetingSpeakers(turns), historyTurns(turns), turnsSchemaVersion); err != nil {
 			log.Printf("backfill: saving turns: %v", err)

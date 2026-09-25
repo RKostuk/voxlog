@@ -8,7 +8,7 @@ import (
 
 	"voxlog-go/internal/asr"
 	"voxlog-go/internal/audio"
-	"voxlog-go/internal/voiceid"
+	"voxlog-go/internal/voiceprint"
 )
 
 // A session is one stretch of listening that turned into a file.
@@ -50,7 +50,7 @@ const (
 	escalateSeconds  = 8.0
 	// distinctVoice is how unlike the first speaker a cluster has to be
 	// before it counts as a second person. Stricter than
-	// voiceid.MergeThreshold (0.55), which answers a different question --
+	// voiceprint.MergeThreshold (0.55), which answers a different question --
 	// "are these two stretches the same person" inside a transcript, where
 	// splitting one person in two is the worse failure. Here the cost is
 	// reversed, so a voice only opens a conversation when it is plainly not
@@ -203,20 +203,20 @@ func (s *session) noteVoice(embed []float32, seconds float64) bool {
 	if len(embed) == 0 {
 		return false
 	}
-	embed = voiceid.Normalize(embed)
+	embed = voiceprint.Normalize(embed)
 	if embed == nil {
 		return false
 	}
 
 	best, bestScore := -1, float32(0)
 	for i, v := range s.voices {
-		if score := voiceid.Cosine(v.centroid, embed); score > bestScore {
+		if score := voiceprint.Cosine(v.centroid, embed); score > bestScore {
 			best, bestScore = i, score
 		}
 	}
-	if best >= 0 && bestScore >= voiceid.MergeThreshold {
+	if best >= 0 && bestScore >= voiceprint.MergeThreshold {
 		v := &s.voices[best]
-		v.centroid = voiceid.WeightedCentroid(
+		v.centroid = voiceprint.WeightedCentroid(
 			[][]float32{v.centroid, embed}, []float64{v.secs, seconds})
 		v.segments++
 		v.secs += seconds
@@ -244,7 +244,7 @@ func (s *session) escalateLocked() bool {
 		if v.segments < escalateSegments || v.secs < escalateSeconds {
 			continue
 		}
-		sim := voiceid.Cosine(first, v.centroid)
+		sim := voiceprint.Cosine(first, v.centroid)
 		if sim >= distinctVoice {
 			continue
 		}

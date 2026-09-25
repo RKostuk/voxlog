@@ -12,6 +12,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"voxlog-go/internal/audio"
 )
 
 // pageServer serves the main window over loopback. The token in the URL path
@@ -70,6 +72,10 @@ func (s *pageServer) handle(recordingsDir string, voiceClip func(int64) ([]byte,
 			fmt.Fprint(w, buildMainPage())
 		case strings.HasPrefix(rest, "/audio/"):
 			serveAudio(w, r, recordingsDir, strings.TrimPrefix(rest, "/audio/"))
+		case strings.HasPrefix(rest, "/mix/"):
+			// Both sides of a meeting as one stream. Named by the microphone
+			// file, because that is the one a meeting always has.
+			serveMix(w, r, recordingsDir, strings.TrimPrefix(rest, "/mix/"))
 		case strings.HasPrefix(rest, "/voice/"):
 			// A voice's stored sample, which is the one piece of audio that
 			// lives in the database rather than on disk -- so that naming
@@ -127,6 +133,40 @@ func serveAudio(w http.ResponseWriter, r *http.Request, recordingsDir, name stri
 	http.ServeContent(w, r, name, stat.ModTime(), f)
 }
 
+// serveMix answers with the microphone and the call summed into one WAV,
+// made as it is read (see audio.OpenMix). The name in the URL is the mic
+// file; its -system sibling is found from it rather than passed in, so a URL
+// can only ever name a meeting's own two halves.
+//
+// This is what "play the meeting" means: handed the mic file alone, a player
+// plays the user talking to nobody.
+func serveMix(w http.ResponseWriter, r *http.Request, recordingsDir, name string) {
+	if name == "" || name != filepath.Base(name) {
+		http.NotFound(w, r)
+		return
+	}
+	micPath := filepath.Join(recordingsDir, name)
+	stat, err := os.Stat(micPath)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	sysPath := ""
+	if base, ok := strings.CutSuffix(micPath, "-mic.wav"); ok {
+		sysPath = base + "-system.wav"
+	}
+
+	mix, err := audio.OpenMix(micPath, sysPath)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	defer mix.Close()
+
+	w.Header().Set("Content-Type", "audio/wav")
+	http.ServeContent(w, r, name, stat.ModTime(), mix)
+}
+
 // serveVoiceClip writes one voice's stored sample. Small enough (a couple of
 // seconds of mono 16 kHz) that it is written whole rather than served with
 // ranges, unlike a meeting recording.
@@ -158,6 +198,12 @@ func (s *pageServer) VoiceURL() string {
 // AudioURL is the prefix a recording's file name is appended to.
 func (s *pageServer) AudioURL() string {
 	return fmt.Sprintf("http://%s/%s/audio/", s.ln.Addr().String(), s.token)
+}
+
+// MixURL is the prefix a meeting's microphone file name is appended to, for
+// the two tracks played as one.
+func (s *pageServer) MixURL() string {
+	return fmt.Sprintf("http://%s/%s/mix/", s.ln.Addr().String(), s.token)
 }
 
 // Close shuts the listener down. Only the test calls this today, but a

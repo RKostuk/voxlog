@@ -106,7 +106,18 @@
   .turn-row:hover { background: var(--field); }
   .turn-row.playing { background: color-mix(in srgb, var(--accent) 14%, transparent); }
   .turn-at { color: var(--secondary); font-variant-numeric: tabular-nums; font-size: 11px; text-align: right; padding-top: 2px; }
-  .turn-who { font-weight: 600; margin-right: 6px; }
+  .turn-who { font-weight: 600; margin-right: 6px; background: none; border: 0; padding: 0;
+    font: inherit; font-weight: 600; cursor: pointer; border-bottom: 1px dashed transparent; }
+  .turn-who:hover { border-bottom-color: currentColor; }
+  /* A reply somebody decided by hand, as opposed to one the pipeline guessed. */
+  .turn-fixed { display: inline-block; width: 5px; height: 5px; border-radius: 50%;
+    background: currentColor; vertical-align: 3px; margin-left: 4px; }
+  .who-form { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 6px; align-items: center;
+    margin: 6px 0 2px; padding: 8px; border-radius: 8px; background: var(--sunk, rgba(127,127,127,.08)); }
+  .who-picks { display: flex; flex-wrap: wrap; gap: 6px; width: 100%; }
+  .who-pick { display: inline-flex; align-items: center; gap: 6px; }
+  .who-unnamed { opacity: .6; font-style: normal; font-size: .85em; }
+  .who-form input { flex: 1; min-width: 160px; }
   /* Quiet rather than absent: at opacity 0 the control did not exist for a
      keyboard or a trackpad that never hovers. */
   .turn-play {
@@ -193,10 +204,12 @@
   .play[disabled]:hover { background: var(--field); color: var(--label); }
   @media (prefers-reduced-motion: reduce) { .play[aria-pressed="true"]::after { animation: none; } }
 
-  /* Row actions are quiet until the row is pointed at or focused: four
-     buttons on every row at all times is what made this pane look like a
-     wall of controls. */
-  .voice-acts .act, .spk-acts .act { opacity: .45; transition: opacity .12s; }
+  /* Row actions are quieter until the row is pointed at or focused: four
+     buttons on every row at full strength is what made this pane look like a
+     wall of controls. Quieter, not ghosted -- at .45 they read as disabled,
+     which is indistinguishable from the bug where they genuinely did
+     nothing, and that is how they were reported. */
+  .voice-acts .act, .spk-acts .act { opacity: .75; transition: opacity .12s; }
   .voice-item:hover .act, .voice-item:focus-within .act,
   .spk-row:hover .act, .spk-row:focus-within .act,
   .voice-item.open .act, .act:focus-visible { opacity: 1; }
@@ -506,7 +519,15 @@
      thing a rolling window can never say. */
   .provenance { margin-top: 9px; padding: 0 10px; font-size: 11px; color: var(--tertiary); font-variant-numeric: tabular-nums; }
 
-  .tiles { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; }
+  /* Tiles left, chart right, both starting at the top: the chart is short
+     and must not stretch itself to the height of two rows of tiles. */
+  .overview-row { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; align-items: start; }
+  .tiles { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; }
+  /* Narrow enough and the pair becomes a stack: two tiles beside a chart in
+     a 500px window is four columns of nothing. */
+  @media (max-width: 720px) {
+    .overview-row { grid-template-columns: 1fr; }
+  }
   .tile {
     background: var(--card);
     -webkit-backdrop-filter: blur(26px) saturate(180%);
@@ -555,6 +576,7 @@
   /* Eight-week column chart, drawn straight onto the pane. This week is the
      emphasised endpoint. */
   .chart { padding: 4px 2px 0; }
+  .chart .chart-title { margin: 0 0 8px 2px; }
   .bars { display: flex; align-items: flex-end; gap: 6px; height: 60px; }
   .bars .col { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: flex-end; gap: 4px; min-width: 0; }
   /* Capped, not stretched: eight columns across a wide window would each be
@@ -756,15 +778,20 @@
             <button type="button" data-span="all" aria-pressed="false">All time</button>
           </div>
         </div>
-        <div class="tiles" id="overview-tiles"></div>
-        <div class="provenance" id="overview-provenance"></div>
-        <div class="group-title day">Last 8 weeks</div>
-        <!-- No card around the chart: eight short columns inside a wide
-             filled panel read as an empty band rather than as a chart. -->
-        <div class="chart">
-          <div class="bars" id="overview-bars"></div>
-          <div class="legend" id="overview-legend"></div>
+        <!-- Four tiles across a wide window were four wide, shallow bands;
+             two by two in half the width reads as figures, and leaves the
+             other half for the chart they are the summary of. -->
+        <div class="overview-row">
+          <div class="tiles" id="overview-tiles"></div>
+          <!-- No card around the chart: short columns inside a wide filled
+               panel read as an empty band rather than as a chart. -->
+          <div class="chart">
+            <div class="group-title day chart-title" id="overview-chart-title">Last 8 weeks</div>
+            <div class="bars" id="overview-bars"></div>
+            <div class="legend" id="overview-legend"></div>
+          </div>
         </div>
+        <div class="provenance" id="overview-provenance"></div>
         <div class="group-title day">Recent</div>
         <div class="card" id="overview-recent"></div>
       </div>
@@ -793,6 +820,23 @@
     </main>
   </div>
   <script>
+    // Anything this page throws goes to the app's log. There is no console
+    // and no inspector in this webview, so an exception inside a click
+    // handler is invisible: the click does nothing, the rest of the page
+    // carries on, and the button looks unwired. Reported through a binding
+    // rather than swallowed, and the page keeps its default behaviour too.
+    window.addEventListener('error', function (ev) {
+      if (!window.logJS) return;
+      var where = (ev.filename || 'page') + ':' + (ev.lineno || 0) + ':' + (ev.colno || 0);
+      var stack = (ev.error && ev.error.stack) || '';
+      window.logJS(where + ' ' + (ev.message || 'error') + (stack ? ' | ' + stack : ''));
+    });
+    window.addEventListener('unhandledrejection', function (ev) {
+      if (!window.logJS) return;
+      var why = ev.reason;
+      window.logJS('unhandled rejection: ' + ((why && (why.stack || why.message)) || String(why)));
+    });
+
     // Dictations and meetings are separate stores now (see main_window.go),
     // each with its own flat-or-grouped shape coming over from Go -- so each
     // gets its own render function rather than one filtered by a shared flag.
@@ -1166,6 +1210,8 @@
     // Module-level, like taskFilter, so a refresh from Go does not close what
     // the user is in the middle of.
     var detailSuggestions = [], editingSpeaker = 0, speakersShowAll = false;
+    // Which reply's "who said this?" picker is open, by seq. -1 is none.
+    var editingTurn = -1;
 
     function openMeeting(id) {
       var meeting = meetingByID(id);
@@ -1183,6 +1229,7 @@
         detailSpeakers = (detail && detail.speakers) || [];
         detailSuggestions = (detail && detail.suggestions) || [];
         editingSpeaker = 0;
+        editingTurn = -1;
         speakersShowAll = false;
         renderMeetingDetail();
         scrollToPendingTurn();
@@ -1353,14 +1400,49 @@
       var rows = detailTurns.map(function (t, i) {
         var name = speakerLabel(t.speaker, t.name);
         var hidden = turnQuery && t.text.toLowerCase().indexOf(turnQuery.toLowerCase()) === -1;
-        return '<div class="turn-row" data-turn="' + i + '"' + (hidden ? ' hidden' : '') + '>' +
+        // The name is a button: diarization is wrong often enough that the
+        // person listening has to be able to say so, and the reply they are
+        // reading is where they know it.
+        return '<div class="turn-row' + (t.corrected ? ' turn-corrected' : '') + '" data-turn="' + i + '"' + (hidden ? ' hidden' : '') + '>' +
           '<span class="turn-at">' + clockTime(t.start) + '</span>' +
-          '<span><span class="turn-who" style="color:' + speakerColor(t.speaker) + '">' + escapeHtml(name) + '</span>' +
+          '<span><button type="button" class="turn-who" data-who-turn="' + t.seq + '" style="color:' + speakerColor(t.speaker) + '"' +
+            ' title="' + (t.corrected ? 'You said this is ' + escapeHtml(name) + ' -- click to change' : 'Click if this was someone else') + '">' +
+            escapeHtml(name) + (t.corrected ? '<i class="turn-fixed" aria-hidden="true"></i>' : '') + '</button>' +
             highlightTurn(t.text) + '</span>' +
           '<button type="button" class="turn-play" data-play-turn="' + i + '" aria-label="Play this reply">&#9654;</button>' +
+          (editingTurn === t.seq ? whoPickerHTML(t) : '') +
         '</div>';
       }).join('');
       return '<div class="turns">' + rows + '</div>';
+    }
+
+    // Who said this. The other speakers of this meeting first, because the
+    // common repair is "this is the same person as that one"; then a field for
+    // anybody else.
+    //
+    // Moving a reply to an unnamed speaker asks for their name. It has to: a
+    // correction outlives the decode that produced it, and the only thing in
+    // this meeting that also outlives it is a voice. A speaker number does
+    // not survive being decoded again.
+    function whoPickerHTML(t) {
+      var others = detailSpeakers.filter(function (sp) {
+        return sp.speaker !== t.speaker && sp.speaker !== -1 && sp.speaker !== -2;
+      });
+      var buttons = others.map(function (sp) {
+        var label = speakerLabel(sp.speaker, sp.name);
+        return '<button type="button" class="act who-pick" data-who-pick="' + t.seq + ':' + sp.voice_id + '"' +
+          ' data-who-name="' + escapeHtml(label) + '">' +
+          '<span class="swatch" style="background:' + speakerColor(sp.speaker) + '"></span>' +
+          escapeHtml(label) + (sp.voice_id ? '' : ' <i class="who-unnamed">needs a name</i>') + '</button>';
+      }).join('');
+
+      return '<form class="who-form" data-who-form="' + t.seq + '">' +
+        '<div class="who-picks">' + (buttons || '<span class="hint">Nobody else spoke in this meeting.</span>') + '</div>' +
+        '<input list="known-voices" autocomplete="off" placeholder="Or somebody else, by name" aria-label="Who said this">' +
+        '<button type="button" class="act primary" data-who-save="' + t.seq + '">Save</button>' +
+        (t.corrected ? '<button type="button" class="act" data-who-clear="' + t.seq + '">Undo</button>' : '') +
+        '<button type="button" class="act" data-who-cancel="1">Cancel</button>' +
+      '</form>';
     }
 
     function timelineHTML(meeting) {
@@ -1467,6 +1549,52 @@
           if (input) { input.focus(); input.select(); }
         });
       });
+      // Correcting who spoke, from the reply itself.
+      root.querySelectorAll('[data-who-turn]').forEach(function (btn) {
+        btn.addEventListener('click', function () {
+          var seq = parseInt(btn.dataset.whoTurn, 10);
+          editingTurn = editingTurn === seq ? -1 : seq;
+          renderMeetingDetail();
+        });
+      });
+      root.querySelectorAll('[data-who-cancel]').forEach(function (btn) {
+        btn.addEventListener('click', function () { editingTurn = -1; renderMeetingDetail(); });
+      });
+      root.querySelectorAll('[data-who-pick]').forEach(function (btn) {
+        btn.addEventListener('click', function () {
+          var parts = btn.dataset.whoPick.split(':');
+          var seq = parseInt(parts[0], 10), voiceID = parseInt(parts[1], 10);
+          if (voiceID) { correctTurn(seq, voiceID); return; }
+          // An unnamed speaker has no durable identity to point at. Ask here
+          // rather than refusing: the field is already open.
+          var input = btn.closest('.who-form').querySelector('input');
+          input.placeholder = 'Name ' + btn.dataset.whoName + ' to move replies to them';
+          input.focus();
+        });
+      });
+      root.querySelectorAll('[data-who-save]').forEach(function (btn) {
+        btn.addEventListener('click', function () { saveWho(parseInt(btn.dataset.whoSave, 10)); });
+      });
+      root.querySelectorAll('[data-who-clear]').forEach(function (btn) {
+        btn.addEventListener('click', function () {
+          var seq = parseInt(btn.dataset.whoClear, 10);
+          window.clearCorrection(openMeetingID, seq).then(function () {
+            editingTurn = -1;
+            toast('Back to what the transcript decided');
+            reopenMeetingDetail();
+          }).catch(function (err) { toast(String(err)); });
+        });
+      });
+      root.querySelectorAll('[data-who-form]').forEach(function (form) {
+        form.addEventListener('submit', function (ev) {
+          ev.preventDefault();
+          saveWho(parseInt(form.dataset.whoForm, 10));
+        });
+        form.querySelector('input').addEventListener('keydown', function (ev) {
+          if (ev.key === 'Escape') { editingTurn = -1; renderMeetingDetail(); }
+        });
+      });
+
       root.querySelectorAll('[data-cancel-speaker]').forEach(function (btn) {
         btn.addEventListener('click', function () { editingSpeaker = 0; renderMeetingDetail(); });
       });
@@ -1530,6 +1658,31 @@
       }).catch(function (err) { toast(String(err)); });
     }
 
+    // correctTurn hands one reply to a voice that already exists.
+    function correctTurn(seq, voiceID) {
+      window.correctTurn(openMeetingID, seq, voiceID).then(function () {
+        editingTurn = -1;
+        toast('Noted — and their voice profile learns from it');
+        reopenMeetingDetail();
+      }).catch(function (err) { toast(String(err)); });
+    }
+
+    // saveWho is the typed half of the picker: a name, whether or not anybody
+    // by that name is known yet. The binding matches an existing voice by name
+    // before making one, so saying the same name twice does not invent a
+    // second person.
+    function saveWho(seq) {
+      var form = document.querySelector('.who-form[data-who-form="' + seq + '"]');
+      if (!form) return;
+      var name = form.querySelector('input').value.trim();
+      if (!name) { form.querySelector('input').focus(); return; }
+      window.correctTurnAs(openMeetingID, seq, name).then(function () {
+        editingTurn = -1;
+        toast('Noted — and their voice profile learns from it');
+        reopenMeetingDetail();
+      }).catch(function (err) { toast(String(err)); });
+    }
+
     // reopenMeetingDetail re-reads the meeting after a name changed: the
     // names live on the speakers and the turns are joined to them, so every
     // reply in the transcript below has to be redrawn too.
@@ -1558,11 +1711,31 @@
       return channel === 1 ? detailMeeting.system_audio : detailMeeting.audio;
     }
 
-    function ensureTurnPlayer(channel) {
+    // One reply plays out of the track it was spoken on -- clean, one voice.
+    // The meeting as a whole plays out of the mix endpoint, which sums the
+    // microphone and the call as it reads them: handed the mic file alone,
+    // "play the meeting" played the user talking to nobody.
+    function turnSourceURL(channel) {
       var name = turnAudioName(channel);
-      if (!name) return null;
-      var src = ((window.voxlog && window.voxlog.audioBase) || '') + name;
+      if (!name) return '';
+      return ((window.voxlog && window.voxlog.audioBase) || '') + name;
+    }
+
+    function mixSourceURL() {
+      if (!detailMeeting.audio) return '';
+      // No call track (a meeting recorded mic-only, or one whose far end was
+      // swept): there is nothing to mix, so play what there is.
+      if (!detailMeeting.system_audio) return turnSourceURL(0);
+      return ((window.voxlog && window.voxlog.mixBase) || '') + detailMeeting.audio;
+    }
+
+    function ensureTurnPlayer(src) {
+      if (!src) return null;
       if (turnPlayer && turnPlayer.dataset.src === src) return turnPlayer;
+      // Both sources run on the meeting's own clock, so swapping between a
+      // single track and the mix keeps the playhead where it was rather than
+      // jumping back to the top of the call.
+      var at = turnPlayer ? turnPlayer.currentTime : 0;
       stopTurnPlayer();
       turnPlayer = document.createElement('audio');
       turnPlayer.preload = 'none';
@@ -1570,6 +1743,7 @@
       turnPlayer.dataset.src = src;
       document.getElementById('meeting-detail').appendChild(turnPlayer);
       turnPlayer.addEventListener('timeupdate', onTurnTime);
+      if (at) turnPlayer.currentTime = at;
       return turnPlayer;
     }
 
@@ -1588,7 +1762,7 @@
     function playTurn(i) {
       var t = detailTurns[i];
       if (!t) return;
-      var audio = ensureTurnPlayer(t.channel);
+      var audio = ensureTurnPlayer(turnSourceURL(t.channel));
       if (!audio) return;
       // Clicking the reply that is already playing stops it, which is what a
       // play button that has turned into "the thing making noise" should do.
@@ -1600,19 +1774,23 @@
     }
 
     function toggleTurnPlayer() {
-      var audio = turnPlayer || ensureTurnPlayer(0);
-      if (!audio) return;
-      if (audio.paused) {
-        turnStopAt = null; // playing the meeting, not one reply
-        audio.play().catch(function () {});
-      } else {
-        audio.pause();
+      // Pause whatever is making noise, whichever track it is on: the
+      // transport is the one stop button for this meeting, and swapping the
+      // source out from under a playing reply to pause it would be a play.
+      if (turnPlayer && !turnPlayer.paused) {
+        turnPlayer.pause();
+        updateTransport();
+        return;
       }
+      var audio = ensureTurnPlayer(mixSourceURL());
+      if (!audio) return;
+      turnStopAt = null; // playing the meeting, not one reply
+      audio.play().catch(function () {});
       updateTransport();
     }
 
     function seekTurnPlayer(seconds) {
-      var audio = turnPlayer || ensureTurnPlayer(0);
+      var audio = ensureTurnPlayer(mixSourceURL());
       if (!audio) return;
       audio.currentTime = seconds;
       turnStopAt = null;
@@ -2635,7 +2813,11 @@
         });
         document.getElementById('overview-span-title').textContent =
           overviewSpan === 'all' ? 'All time' : 'Today';
+        // The chart follows the toggle too: weeks are the grain for "lately",
+        // months for "at all". Both arrive in the same payload, so this is
+        // still a re-render rather than another round trip.
         renderOverviewTiles((window.voxlog && window.voxlog.overview) || {});
+        renderOverviewChart((window.voxlog && window.voxlog.overview) || {});
       });
     }
 
@@ -2695,26 +2877,41 @@
       var bars = document.getElementById('overview-bars');
       var legend = document.getElementById('overview-legend');
       if (!bars || !legend) return;
-      var weeks = ov.weeks || [];
+      var byMonth = overviewSpan === 'all';
+      var cols = (byMonth ? ov.months : ov.weeks) || [];
       var max = 1;
-      weeks.forEach(function (w) { max = Math.max(max, w.dictations + w.meetings); });
+      cols.forEach(function (c) { max = Math.max(max, c.dictations + c.meetings); });
 
-      bars.innerHTML = weeks.map(function (w, i) {
-        var dict = Math.round(w.dictations / max * 42);
-        var meet = Math.round(w.meetings / max * 42);
-        var now = i === weeks.length - 1 ? ' today' : '';
-        return '<div class="col' + now + '" title="Week of ' + escapeHtml(w.week) + ': ' +
-            w.dictations + ' dictations, ' + w.meetings + ' meetings"><div class="stack">' +
+      var title = document.getElementById('overview-chart-title');
+      if (title) {
+        title.textContent = byMonth
+          ? (cols.length > 1 ? 'By month' : 'This month')
+          : 'Last ' + (ov.weeks || []).length + ' weeks';
+      }
+
+      bars.innerHTML = cols.map(function (c, i) {
+        var dict = Math.round(c.dictations / max * 42);
+        var meet = Math.round(c.meetings / max * 42);
+        var now = i === cols.length - 1 ? ' today' : '';
+        var when = byMonth ? c.month : 'Week of ' + c.week;
+        return '<div class="col' + now + '" title="' + escapeHtml(when) + ': ' +
+            c.dictations + ' dictations, ' + c.meetings + ' meetings"><div class="stack">' +
           (meet ? '<div class="meet" style="height:' + Math.max(meet, 4) + 'px"></div>' : '') +
           (dict ? '<div class="dict" style="height:' + Math.max(dict, 3) + 'px"></div>' : '') +
-          '</div><div class="lbl">' + escapeHtml(w.label || '') + '</div></div>';
+          '</div><div class="lbl">' + escapeHtml(c.label || '') + '</div></div>';
       }).join('');
 
+      // The line under the chart counts what the chart draws, so it changes
+      // with it: the eight-week window, or everything there has ever been.
+      var span = (byMonth ? ov.all_time : null) || {};
+      var recordings = byMonth ? span.recordings : ov.window_recordings;
+      var words = byMonth ? span.words : ov.window_words;
+      var seconds = byMonth ? span.speaking_seconds : ov.window_seconds;
       legend.innerHTML =
         '<span><i class="swatch" style="background:var(--accent)"></i> Dictation</span>' +
         '<span><i class="swatch" style="background:var(--purple)"></i> Meetings</span>' +
-        '<span style="margin-left:auto">' + grouped(ov.window_recordings) + ' recordings \u00b7 ' +
-          grouped(ov.window_words) + ' words \u00b7 ' + duration(ov.window_seconds) + ' of audio</span>';
+        '<span style="margin-left:auto">' + grouped(recordings) + ' recordings \u00b7 ' +
+          grouped(words) + ' words \u00b7 ' + duration(seconds) + ' of audio</span>';
     }
 
     // Recent reuses the same row markup History and Meetings draw from --
@@ -2921,8 +3118,19 @@
       if (!el) return;
       if (!status || !status.running) {
         el.innerHTML = '';
+        liveShape = '';
         return;
       }
+      // Once a second, and the banner carries buttons: rebuilding the whole
+      // row on every tick threw away the button under the user's finger and
+      // the toggle they had just pressed. Only the clock changes most ticks,
+      // so only the clock is rewritten unless the state itself moved.
+      var shape = String(!!status.muted);
+      if (shape === liveShape) {
+        var clock = el.querySelector('.elapsed');
+        if (clock) { clock.textContent = clockTime(status.seconds); return; }
+      }
+      liveShape = shape;
       el.innerHTML =
         '<div class="live"><span class="pulse"></span>' +
           // Say the thing the banner is for: the others on the call have to
@@ -2931,14 +3139,35 @@
           '<div><div class="what">Meeting recording</div>' +
             '<div class="sub">Let the others on the call know &middot; microphone + system audio &middot; dictation still works</div></div>' +
           '<div class="elapsed">' + clockTime(status.seconds) + '</div>' +
+          // The label is the action, not the state -- the same wording the
+          // menu bar item uses, so the two controls for one flag cannot read
+          // as two different things.
+          '<button type="button" class="act" id="overview-mute">' +
+            (status.muted ? 'Unmute mic' : 'Mute mic') + '</button>' +
           '<button type="button" class="act" id="overview-stop">Stop</button>' +
         '</div>';
       var stop = document.getElementById('overview-stop');
       stop.addEventListener('click', function () {
         stop.disabled = true;
-        window.stopMeeting().catch(function (e) { stop.disabled = false; alert(e); });
+        window.stopMeeting().catch(function (e) { stop.disabled = false; toast(String(e)); });
+      });
+      var mute = document.getElementById('overview-mute');
+      mute.addEventListener('click', function () {
+        mute.disabled = true;
+        window.toggleMeetingMute().then(function (muted) {
+          // Painted from the answer, not from what the click assumed: the
+          // menu bar can have muted it already.
+          liveShape = String(!!muted);
+          mute.textContent = muted ? 'Unmute mic' : 'Mute mic';
+          mute.disabled = false;
+        }).catch(function (e) { mute.disabled = false; toast(String(e)); });
       });
     }
+
+    // What the banner last painted, so a poll tick that brings no change
+    // does not redraw it. Declared after use on purpose -- var hoists, and
+    // this belongs beside the function it serves.
+    var liveShape = '';
 
     // The banner's poll is the only repeating timer in this window, and it
     // must run only while there is an Overview pane to show it in --
@@ -2978,6 +3207,9 @@
       });
       document.getElementById('shell-content').scrollTop = 0;
       updateMeetingPoll();
+      // Settings polls TCC while it is on screen and not otherwise -- the
+      // same discipline the meeting banner's poll follows above.
+      if (window.syncSettingsPolling) window.syncSettingsPolling();
       // A highlight left over from the pane just left would sit on a row
       // that is no longer the thing Enter acts on.
       kbdClearSelection();

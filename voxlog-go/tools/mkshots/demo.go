@@ -138,25 +138,60 @@ func demoMeetings() []map[string]any {
 	}
 }
 
+// The Overview payload, in the shape buildOverview writes today: two spans
+// for the tiles, and two sets of columns for the chart -- weeks behind
+// Today, months behind All time.
 func demoOverview() map[string]any {
-	counts := []int{2, 5, 3, 6, 4, 0, 1, 7, 5, 8, 4, 6, 9, 3}
-	meetings := []int{0, 1, 0, 1, 0, 0, 0, 2, 1, 1, 0, 1, 2, 1}
-	days := make([]map[string]any, 0, 14)
-	for i := 13; i >= 0; i-- {
-		d := day(i)
-		days = append(days, map[string]any{
-			"day":        d.Format("2006-01-02"),
-			"label":      d.Format("Mon")[:1],
-			"dictations": counts[13-i],
-			"meetings":   meetings[13-i],
+	weekly := []struct{ dict, meet int }{{9, 1}, {14, 2}, {11, 1}, {18, 3}, {7, 0}, {16, 2}, {21, 3}, {12, 2}}
+	weeks := make([]map[string]any, 0, len(weekly))
+	monday := startOfDemoWeek(time.Now())
+	for i, w := range weekly {
+		at := monday.AddDate(0, 0, -7*(len(weekly)-1-i))
+		label := at.Format("2")
+		if i == 0 || at.Day() <= 7 {
+			label = at.Format("2 Jan")
+		}
+		weeks = append(weeks, map[string]any{
+			"week": at.Format("2006-01-02"), "label": label,
+			"dictations": w.dict, "meetings": w.meet,
 		})
 	}
-	return map[string]any{
-		"recordings": 3, "words": 186, "speaking_seconds": 214.6,
-		"median_decode": 1.4, "typing_minutes": 4,
-		"days":             days,
-		"total_recordings": 63, "total_words": 4820, "total_seconds": 9142.5,
+
+	monthly := []struct{ dict, meet int }{{34, 4}, {51, 7}, {46, 5}, {62, 9}, {58, 8}, {49, 6}}
+	months := make([]map[string]any, 0, len(monthly))
+	first := time.Date(time.Now().Year(), time.Now().Month(), 1, 0, 0, 0, 0, time.Local)
+	for i, m := range monthly {
+		at := first.AddDate(0, -(len(monthly) - 1 - i), 0)
+		label := at.Format("Jan")
+		if i == 0 {
+			label = at.Format("Jan 06")
+		}
+		months = append(months, map[string]any{
+			"month": at.Format("2006-01"), "label": label,
+			"dictations": m.dict, "meetings": m.meet,
+		})
 	}
+
+	return map[string]any{
+		"today": map[string]any{
+			"recordings": 7, "words": 612, "speaking_seconds": 418.2,
+			"median_decode": 1.4, "typing_minutes": 15,
+		},
+		"all_time": map[string]any{
+			"recordings": 364, "words": 48210, "speaking_seconds": 92140.0,
+			"median_decode": 1.6, "typing_minutes": 1205,
+		},
+		"weeks": weeks, "months": months,
+		"window_recordings": 108, "window_words": 15840, "window_seconds": 28460.0,
+		"first_day":   first.AddDate(0, -5, 0).Format("2006-01-02"),
+		"active_days": 128, "span_days": 164,
+	}
+}
+
+// The Monday of t's week, local, same rule as stats.go.
+func startOfDemoWeek(t time.Time) time.Time {
+	d := time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, t.Location())
+	return d.AddDate(0, 0, -((int(d.Weekday()) + 6) % 7))
 }
 
 func demoTasks() []map[string]any {

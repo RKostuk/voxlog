@@ -6,19 +6,25 @@ import (
 	"sync"
 
 	"voxlog-go/internal/asr"
-	"voxlog-go/internal/audio"
 	"voxlog-go/internal/diarize"
 	"voxlog-go/internal/history"
 	"voxlog-go/internal/voiceid"
+	"voxlog-go/internal/voiceprint"
 )
 
-// Telling speakers apart, from one block of a meeting to the next.
+// Telling the speakers of a meeting apart.
 //
-// The diarizer is reliable inside the sixty seconds it was handed and blind
-// beyond them: it renumbers its speakers from scratch on every block, so a
-// call an hour long used to come back with the same three people renumbered
-// sixty times over. Everything here exists to stitch that back into a handful
-// of people who are the same person from the first minute to the last.
+// A recording is diarized once, whole, before any of it is decoded -- see
+// diarizeRecording. That ordering is the substance of this file: the diarizer
+// is reliable over what it is shown and blind beyond it, so asking it a minute
+// at a time meant asking it to tell three people apart while it could hear
+// one, and then renumbering them for the next minute. Measured on a 5-minute
+// call, one pass over the whole recording found three speakers where sixty
+// seconds at a time found nine, which were then merged back down to one.
+//
+// What remains here is the older per-block path, still used when the
+// diarization models have not been downloaded yet, and the pieces that turn
+// linked turns into what the meeting screen and the database store.
 
 // turnsSchemaVersion is the version of everything above: how turns are cut,
 // how their times are computed, how speakers are linked. A meeting's stored
@@ -26,7 +32,7 @@ import (
 // what asks the background backfill to run every old meeting through the
 // improved pipeline -- and leaving it alone is what stops it re-decoding
 // hours of audio for nothing.
-const turnsSchemaVersion = 1
+const turnsSchemaVersion = 3
 
 // mixedSpeaker marks a turn nobody can be credited with: the two sides were
 // mixed together before the recognizer saw them, which is what happens when
@@ -38,11 +44,6 @@ const mixedSpeaker = -2
 // which is how the background backfill gets out of the way the moment the
 // user starts recording. Nothing is written when it comes back.
 var errStopped = errors.New("transcription stopped")
-
-// embedMaxSamples caps how much of one speaker's audio is fingerprinted per
-// block. CAM++ gains nothing from more than a few seconds of the same voice,
-// and the cap is what keeps this from scaling with the length of the call.
-const embedMaxSamples = 8 * audio.SampleRate
 
 // embedderCache holds the loaded embedding model. It mirrors diarizerCache
 // deliberately, including the contract that matters most: nil when the models
@@ -96,28 +97,23 @@ func (a *app) embedTurns(turns []turn, call []float32, segments []diarize.Segmen
 		return
 	}
 
-	// Gather each far-end speaker's audio, in order, up to the cap.
-	samplesBySpeaker := map[int][]float32{}
+	// One fingerprint per person, from their longest continuous stretches.
+	//
+	// Continuous is the point. This used to concatenate a speaker's scattered
+	// replies into one buffer and hand that to the model as if it were one
+	// stretch of speech, which put a splice every few hundred milliseconds --
+	// a transient no speaker model was trained on, heard as part of the voice.
+	bySpeaker := map[int][]diarize.Segment{}
 	for _, t := range turns {
 		if t.channel != channelSystem || t.speaker == youSpeaker || t.speaker == mixedSpeaker {
 			continue
 		}
-		if len(samplesBySpeaker[t.speaker]) >= embedMaxSamples {
-			continue
-		}
-		slice := diarize.Slice(call, diarize.Segment{Start: t.start, End: t.end}, audio.SampleRate)
-		if len(slice) == 0 {
-			continue
-		}
-		samplesBySpeaker[t.speaker] = append(samplesBySpeaker[t.speaker], slice...)
+		bySpeaker[t.speaker] = append(bySpeaker[t.speaker], diarize.Segment{Start: t.start, End: t.end, Speaker: t.speaker})
 	}
 
-	embedBySpeaker := make(map[int][]float32, len(samplesBySpeaker))
-	for speaker, samples := range samplesBySpeaker {
-		if len(samples) > embedMaxSamples {
-			samples = samples[:embedMaxSamples]
-		}
-		if v := e.Compute(samples); len(v) > 0 {
+	embedBySpeaker := make(map[int][]float32, len(bySpeaker))
+	for speaker, segs := range bySpeaker {
+		if v := diarize.Fingerprint(e, call, segs); len(v) > 0 {
 			embedBySpeaker[speaker] = v
 		}
 	}
@@ -138,7 +134,7 @@ func (a *app) embedTurns(turns []turn, call []float32, segments []diarize.Segmen
 func linkSpeakers(turns []turn) {
 	type key struct{ block, speaker int }
 	var (
-		blocks []voiceid.BlockSpeaker
+		blocks []voiceprint.BlockSpeaker
 		index  = map[key]int{}
 	)
 	for _, t := range turns {
@@ -148,7 +144,7 @@ func linkSpeakers(turns []turn) {
 		k := key{t.block, t.speaker}
 		at, ok := index[k]
 		if !ok {
-			blocks = append(blocks, voiceid.BlockSpeaker{Block: t.block, Local: t.speaker})
+			blocks = append(blocks, voiceprint.BlockSpeaker{Block: t.block, Local: t.speaker})
 			at = len(blocks) - 1
 			index[k] = at
 		}
@@ -161,7 +157,7 @@ func linkSpeakers(turns []turn) {
 		return
 	}
 
-	ids := voiceid.LinkBlocks(blocks, voiceid.MergeThreshold)
+	ids := voiceprint.LinkBlocks(blocks, voiceprint.MergeThreshold)
 	for i := range turns {
 		if turns[i].speaker == youSpeaker || turns[i].speaker == mixedSpeaker {
 			continue
@@ -203,7 +199,7 @@ func meetingSpeakers(turns []turn) []history.MeetingSpeaker {
 		// One fingerprint per person for the whole meeting: this is what a
 		// later meeting compares against to say "that is the same person",
 		// and what a name is eventually attached to.
-		sp.Embed = voiceid.WeightedCentroid(embeds[id], weights[id])
+		sp.Embed = voiceprint.WeightedCentroid(embeds[id], weights[id])
 		out = append(out, *sp)
 	}
 	return out
@@ -224,6 +220,79 @@ func historyTurns(turns []turn) []history.Turn {
 			LocalID:   t.speaker,
 			Text:      t.text,
 		})
+	}
+	return out
+}
+
+// diarizeRecording answers "who spoke when" for one whole recording, in one
+// pass, before a word of it is transcribed.
+//
+// This is the order the question has to be asked in. Diarizing inside each
+// sixty-second decode block, which is what this did until it was measured,
+// asks the model to tell three people apart while showing it one minute at a
+// time and then renumbers them from scratch for the next minute -- so the same
+// colleague is Speaker 1, then Speaker 3, then Speaker 2, and what should have
+// been three people in an hour-long call came back as sixty numberings to be
+// reconciled afterwards from spliced two-second fingerprints.
+//
+// Nil when the models are not downloaded yet, which leaves the caller on the
+// older per-block path rather than refusing the recording.
+func (a *app) diarizeRecording(path string) []diarize.Segment {
+	if path == "" {
+		return nil
+	}
+	d := a.speakers.get(a.modelsDir)
+	if d == nil {
+		return nil
+	}
+	segments, err := diarize.WindowedFile(d, a.embedders.get(a.modelsDir), path, maxSpeakerGap, minSpeakerSegment)
+	if err != nil {
+		log.Printf("meeting: diarizing %s: %v", path, err)
+		return nil
+	}
+	return segments
+}
+
+// blockSegments cuts one recording's segments down to the block being decoded,
+// with their times moved into that block's own clock -- which is what the word
+// labelling downstream expects, and what the caller shifts back afterwards.
+func blockSegments(segments []diarize.Segment, from, to float32) []diarize.Segment {
+	out := make([]diarize.Segment, 0, len(segments))
+	for _, s := range segments {
+		if s.End <= from || s.Start >= to {
+			continue
+		}
+		s.Start = max(s.Start, from) - from
+		s.End = min(s.End, to) - from
+		if s.End > s.Start {
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
+// speakerEmbeds fingerprints each speaker of a finished recording, reading
+// only the few seconds of each one it needs back off disk.
+//
+// One fingerprint per person for the whole meeting, built from continuous
+// speech: this is what a later meeting compares against to say "that is the
+// same person", and what a name is eventually attached to.
+func (a *app) speakerEmbeds(path string, segments []diarize.Segment) map[int][]float32 {
+	e := a.embedders.get(a.modelsDir)
+	if e == nil || path == "" || len(segments) == 0 {
+		return nil
+	}
+
+	bySpeaker := map[int][]diarize.Segment{}
+	for _, s := range segments {
+		bySpeaker[s.Speaker] = append(bySpeaker[s.Speaker], s)
+	}
+
+	out := make(map[int][]float32, len(bySpeaker))
+	for speaker, segs := range bySpeaker {
+		if v := diarize.FingerprintFile(e, path, segs); len(v) > 0 {
+			out[speaker] = v
+		}
 	}
 	return out
 }

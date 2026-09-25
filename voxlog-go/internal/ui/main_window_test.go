@@ -355,3 +355,44 @@ func TestConfirmModeResolvesTheHistorySetting(t *testing.T) {
 		}
 	}
 }
+
+// A notification's action string decides which pane the window opens on, and
+// it can come from a banner posted by an older build. selectPane("") does not
+// mean "leave it alone" -- it turns every pane off and leaves a blank window.
+func TestUnknownPanesLandOnOverview(t *testing.T) {
+	for _, pane := range []string{PaneOverview, PaneHistory, PaneMeetings, PaneTasks, PaneSettings} {
+		if got := normalizePane(pane); got != pane {
+			t.Errorf("normalizePane(%q) = %q, want it unchanged", pane, got)
+		}
+	}
+	for _, junk := range []string{"", "voices", "Settings", "overview "} {
+		if got := normalizePane(junk); got != PaneOverview {
+			t.Errorf("normalizePane(%q) = %q, want %q", junk, got, PaneOverview)
+		}
+	}
+}
+
+// The five names the page's own nav keys off. Spelled out here because the
+// notification actions, the tray menu and internal/task all write them by
+// hand somewhere, and a rename that misses one is silent.
+func TestPaneNamesMatchThePage(t *testing.T) {
+	want := map[string]string{
+		PaneOverview: "overview",
+		PaneHistory:  "history",
+		PaneMeetings: "meetings",
+		PaneTasks:    "tasks",
+		PaneSettings: "settings",
+	}
+	page, err := assets.ReadFile("assets/main.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for constant, literal := range want {
+		if constant != literal {
+			t.Errorf("constant is %q, want %q", constant, literal)
+		}
+		if !strings.Contains(string(page), `data-pane="`+literal+`"`) {
+			t.Errorf("the page has no pane named %q", literal)
+		}
+	}
+}

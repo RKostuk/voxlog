@@ -5,6 +5,7 @@ import (
 
 	"voxlog-go/internal/mcp"
 	"voxlog-go/internal/settings"
+	"voxlog-go/internal/ui"
 )
 
 // applyMCP brings the MCP server into line with the settings it is handed.
@@ -57,7 +58,7 @@ func (a *app) applyMCP(cfg settings.Settings) {
 	if err != nil {
 		a.mcpErr = err.Error()
 		log.Printf("mcp: %v", err)
-		notifyPane("Voxlog's MCP server could not start. See Settings.", "settings")
+		notifyPane("Voxlog's MCP server could not start. See Settings.", ui.PaneSettings)
 		return
 	}
 

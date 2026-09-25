@@ -350,8 +350,8 @@
       <div class="card">
         <div class="item stacked">
           <div class="title">Summarize finished meetings
-            <div class="subtext">Writes a short summary under each meeting once its transcript lands.
-              Needs the model above; nothing is summarized while Task Hub is off.</div>
+            <div class="subtext">Writes a short summary under each meeting once its transcript lands,
+              and names the meeting from what was said. Needs the model above; Task Hub can stay off.</div>
           </div>
           <input type="checkbox" class="switch" id="summary_enabled">
         </div>
@@ -1810,14 +1810,29 @@
     var mcpToken = '';
     var mcpTokenShown = false;
 
+    // Which subpane the user last picked, so polling can be resumed when the
+    // Settings pane comes back on screen without re-deciding it here.
+    var mcpSubpaneOpen = false;
+
     function setMCPPolling(on) {
-      if (on && !mcpPoll) {
-        refreshMCP();
-        mcpPoll = setInterval(refreshMCP, 2000);
-      } else if (!on && mcpPoll) {
-        clearInterval(mcpPoll);
-        mcpPoll = null;
+      mcpSubpaneOpen = on;
+      if (on) {
+        syncMCPPolling();
+        return;
       }
+      stopMCPPolling();
+    }
+
+    function syncMCPPolling() {
+      if (!mcpSubpaneOpen || mcpPoll || !settingsPaneVisible()) return;
+      refreshMCP();
+      mcpPoll = setInterval(refreshMCP, 2000);
+    }
+
+    function stopMCPPolling() {
+      if (!mcpPoll) return;
+      clearInterval(mcpPoll);
+      mcpPoll = null;
     }
 
     function refreshMCP() {
@@ -2113,11 +2128,56 @@
     // "Not granted" after the user has just granted them -- only a relaunch
     // clears that. The microphone check is live, so polling does update it
     // on its own.
+    // Polled only while this pane is the one on screen, and only for the
+    // answer that can actually change while the app runs.
+    //
+    // This used to run every two seconds from page load, for the life of the
+    // window -- including a window the user had closed, which this app keeps
+    // alive on purpose (see keepAliveOnClose). Each tick is a binding call
+    // that lands on the main thread and asks TCC three questions over IPC,
+    // and TCC is not fast or contention-free: with the window merely open in
+    // the background, the app's main queue backed up until WebKit started
+    // reporting "pending main thread dispatch stuck" and system-audio frames
+    // were dropped. That is what "the app froze" was.
     var permPollTimer = null;
     function startPermPolling() {
-      if (permPollTimer) return;
-      permPollTimer = setInterval(refreshPermissions, 2000);
+      if (permPollTimer || !settingsPaneVisible()) return;
+      permPollTimer = setInterval(refreshPermissions, 5000);
     }
+
+    function stopPermPolling() {
+      if (!permPollTimer) return;
+      clearInterval(permPollTimer);
+      permPollTimer = null;
+    }
+
+    // The shell's own nav decides which pane is on screen; the fragment can
+    // read it without owning it.
+    function settingsPaneVisible() {
+      if (document.visibilityState !== 'visible') return false;
+      // Matched in script rather than in the selector: a data-pane attribute
+      // written out in this fragment is what one of this package's tests
+      // forbids, because the shell's own nav keys off it.
+      var panes = document.querySelectorAll('#shell-content > .pane');
+      var found = null;
+      panes.forEach(function (p) { if (p.dataset.pane === 'settings') found = p; });
+      // No shell around the fragment (the settings window on its own): the
+      // pane is the window, so it is visible whenever the document is.
+      return !found || found.classList.contains('on');
+    }
+
+    // Called by the shell when panes change, and on visibility changes.
+    window.syncSettingsPolling = function () {
+      if (settingsPaneVisible()) {
+        refreshPermissions();
+        startPermPolling();
+        syncMCPPolling();
+      } else {
+        stopPermPolling();
+        stopMCPPolling();
+      }
+    };
+    document.addEventListener('visibilitychange', function () { window.syncSettingsPolling(); });
 
     function refreshPermissions() {
       window.checkPermissions().then(function (p) {
@@ -2219,8 +2279,10 @@
       fillForm();
       syncModelTest();
       loadMicVolume();
+      // One read now for whatever pane is showing, then polling only while
+      // this pane is the one on screen.
       refreshPermissions();
-      startPermPolling();
+      window.syncSettingsPolling();
     };
     window.addEventListener('pagehide', function () {
       window.settingsWindowClosed && window.settingsWindowClosed();

@@ -63,7 +63,7 @@ func PublishDecodeQueue(list []DecodeStatus) {
 	w := mainWin
 	winMu.Unlock()
 	if w != nil && windowUsable(w) {
-		w.Dispatch(func() { w.Eval(js) })
+		runOnMain(func() { w.Eval(js) })
 	}
 
 	// The drawer carries the same banner: it is the window that is up while
@@ -73,7 +73,7 @@ func PublishDecodeQueue(list []DecodeStatus) {
 	d := drawerWin
 	drawerMu.Unlock()
 	if d != nil && windowUsable(d) {
-		d.Dispatch(func() { d.Eval(js) })
+		runOnMain(func() { d.Eval(js) })
 	}
 }
 

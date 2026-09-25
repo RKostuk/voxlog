@@ -1,4 +1,4 @@
-package voiceid
+package voiceprint
 
 import (
 	"math"
@@ -107,6 +107,50 @@ func TestLinkBlocksKeepsUnfingerprintedSpeakersApart(t *testing.T) {
 	ids := LinkBlocks(speakers, MergeThreshold)
 	if ids[0] == ids[1] {
 		t.Fatalf("a voice with no fingerprint was folded into a known one: %v", ids)
+	}
+}
+
+// ...but they share that id with each other. Each of them standing alone is
+// what turned a five-person call into twenty speakers: every block where
+// somebody said two words produced a new person.
+func TestLinkBlocksPoolsUnfingerprintedSpeakers(t *testing.T) {
+	speakers := []BlockSpeaker{
+		{Block: 0, Local: 0, Embed: voice(0, 1), Secs: 30},
+		{Block: 1, Local: 0, Secs: 0.4},
+		{Block: 2, Local: 1, Secs: 0.3},
+		{Block: 3, Local: 0, Secs: 0.5},
+	}
+	ids := LinkBlocks(speakers, MergeThreshold)
+	if ids[1] != ids[2] || ids[2] != ids[3] {
+		t.Fatalf("three unheard fragments became %v, want one shared id", ids)
+	}
+	if ids[0] == ids[1] {
+		t.Fatalf("the unheard pool swallowed a speaker with a fingerprint: %v", ids)
+	}
+	seen := map[int]bool{}
+	for _, id := range ids {
+		seen[id] = true
+	}
+	if len(seen) != 2 {
+		t.Fatalf("got %d speakers, want 2 (one person, one unheard pool): %v", len(seen), ids)
+	}
+}
+
+// A few seconds of somebody is judged more loosely than a full speaker would
+// be: its centroid is the least reliable thing in the meeting, and at the
+// merge threshold exactly it stayed a person of its own.
+func TestLinkBlocksFoldsAFragmentItIsNotQuiteSureAbout(t *testing.T) {
+	near := Normalize([]float32{0.52, 0.85, 0})
+	speakers := []BlockSpeaker{
+		{Block: 0, Local: 0, Embed: voice(0, 1), Secs: 60},
+		{Block: 1, Local: 0, Embed: near, Secs: 1.5},
+	}
+	if got := Cosine(voice(0, 1), near); got >= MergeThreshold || got < MergeThreshold-FoldSlack {
+		t.Fatalf("the test's own vectors score %v, which is not inside the fold band", got)
+	}
+	ids := LinkBlocks(speakers, MergeThreshold)
+	if ids[0] != ids[1] {
+		t.Fatalf("a 1.5s fragment stayed its own speaker: %v", ids)
 	}
 }
 

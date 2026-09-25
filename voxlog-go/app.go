@@ -283,7 +283,12 @@ func (a *app) taskEntity(sourceKind, sourceKey, classified string) string {
 // classification, so one failing doesn't hold up the other.
 func (a *app) summarizeMeeting(start time.Time, text string) {
 	cfg := a.store.Get()
-	if !cfg.TaskHubEnabled || !cfg.SummaryEnabled || !a.llmReady(cfg) {
+	// Not gated on Task Hub. Summarizing was split out of it precisely
+	// because finding tasks and naming a call are separate wants -- but the
+	// gate here still demanded both, so a user with Task Hub off got no
+	// summary and, with it, no title: every meeting in the window read as a
+	// timestamp. The model being ready is the only real requirement.
+	if !cfg.SummaryEnabled || !a.llmReady(cfg) {
 		return
 	}
 	defer trackLLM("Meeting, "+start.Format("15:04"), "Summarising")()
@@ -350,13 +355,13 @@ func (a *app) model(cfg settings.Settings) (asr.ModelSpec, bool) {
 	spec, ok := modelForSettings(cfg)
 	if !ok {
 		log.Printf("no known model for %s/%s", cfg.ModelFamily, cfg.ModelVariant)
-		notify("No model selected. Pick one in Settings.")
+		notifyPane("No model selected. Pick one in Settings.", ui.PaneSettings)
 		a.openSettingsForMissingModel()
 		return spec, false
 	}
 	if !asr.IsDownloaded(a.modelsDir, spec) {
 		log.Printf("model %s/%s not downloaded", spec.Family, spec.Variant)
-		notify("Model not downloaded yet. Download it in Settings first.")
+		notifyPane("Model not downloaded yet. Download it in Settings first.", ui.PaneSettings)
 		a.openSettingsForMissingModel()
 		return spec, false
 	}

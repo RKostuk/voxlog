@@ -31,6 +31,10 @@ type turnJSON struct {
 	LocalID int    `json:"speaker"`
 	Name    string `json:"name,omitempty"`
 	Text    string `json:"text"`
+	// Corrected marks a reply a person has said belongs to someone in
+	// particular, so the transcript can show what was decided by hand apart
+	// from what the pipeline guessed.
+	Corrected bool `json:"corrected,omitempty"`
 }
 
 // searchHitJSON is one search result: enough to draw the row and to open
@@ -103,20 +107,34 @@ type candidateJSON struct {
 	VoiceID   int64   `json:"suggested_voice_id,omitempty"`
 }
 
-func turnsJSON(turns []history.Turn) []turnJSON {
+func turnsJSON(turns []history.Turn, corrections []history.Correction) []turnJSON {
 	out := make([]turnJSON, 0, len(turns))
 	for _, t := range turns {
 		out = append(out, turnJSON{
-			Seq:     t.Seq,
-			Start:   t.StartSecs,
-			End:     t.EndSecs,
-			Channel: t.Channel,
-			LocalID: t.LocalID,
-			Name:    t.Name,
-			Text:    t.Text,
+			Seq:       t.Seq,
+			Start:     t.StartSecs,
+			End:       t.EndSecs,
+			Channel:   t.Channel,
+			LocalID:   t.LocalID,
+			Name:      t.Name,
+			Text:      t.Text,
+			Corrected: correctedBy(corrections, t),
 		})
 	}
 	return out
+}
+
+// correctedBy reports whether a correction claims this reply -- the same
+// midpoint rule the store applies them by, so the mark in the transcript and
+// the assignment behind it can never disagree.
+func correctedBy(corrections []history.Correction, t history.Turn) bool {
+	mid := (t.StartSecs + t.EndSecs) / 2
+	for _, c := range corrections {
+		if c.StartSecs <= mid && mid <= c.EndSecs {
+			return true
+		}
+	}
+	return false
 }
 
 func speakersJSON(speakers []history.MeetingSpeaker) []speakerJSON {
@@ -167,6 +185,10 @@ func bindMeetings(w webview.WebView, store *history.Store, meetings *history.Mee
 		if err != nil {
 			return nil, err
 		}
+		corrections, err := meetings.Corrections(at)
+		if err != nil {
+			return nil, err
+		}
 		// Who the unnamed speakers might be. Computed here rather than
 		// fetched separately: the page draws them on the same rows, and
 		// SpeakerSuggestions is the read-only half of the matching that
@@ -182,7 +204,7 @@ func bindMeetings(w webview.WebView, store *history.Store, meetings *history.Mee
 			})
 		}
 		return map[string]any{
-			"turns":       turnsJSON(turns),
+			"turns":       turnsJSON(turns, corrections),
 			"speakers":    speakersJSON(speakers),
 			"suggestions": suggestions,
 		}, nil
@@ -318,6 +340,73 @@ func bindMeetings(w webview.WebView, store *history.Store, meetings *history.Mee
 				}
 			}
 		}
+		RefreshMainWindowIfOpen(store, meetings, tasks)
+		return nil
+	})
+
+	// correctTurn is the transcript's own repair: this reply was not them.
+	//
+	// It reaches the fingerprints, not just the label. A correction that only
+	// fixed the page would leave the next recording to make the same mistake,
+	// which is the thing the user is trying to stop.
+	w.Bind("correctTurn", func(id string, seq int, voiceID int64) error {
+		at, err := time.Parse(time.RFC3339Nano, id)
+		if err != nil {
+			return err
+		}
+		if _, err := meetings.CorrectTurn(at, seq, voiceID); err != nil {
+			return err
+		}
+		refingerprint(at)
+		RefreshMainWindowIfOpen(store, meetings, tasks)
+		return nil
+	})
+
+	// correctTurnAs names a new person and gives them the reply in one action:
+	// the picker's "Someone else...". A correction always points at a voice,
+	// so the voice has to exist first.
+	w.Bind("correctTurnAs", func(id string, seq int, name string) error {
+		at, err := time.Parse(time.RFC3339Nano, id)
+		if err != nil {
+			return err
+		}
+		v, err := meetings.CreateVoice(name)
+		if err != nil {
+			return err
+		}
+		if _, err := meetings.CorrectTurn(at, seq, v.ID); err != nil {
+			return err
+		}
+		refingerprint(at)
+		RefreshMainWindowIfOpen(store, meetings, tasks)
+		return nil
+	})
+
+	// clearCorrection hands a reply back to the pipeline.
+	w.Bind("clearCorrection", func(id string, seq int) error {
+		at, err := time.Parse(time.RFC3339Nano, id)
+		if err != nil {
+			return err
+		}
+		if err := meetings.ClearCorrection(at, seq); err != nil {
+			return err
+		}
+		refingerprint(at)
+		RefreshMainWindowIfOpen(store, meetings, tasks)
+		return nil
+	})
+
+	// mergeSpeakers is the other half of the same repair, for the mistake that
+	// goes the other way: one person the pipeline split in two.
+	w.Bind("mergeSpeakers", func(id string, from, into int64) error {
+		at, err := time.Parse(time.RFC3339Nano, id)
+		if err != nil {
+			return err
+		}
+		if err := meetings.MergeSpeakers(from, into); err != nil {
+			return err
+		}
+		refingerprint(at)
 		RefreshMainWindowIfOpen(store, meetings, tasks)
 		return nil
 	})

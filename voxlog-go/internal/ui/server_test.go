@@ -1,12 +1,15 @@
 package ui
 
 import (
+	"encoding/binary"
 	"io"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"voxlog-go/internal/audio"
 )
 
 func testServer(t *testing.T) (*pageServer, string) {
@@ -200,6 +203,89 @@ func TestServesAVoiceClip(t *testing.T) {
 		resp.Body.Close()
 		if resp.StatusCode != http.StatusNotFound {
 			t.Fatalf("%q: got %s, want 404", path, resp.Status)
+		}
+	}
+}
+
+// writeMeetingWAV puts a real recording in the directory: the mix endpoint
+// parses both files, so the byte-blob the other tests use will not do.
+func writeMeetingWAV(t *testing.T, dir, name string, samples []float32) {
+	t.Helper()
+	w, err := audio.NewWAVWriter(filepath.Join(dir, name))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Write(samples); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Close(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestMixServesBothTracksAsOneRecording(t *testing.T) {
+	s, dir := testServer(t)
+	writeMeetingWAV(t, dir, "2026-09-24-101500-mic.wav", []float32{0.25, 0.25, 0.25, 0.25})
+	writeMeetingWAV(t, dir, "2026-09-24-101500-system.wav", []float32{0.5, 0.5, 0.5, 0.5})
+
+	res, err := http.Get(s.MixURL() + "2026-09-24-101500-mic.wav")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer res.Body.Close()
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("got %d, want 200", res.StatusCode)
+	}
+	if got := res.Header.Get("Content-Type"); got != "audio/wav" {
+		t.Errorf("Content-Type %q, want audio/wav", got)
+	}
+	body, _ := io.ReadAll(res.Body)
+	// 44-byte header plus two bytes a sample.
+	if len(body) != 44+4*2 {
+		t.Fatalf("got %d bytes, want %d", len(body), 44+4*2)
+	}
+	first := int16(binary.LittleEndian.Uint16(body[44:]))
+	if want := int16(24575); first < want-8 || first > want+8 {
+		t.Errorf("first sample is %d, want about %d (both tracks summed)", first, want)
+	}
+}
+
+func TestMixSupportsRangeRequests(t *testing.T) {
+	// The meeting timeline seeks into the middle of an hour-long call; that
+	// has to be a range request, not a download.
+	s, dir := testServer(t)
+	writeMeetingWAV(t, dir, "call-mic.wav", []float32{0, 0, 0.5, 0.5})
+	writeMeetingWAV(t, dir, "call-system.wav", []float32{0, 0, 0.25, 0.25})
+
+	req, err := http.NewRequest(http.MethodGet, s.MixURL()+"call-mic.wav", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Range", "bytes=44-47")
+	res, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer res.Body.Close()
+	if res.StatusCode != http.StatusPartialContent {
+		t.Fatalf("got %d, want 206", res.StatusCode)
+	}
+	body, _ := io.ReadAll(res.Body)
+	if len(body) != 4 {
+		t.Fatalf("got %d bytes, want 4", len(body))
+	}
+}
+
+func TestMixRefusesAPathAndAMissingRecording(t *testing.T) {
+	s, _ := testServer(t)
+	for _, name := range []string{"../../etc/hosts", "sub/take-mic.wav", "gone-mic.wav"} {
+		res, err := http.Get(s.MixURL() + name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		res.Body.Close()
+		if res.StatusCode != http.StatusNotFound {
+			t.Errorf("%q: got %d, want 404", name, res.StatusCode)
 		}
 	}
 }

@@ -1,14 +1,23 @@
-package voiceid
+package voiceprint
 
 import "math"
 
-// The matching half of the package: pure arithmetic over vectors, no models,
-// no files. It is deliberately separable from Embedder so the decisions that
-// actually shape a transcript -- is this the same person as before? -- can be
-// tested without a 35 MB download.
+// The matching half of the package: clustering fingerprints into people. The
+// decisions that actually shape a transcript -- is this the same person as
+// before? -- live here, where they can be tested without a 35 MB download.
 
-// Thresholds. Both are cosine similarity between L2-normalised vectors, so
-// 1 is identical and 0 is unrelated.
+// Thresholds, and which comparison each one is a threshold on.
+//
+// The two questions this package answers are not the same question, and they
+// do not take the same arithmetic. Within one recording everyone shares a
+// microphone, a codec and a room, so what two fingerprints have in common is
+// mostly the recording; raw Cosine is what the numbers below were measured
+// against, and centring there is unvalidated. Across recordings that shared
+// part is exactly what misleads -- two takes of one speaker scored 0.66 to
+// 0.84 and two different speakers 0.57 to 0.90, bands that overlap completely
+// -- so those comparisons go through Similarity, which removes it first.
+//
+// MergeThreshold is a threshold on Cosine; IdentifyThreshold on Similarity.
 const (
 	// MergeThreshold joins two stretches of one meeting into one speaker.
 	// Deliberately loose: merging two people reads as one confused speaker,
@@ -18,7 +27,8 @@ const (
 	MergeThreshold = 0.55
 
 	// IdentifyThreshold links a meeting's speaker to a voice that already has
-	// a name, with no one asked. Higher than MergeThreshold on purpose: a
+	// a name, with no one asked -- across recordings, so on Similarity rather
+	// than Cosine. Higher than MergeThreshold on purpose: a
 	// wrong name spread across a user's whole history is a much worse failure
 	// than an unnamed "Speaker 2", and the band between the two thresholds is
 	// where the Voices pane asks instead of assuming.
@@ -28,6 +38,13 @@ const (
 	// allowed to stand as its own person. Below it, a cluster is almost
 	// always a fragment of somebody already in the room.
 	MinSpeakerSeconds = 3.0
+
+	// FoldSlack is how much looser than MergeThreshold a fragment is judged
+	// when it is being folded into a full speaker. A cluster of two or three
+	// seconds has the least reliable centroid in the meeting, so judging it
+	// at the same bar as a speaker with minutes behind them kept fragments
+	// standing as people of their own.
+	FoldSlack = 0.10
 )
 
 // Normalize returns v scaled to unit length. A zero vector comes back as nil:
@@ -110,9 +127,16 @@ type BlockSpeaker struct {
 // It clusters block speakers rather than individual turns because the
 // diarizer has already done the hard work inside each block, and one
 // fingerprint over several seconds of a person is far steadier than one per
-// reply. A speaker with no usable fingerprint keeps its own id: silently
-// folding an unknown voice into a known one is the failure this whole
-// package exists to avoid.
+// reply.
+//
+// Speakers with no usable fingerprint -- under a second of audio in their
+// block, which is what the embedder needs -- share one anonymous id between
+// them rather than getting one each. Each of them used to become a person of
+// their own, which is what turned an hour-long call with five people in it
+// into a list of twenty-odd speakers: every stray "mhm" the diarizer heard in
+// a block was somebody new. One "not heard well enough to tell" bucket is
+// both closer to the truth and nameable as nothing, which is what these
+// fragments are.
 func LinkBlocks(speakers []BlockSpeaker, threshold float32) []int {
 	ids := make([]int, len(speakers))
 	for i := range ids {
@@ -125,11 +149,19 @@ func LinkBlocks(speakers []BlockSpeaker, threshold float32) []int {
 	}
 	var clusters []cluster
 
+	// Where the un-fingerprinted speakers go, or -1 until the first one
+	// appears. Reset with the clusters on every pass.
+	unheard := -1
+
 	assign := func(i int) {
 		s := speakers[i]
 		if len(s.Embed) == 0 {
-			clusters = append(clusters, cluster{members: []int{i}})
-			ids[i] = len(clusters) - 1
+			if unheard < 0 {
+				clusters = append(clusters, cluster{})
+				unheard = len(clusters) - 1
+			}
+			clusters[unheard].members = append(clusters[unheard].members, i)
+			ids[i] = unheard
 			return
 		}
 		best, bestScore := -1, threshold
@@ -165,12 +197,19 @@ func LinkBlocks(speakers []BlockSpeaker, threshold float32) []int {
 	// three rebuild every centroid from its members and reassign against
 	// those -- deterministic, and enough to fix the early mistakes without
 	// the cost or the instability of running to convergence.
+	//
+	// The centroids are held still for the length of each later pass: only
+	// membership is rebuilt. Dropping the clusters and starting over, which
+	// is what this did until the behaviour was measured, threw the recentred
+	// centroids away and made passes two and three exact repeats of pass one.
 	for i := range speakers {
 		assign(i)
 	}
 	for pass := 0; pass < 2; pass++ {
 		recentre()
-		clusters = clusters[:0]
+		for c := range clusters {
+			clusters[c].members = nil
+		}
 		for i := range ids {
 			ids[i] = -1
 		}
@@ -193,10 +232,14 @@ func LinkBlocks(speakers []BlockSpeaker, threshold float32) []int {
 		remap[c] = c
 	}
 	for c := range clusters {
-		if total[c] >= MinSpeakerSeconds || len(clusters) == 1 {
+		if total[c] >= MinSpeakerSeconds || len(clusters) == 1 || c == unheard {
 			continue
 		}
-		best, bestScore := -1, threshold-0.05
+		// Looser than the merge threshold, and it has to be: this cluster is
+		// a few seconds long, so its centroid is the noisiest one in the
+		// meeting, and holding a fragment to the same bar as a full speaker
+		// is what left it standing as a person of its own.
+		best, bestScore := -1, threshold-FoldSlack
 		for other := range clusters {
 			if other == c || total[other] < MinSpeakerSeconds {
 				continue

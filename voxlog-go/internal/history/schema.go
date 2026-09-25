@@ -211,6 +211,41 @@ var schemaSteps = []string{
 	`
 	ALTER TABLE meetings ADD COLUMN title TEXT NOT NULL DEFAULT '';
 	`,
+	// Step 7 -- who actually spoke, according to the person who was there.
+	//
+	// Diarization is wrong often enough to matter and the listener always
+	// knows better, so they can now move a reply to another speaker. The
+	// correction cannot live on the turn it corrects: ReplaceTurns deletes
+	// every turn and speaker row of a meeting and writes them again, which is
+	// what happens each time the pipeline improves and the backfill re-runs.
+	// A time range outlives that -- 42.1-44.3 is still 42.1-44.3 after the
+	// replies have been cut differently -- so corrections are stored against
+	// the recording's clock and re-applied after every decode.
+	//
+	// voice_manual marks a speaker row a person decided, which identification
+	// then leaves alone. The precedent is meetings.entity_manual: a guess must
+	// never overwrite an answer.
+	`
+	CREATE TABLE turn_corrections (
+		id         INTEGER PRIMARY KEY,
+		meeting_ns INTEGER NOT NULL REFERENCES meetings(start_ns) ON DELETE CASCADE,
+		start_secs REAL    NOT NULL,
+		end_secs   REAL    NOT NULL,
+		-- Always a voice. "Someone else..." in the picker names one first, so
+		-- a correction never carries a name that no voice has.
+		voice_id   INTEGER NOT NULL REFERENCES voices(id) ON DELETE CASCADE,
+		created_ns INTEGER NOT NULL
+	);
+	CREATE INDEX turn_corrections_by_meeting ON turn_corrections(meeting_ns, start_secs);
+
+	ALTER TABLE meeting_speakers ADD COLUMN voice_manual INTEGER NOT NULL DEFAULT 0;
+
+	-- What the pipeline itself decided, kept beside what the transcript now
+	-- says. Without it a correction is irreversible: applying one overwrites
+	-- speaker_id, and there would be nothing to put back when it is cleared.
+	ALTER TABLE turns ADD COLUMN decoded_speaker_id INTEGER REFERENCES meeting_speakers(id) ON DELETE SET NULL;
+	UPDATE turns SET decoded_speaker_id = speaker_id;
+	`,
 }
 
 func (d *DB) migrateSchema() error {

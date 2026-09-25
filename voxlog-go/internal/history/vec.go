@@ -3,6 +3,8 @@ package history
 import (
 	"encoding/binary"
 	"math"
+
+	"voxlog-go/internal/voiceprint"
 )
 
 // A voice fingerprint is a few hundred float32s. SQLite has no array type,
@@ -37,60 +39,15 @@ func DecodeVec(b []byte) []float32 {
 	return out
 }
 
-// Cosine is how alike two fingerprints are, from 1 (the same voice) down to 0
-// (unrelated). The vectors are stored already normalised, so this is a plain
-// dot product.
-//
-// A copy of the same arithmetic that lives in internal/voiceid, kept here on
-// purpose: that package loads an ONNX model through cgo, and the storage
-// layer must not drag a 35 MB model dependency into every build and test that
-// touches history.
-func Cosine(a, b []float32) float32 {
-	if len(a) == 0 || len(a) != len(b) {
-		return 0
-	}
-	var dot float64
-	for i := range a {
-		dot += float64(a[i]) * float64(b[i])
-	}
-	return float32(dot)
-}
+// Cosine is the raw dot product of two stored fingerprints, unchanged since
+// they were computed. Comparisons want voiceprint.Similarity instead, which
+// is this over centred vectors; Cosine is left for the tests that check a
+// vector survived a round trip through the database.
+func Cosine(a, b []float32) float32 { return voiceprint.Cosine(a, b) }
 
 // centroid averages fingerprints weighted by how much speech each represents,
 // and renormalises: a voice built from a two-second "yes" and a twenty-minute
 // presentation should sound like the presentation.
 func centroid(vecs [][]float32, weights []float64) []float32 {
-	var (
-		sum  []float32
-		norm float64
-	)
-	for i, v := range vecs {
-		if len(v) == 0 {
-			continue
-		}
-		w := 1.0
-		if i < len(weights) && weights[i] > 0 {
-			w = weights[i]
-		}
-		if sum == nil {
-			sum = make([]float32, len(v))
-		}
-		if len(v) != len(sum) {
-			continue
-		}
-		for j, x := range v {
-			sum[j] += float32(float64(x) * w)
-		}
-	}
-	for _, x := range sum {
-		norm += float64(x) * float64(x)
-	}
-	if norm == 0 {
-		return nil
-	}
-	scale := float32(math.Sqrt(norm))
-	for i := range sum {
-		sum[i] /= scale
-	}
-	return sum
+	return voiceprint.WeightedCentroid(vecs, weights)
 }

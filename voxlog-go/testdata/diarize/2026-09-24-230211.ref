@@ -1,0 +1,19 @@
+# 2026-09-24-230211-system.wav -- four voices, labelled by ear.
+#
+# A  kochevnikov
+# B  Ildar
+# V  Forsazh
+# G  Ildar's electric-car segment
+#
+# start end label
+1.4  10.1 A
+11.9 21.5 B
+23.4 39.5 V
+40.4 42.9 G
+44.1 47.0 B
+47.3 52.2 B
+54.8 57.0 A
+57.4 59.3 A
+59.7 71.0 A
+71.0 79.0 A
+# 79.0 93.7 -- not labelled yet

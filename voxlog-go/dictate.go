@@ -123,7 +123,7 @@ func (a *app) startDictation() {
 		rec, err := audio.NewRecorder(cfg.InputDevice, cfg.MicGain)
 		if err != nil {
 			log.Printf("recorder init: %v", err)
-			notify("Could not access the microphone.")
+			notifyPane("Could not access the microphone.", ui.PaneHistory)
 			return
 		}
 		d.recorder = rec
@@ -170,7 +170,7 @@ func (a *app) startDictation() {
 
 	if err := a.startCapture(d); err != nil {
 		log.Printf("recorder start: %v", err)
-		notify("Could not start recording.")
+		notifyPane("Could not start recording.", ui.PaneHistory)
 		a.abandon(d)
 		return
 	}
@@ -217,7 +217,7 @@ func (a *app) startDictationSystemAudio(d *dictation, cfg settings.Settings) {
 	default:
 		// Not fatal: fall back to mic-only rather than refusing to record.
 		log.Printf("system audio: %v", err)
-		notify("Could not capture system audio; recording microphone only.")
+		notifyPane("Could not capture system audio; recording microphone only.", ui.PaneHistory)
 	}
 }
 
@@ -227,7 +227,7 @@ func (a *app) startLiveDecoder(d *dictation, spec asr.ModelSpec, cfg settings.Se
 	t, err := a.models.get(spec, asr.ModelDir(a.modelsDir, spec), cfg.Language)
 	if err != nil {
 		log.Printf("live streaming unavailable: %v", err)
-		notify("Could not load the speech model.")
+		notifyPane("Could not load the speech model.", ui.PaneSettings)
 		return false
 	}
 	st, ok := t.(asr.StreamingTranscriber)
@@ -375,7 +375,7 @@ func (a *app) stopDictation() {
 		final, err := d.live.Finish()
 		if err != nil {
 			log.Printf("transcribe (streaming): %v", err)
-			notify("Transcription failed.")
+			notifyPane("Transcription failed.", ui.PaneHistory)
 			a.finishRecording(cfg, false)
 			return
 		}

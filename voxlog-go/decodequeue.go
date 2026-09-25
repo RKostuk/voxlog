@@ -6,6 +6,8 @@ import (
 	"sort"
 	"sync"
 	"time"
+
+	"voxlog-go/internal/ui"
 )
 
 // decodeQueue runs transcriptions one at a time, off the hotkey path.
@@ -200,7 +202,7 @@ func (q *decodeQueue) execute(job *decodeJob) {
 	defer func() {
 		if r := recover(); r != nil {
 			log.Printf("PANIC during transcription: %v\n%s", r, debug.Stack())
-			notify("Transcription failed unexpectedly. See ~/Library/Logs/Voxlog.log")
+			notifyPane("Transcription failed unexpectedly. See ~/Library/Logs/Voxlog.log", ui.PaneHistory)
 		}
 		q.mu.Lock()
 		q.running = outer

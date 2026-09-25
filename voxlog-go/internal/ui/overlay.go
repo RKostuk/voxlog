@@ -239,7 +239,7 @@ func (o *Overlay) Configure(styleName string, parts IndicatorParts, position str
 	placed := o.position
 	o.posMu.Unlock()
 	classes := parts.classList(name, placed)
-	o.w.Dispatch(func() {
+	runOnMain(func() {
 		resizeWindow(o.w.Window(), st.Width, st.Height)
 		// A style carrying a button has to be clickable, and a click-through
 		// window can never deliver one. Everything else stays click-through,
@@ -338,7 +338,7 @@ func (o *Overlay) startFollow() {
 				if o.isClosed() {
 					return
 				}
-				o.w.Dispatch(func() { o.place() })
+				runOnMain(func() { o.place() })
 			}
 		}
 	}()
@@ -397,7 +397,7 @@ func (o *Overlay) Show() {
 	follow := o.position == OverlayFollowCursor
 	o.posMu.Unlock()
 
-	o.w.Dispatch(func() {
+	runOnMain(func() {
 		resizeWindow(o.w.Window(), width, height)
 		o.place()
 		orderFrontRegardless(o.w.Window())
@@ -418,7 +418,7 @@ func (o *Overlay) SetLevel(level float64) {
 	if o.w == nil || o.isClosed() {
 		return
 	}
-	o.w.Dispatch(func() {
+	runOnMain(func() {
 		o.w.Eval(fmt.Sprintf("window.voxlog && window.voxlog.setLevel && window.voxlog.setLevel(%.3f)", level))
 	})
 }
@@ -435,7 +435,7 @@ func (o *Overlay) SetShortcut(label string) {
 	if err != nil {
 		return
 	}
-	o.w.Dispatch(func() {
+	runOnMain(func() {
 		o.w.Eval(fmt.Sprintf(
 			"window.voxlog && window.voxlog.setShortcut && window.voxlog.setShortcut(%s)", payload))
 	})
@@ -446,7 +446,7 @@ func (o *Overlay) SetElapsed(seconds float64) {
 	if o.w == nil || o.isClosed() {
 		return
 	}
-	o.w.Dispatch(func() {
+	runOnMain(func() {
 		o.w.Eval(fmt.Sprintf(
 			"window.voxlog && window.voxlog.setElapsed && window.voxlog.setElapsed(%.0f)", seconds))
 	})
@@ -472,7 +472,7 @@ func (o *Overlay) SetText(text string) {
 	width, height := o.width, o.height
 	o.posMu.Unlock()
 
-	o.w.Dispatch(func() {
+	runOnMain(func() {
 		resizeWindow(o.w.Window(), width, height)
 		// Re-place after the resize: resizing keeps the bottom-left origin, so
 		// a right-hand corner would otherwise grow the capsule straight off
@@ -493,7 +493,7 @@ func (o *Overlay) ClearText() {
 	width, height := o.width, o.height
 	o.posMu.Unlock()
 
-	o.w.Dispatch(func() {
+	runOnMain(func() {
 		o.w.Eval("window.voxlog && window.voxlog.clearText && window.voxlog.clearText()")
 		resizeWindow(o.w.Window(), width, height)
 		o.place()
@@ -507,7 +507,7 @@ func (o *Overlay) SetTranscribing(on bool) {
 	if o.w == nil || o.isClosed() {
 		return
 	}
-	o.w.Dispatch(func() {
+	runOnMain(func() {
 		o.w.Eval(fmt.Sprintf("window.voxlog && window.voxlog.setTranscribing && window.voxlog.setTranscribing(%t)", on))
 	})
 }
@@ -518,7 +518,7 @@ func (o *Overlay) Hide() {
 		return
 	}
 	o.stopFollowing()
-	o.w.Dispatch(func() {
+	runOnMain(func() {
 		hideWindow(o.w.Window())
 	})
 }

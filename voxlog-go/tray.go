@@ -223,6 +223,38 @@ func (t *tray) setListenMuted(muted bool) {
 	t.refresh()
 }
 
+// meetingMicMuted is the meeting's mute as the menu bar already knows it.
+//
+// It exists so the menu can be drawn without asking the app: the tray keeps
+// this in step with every toggle (setMicMuted), and it is guarded by the
+// tray's own lock. Reading the truth from a.meeting instead means taking
+// a.mu -- and the menu is redrawn from inside startMeeting, which holds a.mu
+// while it runs. That was a self-deadlock on the very first meeting: the
+// recording ran, and every other thing that needs a.mu (the Stop item, the
+// meeting hotkey, the Overview banner's poll) waited for a lock nobody was
+// ever going to release.
+func (t *tray) meetingMicMuted() bool {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.micMuted
+}
+
+// meetingSnapshot is everything the "something is recording" banner needs,
+// read from the menu bar's own copy of it: whether a recording is running,
+// when it started, and whether the microphone is muted.
+//
+// The window polls this once a second, and a binding call runs on the main
+// thread. Asking the app itself would take a.mu on every tick, and a.mu is
+// held for the length of a meeting starting (opening the microphone, starting
+// the system-audio tap) -- so the poll would freeze the whole interface for
+// as long as that took. The tray is told about every start, stop and toggle,
+// so it can answer without waiting for anything.
+func (t *tray) meetingSnapshot() (running bool, since time.Time, muted bool) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.meeting, t.meetingSince, t.micMuted || t.listenMuted
+}
+
 // anyMuteLocked is the two mutes as the menu bar sees them. Caller holds mu.
 func (t *tray) anyMuteLocked() bool { return t.micMuted || t.listenMuted }
 

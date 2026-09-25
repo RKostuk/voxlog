@@ -70,9 +70,14 @@ func RescheduleAll(store *Store) {
 	}
 }
 
+// tasksPane is ui.PaneTasks, spelled out rather than imported: internal/ui
+// already imports this package, so taking the constant from there would be an
+// import cycle. It is asserted against the real one in reminders_test.go.
+const tasksPane = "tasks"
+
 // fireReminder posts the notification. Reuses usernotify's Post(message,
 // action) + SetHandler convention already wired up in main.go's notifyPane --
-// action "tasks" opens the main window on the Tasks pane.
+// the action opens the main window on the Tasks pane.
 func fireReminder(t Task) {
-	usernotify.Post("Reminder: "+t.Text, "tasks")
+	usernotify.Post("Reminder: "+t.Text, tasksPane)
 }

@@ -69,6 +69,32 @@ func SetTranscribeHandler(fn func(time.Time) error) {
 	winMu.Unlock()
 }
 
+// refingerprintHandler rebuilds the voice fingerprints of a meeting after a
+// person has corrected who spoke. Set once at startup by the app, for the same
+// reason SetTranscribeHandler is: describing a voice means running the
+// embedding model, and this package cannot reach it.
+//
+// It is what makes a correction worth more than an edit -- without it the
+// transcript reads right and the next meeting makes the same mistake.
+var refingerprintHandler func(time.Time)
+
+// SetRefingerprintHandler installs the callback above.
+func SetRefingerprintHandler(fn func(time.Time)) {
+	winMu.Lock()
+	refingerprintHandler = fn
+	winMu.Unlock()
+}
+
+// refingerprint runs that callback if the app installed one.
+func refingerprint(at time.Time) {
+	winMu.Lock()
+	fn := refingerprintHandler
+	winMu.Unlock()
+	if fn != nil {
+		fn(at)
+	}
+}
+
 // notifyUser shows the user a message. Set once at startup by the app (see
 // SetNotifier) -- this package cannot call main's notify() directly (it is a
 // different package, and main cannot import ui without a cycle), and a
@@ -124,15 +150,32 @@ func SetSweepHandler(fn func()) {
 }
 
 // meetingStatusHandler is what the Overview banner's poll asks to find out
-// whether a meeting is running and for how long. Set once at startup, for
-// the same reason SetTranscribeHandler is: this package cannot reach the
-// app's own state (package main, guarded by its own lock).
-var meetingStatusHandler func() (bool, float64)
+// whether a meeting is running, for how long, and whether the microphone is
+// muted. Set once at startup, for the same reason SetTranscribeHandler is:
+// this package cannot reach the app's own state (package main, guarded by its
+// own lock).
+//
+// Muted rides along with the poll rather than having a binding of its own
+// because the menu bar can mute too: the banner has to follow a mute it did
+// not make, and the poll is the only thing that ever asks.
+var meetingStatusHandler func() (bool, float64, bool)
 
 // SetMeetingStatusHandler installs the callback above.
-func SetMeetingStatusHandler(fn func() (bool, float64)) {
+func SetMeetingStatusHandler(fn func() (bool, float64, bool)) {
 	winMu.Lock()
 	meetingStatusHandler = fn
+	winMu.Unlock()
+}
+
+// toggleMuteHandler silences the user's own microphone for the rest of the
+// recording, and reports what the microphone is after the flip. The same
+// method the menu bar item calls.
+var toggleMuteHandler func() bool
+
+// SetToggleMuteHandler installs the callback above.
+func SetToggleMuteHandler(fn func() bool) {
+	winMu.Lock()
+	toggleMuteHandler = fn
 	winMu.Unlock()
 }
 
@@ -396,6 +439,26 @@ func tasksJSON(tasks []task.Task) []taskJSON {
 	return out
 }
 
+// macOS answers AXIsProcessTrusted and CGPreflightScreenCaptureAccess once
+// per process and caches the result until the app restarts -- which is why
+// the pane tells the user to relaunch after granting either. Asking them
+// again on every poll therefore cannot produce a new answer; all it produces
+// is a TCC round trip on the main thread, several times a minute, for as
+// long as the window exists. Ask once, remember it.
+var (
+	staticPermsOnce   sync.Once
+	staticAccess      string
+	staticScreenShare string
+)
+
+func cachedStaticPermissions() (accessibility, screenRecording string) {
+	staticPermsOnce.Do(func() {
+		staticAccess = accessibilityStatus()
+		staticScreenShare = screenRecordingStatus()
+	})
+	return staticAccess, staticScreenShare
+}
+
 func screenRecordingStatus() string {
 	if permissions.ScreenRecording() {
 		return "granted"
@@ -599,12 +662,40 @@ func httpFetch(url string) (io.ReadCloser, int64, error) {
 	return resp.Body, resp.ContentLength, nil
 }
 
-// ShowMainWindow opens the window on the named pane ("overview", "history",
-// "meetings" or "settings"), or brings it forward on that pane if it is
-// already open. recordingsDir is where dictation and meeting audio are kept;
-// it is the only directory the loopback server (started here, once) is
-// allowed to serve files from.
+// The panes the window has, as the strings the page's own nav keys off (see
+// assets/main.html's #shell-nav). Named here rather than spelled out at every
+// caller because they are also the action a notification carries: a click on
+// a banner arrives as one of these, and a string nothing recognises used to
+// reach the page as-is.
+const (
+	PaneOverview = "overview"
+	PaneHistory  = "history"
+	PaneMeetings = "meetings"
+	PaneTasks    = "tasks"
+	PaneSettings = "settings"
+)
+
+// normalizePane maps anything unrecognised -- including "" -- onto Overview.
+//
+// selectPane("") does not mean "leave the pane alone": it turns every pane
+// off and leaves a blank window (see refreshMainWindow). The window is opened
+// by notification clicks, whose action string can come from a banner posted
+// by an older build, so an unknown pane has to land somewhere real.
+func normalizePane(pane string) string {
+	switch pane {
+	case PaneOverview, PaneHistory, PaneMeetings, PaneTasks, PaneSettings:
+		return pane
+	}
+	return PaneOverview
+}
+
+// ShowMainWindow opens the window on the named pane (one of the Pane
+// constants above), or brings it forward on that pane if it is already open.
+// recordingsDir is where dictation and meeting audio are kept; it is the only
+// directory the loopback server (started here, once) is allowed to serve
+// files from.
 func ShowMainWindow(pane string, store *history.Store, meetings *history.MeetingStore, tasks *task.Store, cfgStore *settings.Store, models []asr.ModelSpec, modelsBaseDir, recordingsDir string) {
+	pane = normalizePane(pane)
 	winMu.Lock()
 	if pageSrv == nil {
 		srv, err := startPageServer(recordingsDir, func(id int64) ([]byte, error) {
@@ -701,7 +792,7 @@ func HideMainWindow() {
 	if w == nil || !windowUsable(w) {
 		return
 	}
-	w.Dispatch(func() { hideWindow(w.Window()) })
+	runOnMain(func() { hideWindow(w.Window()) })
 }
 
 // confirmMode resolves the History setting and which control was used into
@@ -820,7 +911,7 @@ func RefreshMainWindowIfOpen(store *history.Store, meetings *history.MeetingStor
 	// One more call over lists already in hand, not one more read of the
 	// disk -- entries and meetingList are already loaded above.
 	overviewData, _ := json.Marshal(buildOverview(entries, meetingList, time.Now()))
-	w.Dispatch(func() {
+	runOnMain(func() {
 		w.Eval(fmt.Sprintf(
 			"window.voxlog = window.voxlog || {}; window.voxlog.days = %s; window.voxlog.meetings = %s; window.voxlog.overview = %s; window.voxlog.tasks = %s; window.voxlog.rejected = %s; window.voxlog.decodeQueue = %s; typeof render === 'function' && render(); typeof renderRejected === 'function' && renderRejected();",
 			daysData, meetingsData, overviewData, tasksData, rejectedData, decodeQueueJSON(),
@@ -833,9 +924,10 @@ func RefreshMainWindowIfOpen(store *history.Store, meetings *history.MeetingStor
 // they share one window now, and the one the user did not ask for is a click
 // away rather than a reload away.
 func refreshMainWindow(w webview.WebView, pane string, store *history.Store, meetings *history.MeetingStore, tasks *task.Store, cfgStore *settings.Store, models []asr.ModelSpec, modelsBaseDir string) {
+	pane = normalizePane(pane)
 	daysData, meetingsData, overviewData, tasksData, rejectedData := pageData(store, meetings, tasks)
 	settingsData, modelsData, llmData := settingsJSON(cfgStore, models, modelsBaseDir)
-	w.Dispatch(func() {
+	runOnMain(func() {
 		// Re-show, not just re-populate: this same window survives its close
 		// button (keepAliveOnClose), so reopening it lands here with an
 		// ordered-out window that still needs putting back on screen.
@@ -1041,10 +1133,34 @@ func runMainWindow(pane string, store *history.Store, meetings *history.MeetingS
 		fn := meetingStatusHandler
 		winMu.Unlock()
 		if fn == nil {
-			return map[string]any{"running": false, "seconds": 0.0}, nil
+			return map[string]any{"running": false, "seconds": 0.0, "muted": false}, nil
 		}
-		running, seconds := fn()
-		return map[string]any{"running": running, "seconds": seconds}, nil
+		running, seconds, muted := fn()
+		return map[string]any{"running": running, "seconds": seconds, "muted": muted}, nil
+	})
+
+	// toggleMeetingMute backs the banner's Mute button. It answers with the
+	// state after the flip rather than letting the page assume it: the menu
+	// bar item toggles the same flag, so the page's idea of it can be stale
+	// by the time the click lands.
+	w.Bind("toggleMeetingMute", func() (bool, error) {
+		winMu.Lock()
+		fn := toggleMuteHandler
+		winMu.Unlock()
+		if fn == nil {
+			return false, nil
+		}
+		return fn(), nil
+	})
+
+	// logJS is the page's only way to report a fault. This webview has no
+	// console and no inspector: a TypeError in a click handler stops that
+	// handler and leaves no trace at all, which is exactly how a row of
+	// buttons can look wired and do nothing. Everything the page throws goes
+	// to the same log file the rest of the app writes to.
+	w.Bind("logJS", func(msg string) error {
+		log.Printf("page: %s", msg)
+		return nil
 	})
 
 	// stopMeeting backs the banner's Stop button -- the same method the tray
@@ -1224,7 +1340,7 @@ func runMainWindow(pane string, store *history.Store, meetings *history.MeetingS
 
 	w.Bind("startMicTest", func(device string, gain float64) error {
 		return mic.start(device, gain, func(level float64) {
-			w.Dispatch(func() {
+			runOnMain(func() {
 				w.Eval(fmt.Sprintf("window.voxlog.onMicLevel && window.voxlog.onMicLevel(%.3f)", level))
 			})
 		})
@@ -1235,10 +1351,13 @@ func runMainWindow(pane string, store *history.Store, meetings *history.MeetingS
 	})
 
 	w.Bind("checkPermissions", func() (map[string]string, error) {
+		access, screen := cachedStaticPermissions()
 		return map[string]string{
-			"accessibility":   accessibilityStatus(),
+			"accessibility": access,
+			// The only one of the three that can change under a running
+			// process, so the only one asked again on every poll.
 			"microphone":      string(permissions.Microphone()),
-			"screenrecording": screenRecordingStatus(),
+			"screenrecording": screen,
 			// "" when the tap is working or has not been asked to run.
 			"systemaudio": systemAudioError(),
 		}, nil
@@ -1285,7 +1404,7 @@ func runMainWindow(pane string, store *history.Store, meetings *history.MeetingS
 				payload["keyId"] = binding.String()
 			}
 			data, _ := json.Marshal(payload)
-			w.Dispatch(func() {
+			runOnMain(func() {
 				w.Eval(fmt.Sprintf("window.voxlog.onKeyCaptured && window.voxlog.onKeyCaptured(%s)", data))
 			})
 		}()
@@ -1312,7 +1431,7 @@ func runMainWindow(pane string, store *history.Store, meetings *history.MeetingS
 					Downloaded:  downloaded,
 					Total:       total,
 				})
-				w.Dispatch(func() {
+				runOnMain(func() {
 					w.Eval(fmt.Sprintf("window.voxlog.onProgress && window.voxlog.onProgress(%s)", payload))
 				})
 			}, httpFetch)
@@ -1322,7 +1441,7 @@ func runMainWindow(pane string, store *history.Store, meetings *history.MeetingS
 				done.Error = err.Error()
 			}
 			payload, _ := json.Marshal(done)
-			w.Dispatch(func() {
+			runOnMain(func() {
 				w.Eval(fmt.Sprintf("window.voxlog.onDownloadDone && window.voxlog.onDownloadDone(%s)", payload))
 			})
 		}(*spec)
@@ -1510,18 +1629,18 @@ func runMainWindow(pane string, store *history.Store, meetings *history.MeetingS
 		go func() {
 			if err := llm.EnsureRuntime(modelsBaseDir, func(stage string) {
 				payload, _ := json.Marshal(map[string]string{"stage": stage})
-				w.Dispatch(func() {
+				runOnMain(func() {
 					w.Eval(fmt.Sprintf("window.voxlog.onLLMStage && window.voxlog.onLLMStage(%s)", payload))
 				})
 			}); err != nil {
 				payload, _ := json.Marshal(downloadDoneJSON{Family: llm.Spec.Family, Variant: llm.Spec.Variant, Error: err.Error()})
-				w.Dispatch(func() {
+				runOnMain(func() {
 					w.Eval(fmt.Sprintf("window.voxlog.onLLMDownloadDone && window.voxlog.onLLMDownloadDone(%s)", payload))
 				})
 				return
 			}
 			payload, _ := json.Marshal(map[string]string{"stage": "Downloading model…"})
-			w.Dispatch(func() {
+			runOnMain(func() {
 				w.Eval(fmt.Sprintf("window.voxlog.onLLMStage && window.voxlog.onLLMStage(%s)", payload))
 			})
 
@@ -1532,7 +1651,7 @@ func runMainWindow(pane string, store *history.Store, meetings *history.MeetingS
 					Downloaded:  downloaded,
 					Total:       total,
 				})
-				w.Dispatch(func() {
+				runOnMain(func() {
 					w.Eval(fmt.Sprintf("window.voxlog.onLLMProgress && window.voxlog.onLLMProgress(%s)", payload))
 				})
 			}, httpFetch)
@@ -1542,7 +1661,7 @@ func runMainWindow(pane string, store *history.Store, meetings *history.MeetingS
 				done.Error = err.Error()
 			}
 			payload, _ = json.Marshal(done)
-			w.Dispatch(func() {
+			runOnMain(func() {
 				w.Eval(fmt.Sprintf("window.voxlog.onLLMDownloadDone && window.voxlog.onLLMDownloadDone(%s)", payload))
 			})
 		}()
@@ -1555,8 +1674,8 @@ func runMainWindow(pane string, store *history.Store, meetings *history.MeetingS
 	// below), so window.voxlog is populated before the page's own script
 	// runs, whether the page was just built or is a reload.
 	w.Init(fmt.Sprintf(
-		"window.voxlog = window.voxlog || {}; window.voxlog.pane = %q; window.voxlog.days = %s; window.voxlog.meetings = %s; window.voxlog.overview = %s; window.voxlog.tasks = %s; window.voxlog.rejected = %s; window.voxlog.decodeQueue = %s; window.voxlog.settings = %s; window.voxlog.models = %s; window.voxlog.llmModel = %s; window.voxlog.audioBase = %q; window.voxlog.voiceBase = %q;",
-		pane, daysData, meetingsData, overviewData, tasksData, rejectedData, decodeQueueJSON(), settingsData, modelsData, llmData, srv.AudioURL(), srv.VoiceURL(),
+		"window.voxlog = window.voxlog || {}; window.voxlog.pane = %q; window.voxlog.days = %s; window.voxlog.meetings = %s; window.voxlog.overview = %s; window.voxlog.tasks = %s; window.voxlog.rejected = %s; window.voxlog.decodeQueue = %s; window.voxlog.settings = %s; window.voxlog.models = %s; window.voxlog.llmModel = %s; window.voxlog.audioBase = %q; window.voxlog.voiceBase = %q; window.voxlog.mixBase = %q;",
+		pane, daysData, meetingsData, overviewData, tasksData, rejectedData, decodeQueueJSON(), settingsData, modelsData, llmData, srv.AudioURL(), srv.VoiceURL(), srv.MixURL(),
 	))
 
 	// Navigate, not SetHtml: the page is served over loopback (see

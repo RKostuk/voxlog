@@ -98,7 +98,7 @@ func (a *app) startMeeting() {
 	dir := filepath.Join(a.hist.Dir(), meetingsDirName)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		log.Printf("meeting: %v", err)
-		notify("Could not create the folder for meeting recordings.")
+		notifyPane("Could not create the folder for meeting recordings.", ui.PaneMeetings)
 		return
 	}
 	micPath, sysPath := meetingPaths(dir, at)
@@ -106,7 +106,7 @@ func (a *app) startMeeting() {
 	micWAV, err := audio.NewWAVWriter(micPath)
 	if err != nil {
 		log.Printf("meeting: %v", err)
-		notify("Could not start the meeting recording.")
+		notifyPane("Could not start the meeting recording.", ui.PaneMeetings)
 		return
 	}
 
@@ -122,7 +122,7 @@ func (a *app) startMeeting() {
 	rec, err := audio.NewRecorder(cfg.InputDevice, cfg.MicGain)
 	if err != nil {
 		log.Printf("meeting recorder init: %v", err)
-		notify("Could not access the microphone.")
+		notifyPane("Could not access the microphone.", ui.PaneMeetings)
 		micWAV.Close()
 		os.Remove(micPath)
 		return
@@ -146,7 +146,7 @@ func (a *app) startMeeting() {
 		}
 	}); err != nil {
 		log.Printf("meeting recorder start: %v", err)
-		notify("Could not start recording.")
+		notifyPane("Could not start recording.", ui.PaneMeetings)
 		rec.Close()
 		micWAV.Close()
 		os.Remove(micPath)
@@ -175,7 +175,7 @@ func (a *app) startMeeting() {
 		// Not fatal: a meeting recorded from the microphone alone is still a
 		// meeting, and the alternative is refusing to record the call at all.
 		log.Printf("meeting system audio: %v", err)
-		notify("Recording the meeting from the microphone only: " + err.Error())
+		notifyPane("Recording the meeting from the microphone only: "+err.Error(), ui.PaneMeetings)
 		sysWAV.Close()
 		os.Remove(sysPath)
 	} else {
@@ -208,8 +208,13 @@ func (a *app) warnAboutRecording() {
 		return
 	}
 	// notify, not notifyPane: there is nothing in the window to show anyone.
-	notify("Recording started \u2014 let the others on the call know.")
+	postRecordingNotice("Recording started \u2014 let the others on the call know.")
 }
+
+// postRecordingNotice is notify, behind a name a test can replace. The notice
+// is the one banner the app is asked for by people rather than by failures,
+// and "it never appeared" is not something a log line can answer.
+var postRecordingNotice = notify
 
 // tickMeetingClock keeps the elapsed time in the menu bar moving.
 func (a *app) tickMeetingClock(stop <-chan struct{}) {
@@ -281,7 +286,7 @@ func (a *app) stopMeeting() {
 		// Nothing decodes it now, so whether the audio stays is decided on the
 		// spot rather than waiting for a transcript that may never come.
 		a.discardMeetingAudioIfDisabled(rec)
-		notifyPane("Meeting recorded. Transcribe it from Meetings.", "meetings")
+		notifyPane("Meeting recorded. Transcribe it from Meetings.", ui.PaneMeetings)
 		ui.RefreshMainWindowIfOpen(a.hist, a.meetings, a.tasks)
 		return
 	}
@@ -301,15 +306,11 @@ func (a *app) transcribeMeetingEntry(m history.Meeting, spec asr.ModelSpec, lang
 			log.Printf("meeting: transcription stopped: %v", err)
 			return
 		}
-		// One pass over the whole meeting, not one per block: this is what
-		// makes "Speaker 2" in the last minute the same person as in the
-		// first (see speakers.go).
-		linkSpeakers(turns)
 
 		text := renderTurns(turns, nil)
 		if text == "" {
 			log.Printf("meeting: nothing transcribed from %s", m.AudioPath)
-			notify("The meeting recording produced no transcript.")
+			notifyPane("The meeting recording produced no transcript.", ui.PaneMeetings)
 			return
 		}
 
@@ -340,7 +341,7 @@ func (a *app) transcribeMeetingEntry(m history.Meeting, spec asr.ModelSpec, lang
 		go a.summarizeMeeting(m.Start, text)
 		a.discardMeetingAudioIfDisabled(m)
 		ui.RefreshMainWindowIfOpen(a.hist, a.meetings, a.tasks)
-		notifyPane("Meeting transcript ready.", "meetings")
+		notifyPane("Meeting transcript ready.", ui.PaneMeetings)
 	})
 }
 
