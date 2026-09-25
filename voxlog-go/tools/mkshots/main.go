@@ -39,6 +39,7 @@ var injections = []struct{ marker, file string }{
 	{"  /* SETTINGS_CSS */", "settings.css"},
 	{"  /* INDICATOR_CSS */", "indicator.css"},
 	{"  <!-- SETTINGS_PANE -->", "settings-pane.html"},
+	{"  <!-- WELCOME -->", "welcome.html"},
 }
 
 func main() {
@@ -120,6 +121,9 @@ var shots = []shot{
 	{name: "meetings", pane: "meetings"},
 	{name: "meeting", pane: "meetings", after: `openMeeting(` + quoted(meetingID) + `);`},
 	{name: "tasks", pane: "tasks"},
+	// The first-run welcome, on the step that decides how the app listens.
+	{name: "welcome", pane: "welcome", after: `
+	  document.querySelector('#wl-steps button[data-i="3"]').click();`},
 	{name: "settings-mcp", pane: "settings", after: `
 	  document.querySelector('#settings-subnav .subnav-item[data-subpane="mcp"]').click();`},
 }

@@ -68,6 +68,8 @@ func TestStoreLoadPartialFileFillsMissingFieldsFromDefaults(t *testing.T) {
 	got := s.Get()
 	want := DefaultSettings()
 	want.Language = "en"
+	// An unversioned file predates the welcome (see migrate).
+	want.WelcomeDone = true
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("got %+v, want %+v", got, want)
 	}
@@ -290,5 +292,35 @@ func TestAChosenTasksKeySurvivesTheMigration(t *testing.T) {
 	}
 	if got := NewStore(path).Get(); got.TasksKeyID != "ctrl+vk:8" {
 		t.Fatalf("tasks_key = %q, want the stored choice %q", got.TasksKeyID, "ctrl+vk:8")
+	}
+}
+
+// The welcome is for a first run. No file at all is a first run; a file from
+// before the welcome existed is someone who already set the app up.
+func TestWelcomeIsOwedOnlyToAFreshInstall(t *testing.T) {
+	fresh := NewStore(filepath.Join(t.TempDir(), "settings.json")).Get()
+	if fresh.WelcomeDone {
+		t.Error("a fresh install must be shown the welcome")
+	}
+
+	path := filepath.Join(t.TempDir(), "settings.json")
+	if err := os.WriteFile(path, []byte(`{"settings_version":2,"dictate_key":"vk:54"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if !NewStore(path).Get().WelcomeDone {
+		t.Error("an install that predates the welcome must not be walked through it")
+	}
+}
+
+// Once written at the current version, "not done yet" is a real state and
+// has to survive a relaunch -- or quitting halfway through would skip it.
+func TestAnUnfinishedWelcomeSurvivesARelaunch(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "settings.json")
+	s := NewStore(path)
+	if err := s.Save(); err != nil {
+		t.Fatal(err)
+	}
+	if NewStore(path).Get().WelcomeDone {
+		t.Error("welcome_done flipped to true on a plain relaunch")
 	}
 }

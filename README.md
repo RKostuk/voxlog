@@ -1,16 +1,37 @@
-# Voxlog
+<p align="center">
+  <img src="media/icon.png" width="112" alt="Voxlog">
+</p>
 
-**A menu bar dictation and meeting recorder for macOS that never talks to a server.**
+<h1 align="center">Voxlog</h1>
+
+<p align="center">
+  <b>A menu bar dictation and meeting recorder for macOS that never talks to a server.</b>
+</p>
+
+<p align="center">
+  <a href="https://github.com/RKostuk/voxlog/releases/latest"><img src="https://img.shields.io/github/v/release/RKostuk/voxlog?label=release&color=6552e0" alt="Latest release"></a>
+  <img src="https://img.shields.io/badge/macOS-13%2B-1d1d1f?logo=apple" alt="macOS 13+">
+  <img src="https://img.shields.io/badge/Apple%20Silicon-arm64-1d1d1f" alt="Apple Silicon">
+  <img src="https://img.shields.io/badge/runs-local%20by%20default-34c759" alt="Runs locally by default">
+</p>
+
+<p align="center">
+  <a href="#install">Install</a> ·
+  <a href="#first-run">First run</a> ·
+  <a href="#what-it-does">What it does</a> ·
+  <a href="#models">Models</a> ·
+  <a href="#privacy">Privacy</a> ·
+  <a href="#building">Building</a>
+</p>
 
 Hold a key, speak, and the transcript lands in whatever app you were typing in.
 Record a whole call and get it back as a transcript with the speakers told
-apart. Everything — the speech models, the summaries, the search — runs on the
-machine in front of you. No account, no upload, no network call the app makes
-on its own except downloading a model you asked for.
+apart, a summary, and the tasks that were said out loud. Everything — the
+speech models, the summaries, the search — runs on the machine in front of
+you. No account, no upload, no network call the app makes on its own except
+downloading a model you asked for.
 
 ![The Overview section: today's counts, a fourteen-day chart, and the most recent takes](media/overview.png)
-
-`macOS 13+` · `Apple Silicon` · `Go + sherpa-onnx` · everything local
 
 > The screenshots on this page are the real interface rendered with invented
 > data — see [`tools/mkshots`](voxlog-go/tools/mkshots). Nobody's transcripts
@@ -30,17 +51,32 @@ on its own except downloading a model you asked for.
    ```
 
    Or right-click the app, choose **Open**, and confirm.
-3. Launch it. It lives in the menu bar; there is no Dock icon and no window
-   until you ask for one.
-4. Grant the permissions it asks for, then pick a model in **Settings →
-   Model** and let it download. Nothing can be transcribed until one is on
-   disk.
+3. Launch it. It lives in the menu bar, with no Dock icon. The first launch
+   opens a short welcome that walks through the rest; see [First run](#first-run).
 
 | Permission | Why | What happens without it |
 |---|---|---|
 | Accessibility | Global hotkeys | The event tap is created and silently never receives a key. This is the one that looks like the app is broken. |
 | Microphone | Recording | Nothing records |
 | Screen Recording | System audio | Meetings capture your side only — macOS treats audio-only capture as screen capture |
+
+---
+
+## First run
+
+The first launch opens a welcome, one step at a time: the permissions and what
+each is for, the microphone with a live level to check it hears you, whether
+Voxlog listens on a key or all the time, the shortcuts (press a new one to
+rebind it), where the recording indicator sits, how calls are recorded, and
+whether tasks and summaries run on this Mac or through an API. The last step
+downloads the speech model if it is not on disk yet.
+
+![The welcome, on the step that decides whether Voxlog listens on a key or all the time](media/welcome.png)
+
+Every step can be skipped, and every choice is an ordinary setting you can
+change later. Granting Accessibility needs a relaunch; the welcome comes back
+on the step you left. Open it again any time from **Settings → Advanced →
+Welcome tour**.
 
 ---
 
@@ -239,8 +275,8 @@ webview gets and fills it with invented data.
 | `internal/vad` | The voice-activity gate always-on listens through |
 | `internal/diarize` | Speaker segmentation and clustering |
 | `internal/voiceid` | Speaker embeddings, and telling one voice from another |
-| `internal/history` | Per-day transcript files, the meetings database, retention |
-| `internal/task` | Tasks, one JSON file each |
+| `internal/history` | The SQLite database: dictations, meetings, turns, voices, search, retention |
+| `internal/task` | Tasks, their reminders, and the lines marked "not a task" |
 | `internal/llm` | The local MLX classifier and its runtime |
 | `internal/mcp` | The MCP server: JSON-RPC over loopback HTTP, and its tools |
 | `internal/hotkey` | CGEventTap listener, bindings, key labels |
@@ -248,7 +284,7 @@ webview gets and fills it with invented data.
 | `internal/permissions` | TCC status checks |
 | `internal/usernotify` | Notification banners, and routing a click on one back into the app |
 | `internal/settings` | JSON settings under Application Support |
-| `internal/ui` | The three webview windows, and the AppKit calls behind them |
+| `internal/ui` | The webview windows, the first-run welcome, and the AppKit calls behind them |
 
 At the top level, alongside `main.go`: `app.go` holds the state a hotkey press
 acts on, `dictate.go` and `meeting.go` are the two kinds of recording session,

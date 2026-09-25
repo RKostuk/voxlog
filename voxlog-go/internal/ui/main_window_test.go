@@ -9,6 +9,7 @@ import (
 
 	"voxlog-go/internal/history"
 	"voxlog-go/internal/output"
+	"voxlog-go/internal/settings"
 )
 
 func at(t *testing.T, s string) time.Time {
@@ -360,7 +361,7 @@ func TestConfirmModeResolvesTheHistorySetting(t *testing.T) {
 // it can come from a banner posted by an older build. selectPane("") does not
 // mean "leave it alone" -- it turns every pane off and leaves a blank window.
 func TestUnknownPanesLandOnOverview(t *testing.T) {
-	for _, pane := range []string{PaneOverview, PaneHistory, PaneMeetings, PaneTasks, PaneSettings} {
+	for _, pane := range []string{PaneOverview, PaneHistory, PaneMeetings, PaneTasks, PaneSettings, PaneWelcome} {
 		if got := normalizePane(pane); got != pane {
 			t.Errorf("normalizePane(%q) = %q, want it unchanged", pane, got)
 		}
@@ -393,6 +394,39 @@ func TestPaneNamesMatchThePage(t *testing.T) {
 		}
 		if !strings.Contains(string(page), `data-pane="`+literal+`"`) {
 			t.Errorf("the page has no pane named %q", literal)
+		}
+	}
+}
+
+// The Settings form sends only the fields it lists. A save from it must not
+// reset the settings version (re-running every migration next launch) or
+// bring the finished welcome back.
+func TestSavingFromTheFormKeepsWhatTheAppOwns(t *testing.T) {
+	stored := settings.DefaultSettings()
+	stored.WelcomeDone = true
+	fromForm := settings.Settings{Language: "en"}
+	got := keepAppOwned(fromForm, stored)
+	if got.Version != stored.Version {
+		t.Errorf("Version = %d, want %d", got.Version, stored.Version)
+	}
+	if !got.WelcomeDone {
+		t.Error("a Settings save brought the welcome back")
+	}
+	if got.Language != "en" {
+		t.Errorf("Language = %q, want the form's value", got.Language)
+	}
+}
+
+// The welcome is drawn over the shell, so its fragment has to be spliced in
+// and has to know how to open.
+func TestBuildMainPageCarriesTheWelcome(t *testing.T) {
+	page := buildMainPage()
+	if strings.Contains(page, welcomeMarkup) {
+		t.Error("the welcome marker was left unspliced")
+	}
+	for _, want := range []string{`id="welcome"`, "window.openWelcome", "finishWelcome("} {
+		if !strings.Contains(page, want) {
+			t.Errorf("the page is missing %q", want)
 		}
 	}
 }

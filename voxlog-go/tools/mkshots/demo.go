@@ -325,7 +325,7 @@ var silentBindings = mustJSON([]string{
 	"setTaskStatus", "setTaskText", "setTaskNotes", "deleteTask", "rejectTask",
 	"removeRejected", "restoreRejected", "setMeetingEntity", "nameSpeaker", "linkSpeaker",
 	"unlinkSpeaker", "renameVoice", "forgetVoice", "eraseVoice", "copyText",
-	"mcpRegenerateToken",
+	"mcpRegenerateToken", "finishWelcome", "welcomeStep", "setLLMAPIKey", "llmAPIKeyStored",
 })
 
 func mustJSON(v any) string {
