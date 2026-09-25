@@ -31,6 +31,7 @@ func voxlogJSON(pane string) string {
 	cfg.AlwaysOn = true
 	cfg.MCPEnabled = true
 	cfg.CaptureSystemAudio = true
+	cfg.MeetingSystemAudio = true
 	cfg.SeparateSpeakers = true
 	// Otherwise the pane seeds the project dictionary on load and saves,
 	// which means a stubbed saveSettings and a re-render mid-screenshot.

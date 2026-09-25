@@ -13,6 +13,7 @@ import (
 	"voxlog-go/internal/history"
 	"voxlog-go/internal/hotkey"
 	"voxlog-go/internal/output"
+	"voxlog-go/internal/permissions"
 	"voxlog-go/internal/settings"
 	"voxlog-go/internal/systemaudio"
 	"voxlog-go/internal/ui"
@@ -188,7 +189,9 @@ func (a *app) startDictation() {
 // startDictationSystemAudio adds what is playing on the Mac to this take, when
 // the setting asks for it and the tap is free.
 func (a *app) startDictationSystemAudio(d *dictation, cfg settings.Settings) {
-	if !cfg.CaptureSystemAudio {
+	// Preflight, never a prompt: a dictation is not where anyone should be
+	// asked for Screen Recording.
+	if !cfg.CaptureSystemAudio || !permissions.ScreenRecording() {
 		return
 	}
 	err := systemaudio.Start(func(chunk []float32) {

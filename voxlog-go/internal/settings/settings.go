@@ -71,6 +71,11 @@ type Settings struct {
 	// into the recording alongside the microphone. Needs Screen Recording
 	// permission (macOS treats even audio-only capture as screen capture).
 	CaptureSystemAudio bool `json:"capture_system_audio"`
+	// MeetingSystemAudio records the other side of a call alongside the
+	// microphone. Off by default: it is the only thing in the app that needs
+	// Screen Recording, and a meeting recorded from the microphone alone
+	// (notes in a courtroom, a lecture) should never have to ask for it.
+	MeetingSystemAudio bool `json:"meeting_system_audio"`
 	// SeparateSpeakers transcribes the microphone and the system audio as
 	// two streams and labels them, instead of mixing them into one. Only
 	// meaningful with CaptureSystemAudio on, and only takes effect when the
@@ -270,7 +275,7 @@ type Settings struct {
 // currentSettingsVersion is what a freshly written file carries. Bump it and
 // add a step to migrate when a default changes in a way that has to reach
 // files already on disk.
-const currentSettingsVersion = 3
+const currentSettingsVersion = 4
 
 // DefaultTasksKeyID is the quick-tasks binding a fresh install gets, and the
 // one a file written before it existed is migrated onto: Command-/ ("vk:44"
@@ -469,6 +474,9 @@ func (s *Store) Load() error {
 // Version 3: the first-run welcome arrived. A file written before it belongs
 // to someone who already found their way around, so they are not walked
 // through setup again; they can still open it from Settings > Advanced.
+//
+// Version 4: meetings stopped reaching for system audio unasked. Before it
+// every meeting tried, so a file from then keeps doing so.
 func migrate(v *Settings, fileVersion int) {
 	if fileVersion < 1 {
 		if v.AlwaysOnSystemAudio == "" || v.AlwaysOnSystemAudio == AlwaysOnTapSession {
@@ -480,6 +488,9 @@ func migrate(v *Settings, fileVersion int) {
 	}
 	if fileVersion < 3 {
 		v.WelcomeDone = true
+	}
+	if fileVersion < 4 {
+		v.MeetingSystemAudio = true
 	}
 	v.Version = currentSettingsVersion
 }

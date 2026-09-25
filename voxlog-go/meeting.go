@@ -12,6 +12,7 @@ import (
 	"voxlog-go/internal/asr"
 	"voxlog-go/internal/audio"
 	"voxlog-go/internal/history"
+	"voxlog-go/internal/permissions"
 	"voxlog-go/internal/settings"
 	"voxlog-go/internal/systemaudio"
 	"voxlog-go/internal/ui"
@@ -153,11 +154,16 @@ func (a *app) startMeeting() {
 		return
 	}
 
-	// A meeting always tries for system audio: the other side of the call is
-	// most of what a call is. The CaptureSystemAudio setting is about plain
-	// dictation, not this.
-	sysWAV, err := audio.NewWAVWriter(sysPath)
-	if err != nil {
+	// The other side of the call, when the user asked for it. Off, the
+	// meeting is the microphone alone and ScreenCaptureKit is never touched
+	// -- touching it is what makes macOS ask for Screen Recording.
+	var sysWAV *audio.WAVWriter
+	if !cfg.MeetingSystemAudio {
+		log.Printf("meeting: microphone only (system audio is off)")
+	} else if !permissions.ScreenRecording() {
+		log.Printf("meeting: microphone only (no Screen Recording permission)")
+		notifyPane("Recording the meeting from the microphone only: grant Screen Recording in Settings to record the other side.", ui.PaneSettings)
+	} else if sysWAV, err = audio.NewWAVWriter(sysPath); err != nil {
 		log.Printf("meeting: %v", err)
 	} else if err := systemaudio.Start(func(chunk []float32) {
 		level := audio.Level(chunk)

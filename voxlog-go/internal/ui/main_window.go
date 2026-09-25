@@ -1289,29 +1289,22 @@ func runMainWindow(pane string, store *history.Store, meetings *history.MeetingS
 	// a process: once Accessibility or Screen Recording is granted, the
 	// running app keeps seeing the old "denied" until it starts again.
 	w.Bind("restartApp", func() error {
-		exe, err := os.Executable()
+		target, err := relaunchTarget()
 		if err != nil {
 			return err
 		}
-		// From <bundle>/Contents/MacOS/voxlog-go, walk back up to the .app
-		// so the relaunch keeps the bundle identity the permissions are
-		// attached to; fall back to the bare binary when run unbundled.
-		target := exe
-		if dir := filepath.Dir(filepath.Dir(filepath.Dir(exe))); strings.HasSuffix(dir, ".app") {
-			target = dir
+		// Hand the replacement OpenSettingsFlag so it comes back up on this
+		// same pane -- a restart prompted from Settings that dumps the user
+		// back to a bare menu bar icon is a dead end. An error here goes back
+		// to the page, which says so, rather than quitting into nothing.
+		log.Printf("restart: relaunching %s", target)
+		if err := startRelaunch(target, OpenSettingsFlag); err != nil {
+			log.Printf("restart: %v", err)
+			return err
 		}
-
 		go func() {
-			// Hand the replacement OpenSettingsFlag so it comes back up on
-			// this same pane -- a restart prompted from Settings that dumps
-			// the user back to a bare menu bar icon is a dead end.
-			if strings.HasSuffix(target, ".app") {
-				exec.Command("open", "-n", target, "--args", OpenSettingsFlag).Start()
-			} else {
-				exec.Command(target, OpenSettingsFlag).Start()
-			}
-			// Give the replacement a beat to come up before this one goes.
-			time.Sleep(400 * time.Millisecond)
+			// Let the binding's answer reach the page before going.
+			time.Sleep(100 * time.Millisecond)
 			os.Exit(0)
 		}()
 		return nil

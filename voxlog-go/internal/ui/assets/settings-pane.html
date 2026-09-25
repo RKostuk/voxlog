@@ -435,6 +435,14 @@
             <option value="manual">Only when I ask, from History</option>
           </select>
         </div>
+        <!-- The one thing in the app that needs Screen Recording. Off, a
+             meeting is the microphone alone and macOS is never asked. -->
+        <div class="item">
+          <div class="title">Record the other side of the call
+            <div class="subtext">System audio, alongside your microphone &middot; needs Screen &amp; System Audio Recording. Off, a meeting records your microphone only</div>
+          </div>
+          <input type="checkbox" class="switch" id="meeting_system_audio">
+        </div>
         <div class="item">
           <div class="title">Re-read older meetings
             <div class="subtext">Recovers per-speaker replies from recordings made before Voxlog stored them &middot; one at a time, and it stops the moment you record</div>
@@ -472,7 +480,7 @@
         </div>
         <div class="item">
           <div class="title">Include system audio in dictation too
-            <div class="subtext">A meeting always records it &middot; this adds it to plain dictation, when no meeting is running</div>
+            <div class="subtext">Adds what is playing to plain dictation, when no meeting is running &middot; needs Screen &amp; System Audio Recording</div>
           </div>
           <input type="checkbox" class="switch" id="capture_system_audio">
         </div>
@@ -835,6 +843,8 @@
     // but always saves the raw ids.
     var keys = { dictate_key: '', history_key: '', meeting_key: '', tasks_key: '' };
 
+    var autoSelect = null; // family|variant to select once its download lands
+
     function currentModel() {
       var el = document.querySelector('input[name=model]:checked');
       return el ? el.value.split('|') : [settings.model_family, settings.model_variant];
@@ -911,6 +921,9 @@
       root.querySelectorAll('.dl-btn').forEach(function (b) {
         b.addEventListener('click', function () {
           var family = b.dataset.family, variant = b.dataset.variant;
+          // Downloading a model is choosing it: it is selected the moment
+          // it lands. The last one asked for wins.
+          autoSelect = family + '|' + variant;
           b.dataset.downloading = '1';
           b.disabled = true;
           var prog = document.getElementById('prog-' + family + '-' + variant);
@@ -1181,6 +1194,17 @@
         if (m.family === p.family && m.variant === p.variant && !p.error) m.downloaded = true;
       });
       renderModels();
+      if (!p.error && autoSelect === p.family + '|' + p.variant) {
+        autoSelect = null;
+        var radio = document.querySelector('input[name=model][value="' + p.family + '|' + p.variant + '"]');
+        if (radio) {
+          radio.checked = true;
+          settings.model_family = p.family;
+          settings.model_variant = p.variant;
+          // A checked set from script fires no change, so nothing saves it.
+          save();
+        }
+      }
       renderCapabilities();
       syncModelTest();
       if (p.error) document.getElementById('status').textContent = 'Download failed: ' + p.error;
@@ -1503,6 +1527,7 @@
         indicator_wave_width: parseInt(document.getElementById('indicator_wave_width').value, 10),
         indicator_wave_height: parseInt(document.getElementById('indicator_wave_height').value, 10),
         capture_system_audio: document.getElementById('capture_system_audio').checked,
+        meeting_system_audio: document.getElementById('meeting_system_audio').checked,
         separate_speakers: document.getElementById('separate_speakers').checked,
         audio_retention: document.getElementById('audio_retention').value,
         audio_max_gb: parseFloat(document.getElementById('audio_max_gb').value),
@@ -2044,6 +2069,7 @@
       document.getElementById('indicator_wave_height').value = settings.indicator_wave_height || 16;
       syncIndicatorStyle();
       document.getElementById('capture_system_audio').checked = !!settings.capture_system_audio;
+      document.getElementById('meeting_system_audio').checked = !!settings.meeting_system_audio;
       document.getElementById('separate_speakers').checked = !!settings.separate_speakers;
       document.getElementById('escape_cancels').checked = !!settings.escape_cancels;
       document.getElementById('show_transcribing_overlay').checked = !!settings.show_transcribing_overlay;
@@ -2251,7 +2277,9 @@
 
     document.getElementById('restart-app').addEventListener('click', function () {
       document.getElementById('status').textContent = 'Restarting…';
-      window.restartApp();
+      window.restartApp().catch(function (err) {
+        document.getElementById('status').textContent = 'Could not restart: ' + err + '. Quit Voxlog and open it again.';
+      });
     });
 
     document.getElementById('perm-accessibility-btn').addEventListener('click', function () {

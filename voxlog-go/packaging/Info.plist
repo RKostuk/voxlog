@@ -24,7 +24,7 @@
     <key>LSUIElement</key>
     <true/>
     <key>NSScreenCaptureUsageDescription</key>
-    <string>Voxlog needs screen recording access to capture system audio (no screen content is recorded).</string>
+    <string>Voxlog needs screen recording access only to record the other side of a meeting (audio only; nothing on screen is recorded).</string>
     <key>NSMicrophoneUsageDescription</key>
     <string>Voxlog needs microphone access to transcribe your dictation.</string>
 </dict>

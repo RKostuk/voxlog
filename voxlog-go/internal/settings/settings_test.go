@@ -70,6 +70,7 @@ func TestStoreLoadPartialFileFillsMissingFieldsFromDefaults(t *testing.T) {
 	want.Language = "en"
 	// An unversioned file predates the welcome (see migrate).
 	want.WelcomeDone = true
+	want.MeetingSystemAudio = true
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("got %+v, want %+v", got, want)
 	}
@@ -322,5 +323,26 @@ func TestAnUnfinishedWelcomeSurvivesARelaunch(t *testing.T) {
 	}
 	if NewStore(path).Get().WelcomeDone {
 		t.Error("welcome_done flipped to true on a plain relaunch")
+	}
+}
+
+// A fresh install records meetings from the microphone and never asks for
+// Screen Recording; an install from before kept trying for system audio.
+func TestMeetingSystemAudioIsOptInOnlyForAFreshInstall(t *testing.T) {
+	fresh := NewStore(filepath.Join(t.TempDir(), "settings.json")).Get()
+	if fresh.MeetingSystemAudio {
+		t.Error("a fresh install must not reach for system audio in meetings")
+	}
+
+	path := filepath.Join(t.TempDir(), "settings.json")
+	if err := os.WriteFile(path, []byte(`{"settings_version":3,"model_family":"orukeet","model_variant":"v0.1.0-int8"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	got := NewStore(path).Get()
+	if !got.MeetingSystemAudio {
+		t.Error("a v3 file must keep recording the other side of meetings")
+	}
+	if got.ModelFamily != "orukeet" {
+		t.Errorf("model family = %q, a chosen model must survive", got.ModelFamily)
 	}
 }

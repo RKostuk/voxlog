@@ -1128,8 +1128,10 @@ func onReady(store *settings.Store, histStore *history.Store, meetStore *history
 	// afterward, so the hotkeys look "broken" with no error anywhere.
 	// PromptAccessibilityTrust shows macOS's own native grant dialog (a no-op
 	// if already trusted); notify() is a backup for when that system dialog
-	// gets dismissed or missed.
-	if !hotkey.PromptAccessibilityTrust() {
+	// gets dismissed or missed. Not while the welcome is still owed: its
+	// Permissions step asks, and the system dialog popping up over it again
+	// after the relaunch that step itself asks for is only in the way.
+	if cfg.WelcomeDone && !hotkey.PromptAccessibilityTrust() {
 		notifyPane("Voxlog needs Accessibility permission for hotkeys to work. Grant it in System Settings, then restart Voxlog.", ui.PaneSettings)
 	}
 

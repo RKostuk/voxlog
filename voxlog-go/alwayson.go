@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"log"
 	"os"
 	"strings"
@@ -11,6 +12,7 @@ import (
 	"voxlog-go/internal/audio"
 	"voxlog-go/internal/diarize"
 	"voxlog-go/internal/history"
+	"voxlog-go/internal/permissions"
 	"voxlog-go/internal/settings"
 	"voxlog-go/internal/systemaudio"
 	"voxlog-go/internal/ui"
@@ -836,11 +838,11 @@ func (a *app) syncTap(cfg settings.Settings) {
 	running, hasSession := a.listen.tapRunning, a.listen.sess != nil
 	a.listen.mu.Unlock()
 
-	wantAlways := cfg.AlwaysOnSystemAudio == settings.AlwaysOnTapAlways
+	wantAlways := cfg.AlwaysOnSystemAudio == settings.AlwaysOnTapAlways && cfg.MeetingSystemAudio
 	switch {
 	case wantAlways && !running:
 		a.startTap()
-	case !wantAlways && running && !hasSession:
+	case !wantAlways && running && (!hasSession || !cfg.MeetingSystemAudio):
 		a.stopTap()
 	}
 }
@@ -853,6 +855,16 @@ func (a *app) startTap() {
 	running, listening := a.listen.tapRunning, a.listen.listening
 	a.listen.mu.Unlock()
 	if running || !listening {
+		return
+	}
+	// The far end is the meeting's system audio by another road, so it
+	// follows the same switch. Off, the tap is never opened and macOS never
+	// asks for Screen Recording; on without the permission, Settings says so.
+	if !a.store.Get().MeetingSystemAudio {
+		return
+	}
+	if !permissions.ScreenRecording() {
+		a.noteSystemAudioFailure(errors.New("Screen Recording is not granted"))
 		return
 	}
 

@@ -46,6 +46,7 @@
     .wl-side .skipped .wl-dot { border-style: dashed; }
     .wl-side [aria-current="step"] .wl-dot { border-color: #fff; color: #fff; }
     .wl-side-foot { margin-top: auto; padding: var(--sp-4); font-size: var(--fs-caption); color: var(--secondary); }
+    #wl-model-state:not(:empty) { margin-bottom: var(--sp-3); color: var(--label); font-variant-numeric: tabular-nums; }
 
     .wl-main { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
     .wl-pane { flex: 1; overflow-y: auto; padding: var(--sp-8) 36px var(--sp-6); display: flex; flex-direction: column; gap: var(--sp-6); }
@@ -160,7 +161,7 @@
     <div class="wl-sheet">
       <nav class="wl-side" aria-label="Setup steps">
         <ol id="wl-steps"></ol>
-        <div class="wl-side-foot">Every step can be skipped. Open this again from Settings &rsaquo; Advanced.</div>
+        <div class="wl-side-foot"><div id="wl-model-state" role="status"></div>Every step can be skipped. Open this again from Settings &rsaquo; Advanced.</div>
       </nav>
       <section class="wl-main">
         <div class="wl-pane" id="wl-pane"></div>
@@ -212,7 +213,8 @@
     var keyError = '';
     var micOn = false, micLevel = 0, micSmooth = 0, micFrame = null;
     var permTimer = null;
-    var speechProgress = null, llmProgress = null, llmStage = '';
+    var speechProgress = null, speechError = '', llmProgress = null, llmStage = '';
+    var screenAsked = false;  // Screen Recording asked for in this run: only a restart shows the answer
     var saveTimer = null;
 
     function esc(s) { return window.escapeHtml ? window.escapeHtml(String(s)) : String(s); }
@@ -273,13 +275,15 @@
       if (p.total > 0) speechProgress = Math.round(p.downloaded / p.total * 100);
       var el = document.getElementById('wl-speech-prog');
       if (el && speechProgress !== null) el.value = speechProgress;
+      modelFoot();
     });
     chain('onDownloadDone', function (p) {
+      if (p.family !== S.model_family || p.variant !== S.model_variant) return;
       (v().models || []).forEach(function (m) {
         if (m.family === p.family && m.variant === p.variant && !p.error) m.downloaded = true;
       });
       speechProgress = p.error ? null : 100;
-      if (p.error) keyError = 'Download failed: ' + p.error;
+      speechError = p.error || '';
       if (!root.hidden) render();
     });
     chain('onLLMStage', function (p) { llmStage = p.stage; var el = document.getElementById('wl-llm-stage'); if (el) el.textContent = p.stage; });
@@ -289,6 +293,31 @@
       if (el && llmProgress !== null) el.value = llmProgress;
     });
     chain('onLLMDownloadDone', function () { llmProgress = null; if (!root.hidden) render(); });
+
+    // --- the speech model ------------------------------------------------
+    // Fetched from the moment the welcome opens, not left to its last step:
+    // it is the one thing without which nothing works, and by the time the
+    // shortcuts are set it is mostly on disk. A relaunch mid-download starts
+    // it again here; files already complete are kept.
+    function downloadSpeech() {
+      var m = currentModel();
+      if (!m || m.downloaded || speechProgress !== null) return;
+      speechProgress = 0;
+      speechError = '';
+      window.downloadModel(S.model_family, S.model_variant).catch(function (err) {
+        speechProgress = null; speechError = String(err); render();
+      });
+    }
+    function modelFoot() {
+      var el = document.getElementById('wl-model-state');
+      if (!el) return;
+      var m = currentModel();
+      el.textContent = !m ? ''
+        : m.downloaded ? 'Speech model ready.'
+        : speechError ? 'Speech model download failed. Try again on the last step.'
+        : speechProgress !== null ? 'Downloading the speech model… ' + speechProgress + '%'
+        : '';
+    }
 
     // --- side effects per step --------------------------------------------
     function stopMic() {
@@ -353,6 +382,11 @@
     }
     function styleName() { return S.indicator_style === 'transcript' ? 'transcript' : 'capsule'; }
 
+    function restartRow() {
+      return '<div class="wl-row"><div class="wl-grow wl-s">macOS only notices Accessibility and Screen Recording after a restart. This welcome picks up where you left it.' +
+        '<div class="wl-err" id="wl-restart-err" role="status"></div></div><button type="button" class="wl-btn" id="wl-restart">Restart Voxlog</button></div>';
+    }
+
     var VIEWS = {
       welcome: function () {
         return '<div class="wl-hero"><div class="wl-logo" aria-hidden="true">' +
@@ -381,8 +415,8 @@
           '<div class="wl-group">' +
           p('mic', 'microphone', 'Microphone', 'To hear you. Without it Voxlog records nothing.', true, perms.microphone === 'authorized') +
           p('access', 'accessibility', 'Accessibility', 'Global shortcuts, and typing the text into other apps.', true, accessOK) +
-          p('screen', 'screenrecording', 'Screen &amp; System Audio Recording', 'The other side of a call. Nothing on screen is recorded.', false, perms.screenrecording === 'granted') +
-          (accessOK ? '' : '<div class="wl-row"><div class="wl-grow wl-s">macOS only notices Accessibility and Screen Recording after a restart. This welcome picks up where you left it.</div><button type="button" class="wl-btn" id="wl-restart">Restart Voxlog</button></div>') +
+          p('screen', 'screenrecording', 'Screen &amp; System Audio Recording', 'Only to record the other side of a meeting. Dictation and microphone-only meetings never need it; nothing on screen is recorded.', false, perms.screenrecording === 'granted') +
+          (accessOK && !(screenAsked && perms.screenrecording !== 'granted') ? '' : restartRow()) +
           '</div>';
       },
 
@@ -466,7 +500,11 @@
           '<p class="wl-lede">Your voice comes from the microphone, everyone else\'s from system audio. Afterwards Voxlog works out who spoke and for how long.' +
           (S.always_on ? ' In always-on a call is picked up by itself.' : ' Start one from the menu bar, or give it a key.') + '</p>' +
           '<div class="wl-group">' +
-          row('Record the other side', screenOK ? 'Captures what you hear on the call.' : 'Needs Screen &amp; System Audio Recording, from the Permissions step.', sw('sysaudio', S.capture_system_audio)) +
+          row('Record the other side', !S.meeting_system_audio ? 'Off: meetings record your microphone only, and no screen access is asked for.'
+              : screenOK ? 'Captures what you hear on the call.' : 'Needs Screen &amp; System Audio Recording.',
+            (S.meeting_system_audio && !screenOK ? '<button type="button" class="wl-btn" data-grant="screenrecording">Grant…</button>' : '') +
+            sw('sysaudio', S.meeting_system_audio)) +
+          (S.meeting_system_audio && !screenOK && screenAsked ? restartRow() : '') +
           keyRow('meeting_key', 'Start and stop a meeting recording.') +
           row('Transcribe', S.meeting_transcribe === 'manual' ? 'Only when you press Transcribe inside the meeting.' : 'As soon as the call ends.',
             seg('mt', S.meeting_transcribe === 'manual' ? 'manual' : 'stop', [['stop', 'After the call'], ['manual', 'Manually']])) +
@@ -511,13 +549,13 @@
         var speech = !m ? '<span class="wl-pill need">Pick one in Settings › Model</span>'
           : m.downloaded ? '<span class="wl-pill ok">Ready</span>'
           : speechProgress !== null ? '<progress class="wl-prog" id="wl-speech-prog" max="100" value="' + speechProgress + '"></progress>'
-          : '<button type="button" class="wl-btn wl-primary" id="wl-speech-dl">Download</button>';
+          : '<button type="button" class="wl-btn wl-primary" id="wl-speech-dl">' + (speechError ? 'Try again' : 'Download') + '</button>';
         function r(t, val) { return '<div class="wl-row"><div class="wl-grow wl-s">' + t + '</div><div class="wl-t">' + val + '</div></div>'; }
         return '<div class="wl-eyebrow">Ready</div>' +
           '<h1>Press <span class="wl-kbd">' + esc(keyLabel(S.dictate_key)) + '</span> and say your first sentence</h1>' +
           '<p class="wl-lede">Voxlog lives in the menu bar. Everything here can be changed in Settings.' +
           (skipped.length ? ' Skipped: ' + esc(skipped.join(', ')) + '.' : '') + '</p>' +
-          '<div class="wl-group">' + row('Speech model', m ? esc(m.family + ' ' + m.variant) + (m.downloaded ? '' : ' has to be downloaded before the first dictation.') : '', speech) + '</div>' +
+          '<div class="wl-group">' + row('Speech model', m ? esc(m.family + ' ' + m.variant) + (m.downloaded ? '' : speechError ? ' did not download: ' + esc(speechError) : ' is downloading; the first dictation waits for it.') : '', speech) + '</div>' +
           '<div class="wl-group wl-summary">' +
           r('Microphone', esc(S.input_device || 'System default') + ' · ×' + (S.mic_gain || 1).toFixed(1)) +
           r('Listening', S.always_on ? 'Always on' : (S.dictate_activation === 'hold' ? 'Hold the key' : 'Tap the key')) +
@@ -560,6 +598,7 @@
         return '<li class="' + st + '"><button type="button" data-i="' + i + '"' + (i === step ? ' aria-current="step"' : '') + '>' +
           '<span class="wl-dot">' + (st === 'done' ? '✓' : i + 1) + '</span>' + s.label + '</button></li>';
       }).join('');
+      modelFoot();
       document.getElementById('wl-bar').style.width = (step / (STEPS.length - 1) * 100) + '%';
       document.getElementById('wl-back').hidden = step === 0;
       document.getElementById('wl-skip').hidden = step === 0 || id === 'done';
@@ -611,6 +650,7 @@
       root.hidden = false;
       var resume = Math.min(STEPS.length - 1, Math.max(0, S.welcome_step || 0));
       for (var i = 0; i < resume; i++) status[STEPS[i].id] = 'done';
+      downloadSpeech();
       go(resume);
     };
 
@@ -632,7 +672,8 @@
       var t = e.target.closest('button');
       if (!t) return;
       if (t.dataset.grant) {
-        window.requestPermission(t.dataset.grant).then(function () { setTimeout(refreshPerms, 800); });
+        if (t.dataset.grant === 'screenrecording') screenAsked = true;
+        window.requestPermission(t.dataset.grant).then(function () { setTimeout(refreshPerms, 800); render(); });
       } else if (t.dataset.key) {
         if (capturing) return;
         capturing = t.dataset.key;
@@ -644,13 +685,13 @@
         render();
       } else if (t.id === 'wl-restart') {
         // Save first: the relaunch does not wait for the debounce.
-        saveNow().then(function () { window.restartApp(); });
-      } else if (t.id === 'wl-speech-dl') {
-        speechProgress = 0;
-        render();
-        window.downloadModel(S.model_family, S.model_variant).catch(function (err) {
-          speechProgress = null; keyError = 'Download failed: ' + err; render();
+        saveNow().then(function () { return window.restartApp(); }).catch(function (err) {
+          var el = document.getElementById('wl-restart-err');
+          if (el) el.textContent = 'Could not restart: ' + err + '. Quit Voxlog and open it again.';
         });
+      } else if (t.id === 'wl-speech-dl') {
+        downloadSpeech();
+        render();
       } else if (t.id === 'wl-llm-dl') {
         llmProgress = 0;
         render();
@@ -677,7 +718,7 @@
       else if (t.name === 'wl-style') { set('indicator_style', t.value); S.overlay_position = POSITIONS[t.value][0]; }
       else if (t.id === 'wl-pos') set('overlay_position', t.value);
       else if (t.id === 'wl-solid') set('indicator_solid', t.checked);
-      else if (t.id === 'wl-sysaudio') set('capture_system_audio', t.checked);
+      else if (t.id === 'wl-sysaudio') set('meeting_system_audio', t.checked);
       else if (t.name === 'wl-mt') set('meeting_transcribe', t.value);
       else if (t.id === 'wl-notice') set('recording_notice', t.checked);
       else if (t.id === 'wl-taskhub') set('task_hub_enabled', t.checked);
