@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"reflect"
 	"testing"
+
+	"voxlog-go/internal/hotkey"
 )
 
 func TestNewStoreLoadsDefaultsWhenFileMissing(t *testing.T) {
@@ -241,5 +243,52 @@ func TestSummarizingStaysOnForAFileThatPredatesIt(t *testing.T) {
 	}
 	if got.SummaryPromptExtra != "" {
 		t.Errorf("SummaryPromptExtra = %q, want empty", got.SummaryPromptExtra)
+	}
+}
+
+// The quick-tasks drawer is the only way to write a task down by hand, so it
+// ships bound: Command-/ on a fresh install, and on a file that predates the
+// default too. The binding has to be one hotkey.ParseBinding accepts -- a
+// typo here would leave the drawer silently unreachable.
+func TestTasksKeyIsBoundToCommandSlashByDefault(t *testing.T) {
+	if got := DefaultSettings().TasksKeyID; got != DefaultTasksKeyID {
+		t.Fatalf("TasksKeyID = %q, want %q", got, DefaultTasksKeyID)
+	}
+	b := hotkey.ParseBinding(DefaultTasksKeyID)
+	if b.IsZero() {
+		t.Fatalf("ParseBinding(%q) is zero -- the default binding never fires", DefaultTasksKeyID)
+	}
+	if !reflect.DeepEqual(b.Mods, []string{hotkey.ModCommand}) {
+		t.Errorf("modifiers = %v, want [%s]", b.Mods, hotkey.ModCommand)
+	}
+	if b.Label() != "Command + /" {
+		t.Errorf("Label() = %q, want %q", b.Label(), "Command + /")
+	}
+}
+
+func TestEmptyTasksKeyMigratesToTheDefault(t *testing.T) {
+	// Every install written before the default existed carries an empty
+	// tasks_key that nobody chose. It moves on; the version stamp stops it
+	// from happening twice.
+	path := filepath.Join(t.TempDir(), "settings.json")
+	if err := os.WriteFile(path, []byte(`{"tasks_key":""}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	got := NewStore(path).Get()
+	if got.TasksKeyID != DefaultTasksKeyID {
+		t.Fatalf("tasks_key = %q, want %q", got.TasksKeyID, DefaultTasksKeyID)
+	}
+	if got.Version != currentSettingsVersion {
+		t.Fatalf("Version = %d, want %d", got.Version, currentSettingsVersion)
+	}
+}
+
+func TestAChosenTasksKeySurvivesTheMigration(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "settings.json")
+	if err := os.WriteFile(path, []byte(`{"tasks_key":"ctrl+vk:8"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got := NewStore(path).Get(); got.TasksKeyID != "ctrl+vk:8" {
+		t.Fatalf("tasks_key = %q, want the stored choice %q", got.TasksKeyID, "ctrl+vk:8")
 	}
 }

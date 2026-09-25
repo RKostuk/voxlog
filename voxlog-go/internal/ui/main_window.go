@@ -1553,6 +1553,60 @@ func runMainWindow(pane string, store *history.Store, meetings *history.MeetingS
 		return nil
 	})
 
+	// setTaskEntity files a task under a project by hand. The classifier is
+	// the only thing that used to set this, so a task it filed wrong (or left
+	// in Unfiltered because nothing matched) could not be moved without
+	// editing the settings dictionary and waiting for a reclassification.
+	// Free text rather than a checked list, like setMeetingEntity: the page
+	// offers the dictionary, and a project typed nowhere else still groups.
+	w.Bind("setTaskEntity", func(id, entity string) error {
+		entity = strings.TrimSpace(entity)
+		if err := tasks.Update(id, func(t *task.Task) {
+			t.Entity = entity
+			t.Updated = time.Now()
+		}); err != nil {
+			return err
+		}
+		RefreshMainWindowIfOpen(store, meetings, tasks)
+		return nil
+	})
+
+	// setTaskReminder sets, moves or clears a task's reminder. An empty
+	// string clears it; anything else is RFC3339 from the page, which is
+	// what a <input type="datetime-local"> read back as a Date serializes to.
+	//
+	// The timer is re-armed here, not only at startup: task.ScheduleReminder
+	// replaces any timer already running for this id, and CancelReminder
+	// first covers the clear-it case and a reminder moved into the past.
+	// A time already gone is deliberately not armed -- it has nothing left to
+	// wait for, and the pane draws it as overdue.
+	w.Bind("setTaskReminder", func(id, when string) error {
+		var at *time.Time
+		if when = strings.TrimSpace(when); when != "" {
+			parsed, err := time.Parse(time.RFC3339, when)
+			if err != nil {
+				return fmt.Errorf("reminder %q is not a time: %w", when, err)
+			}
+			at = &parsed
+		}
+		if err := tasks.Update(id, func(t *task.Task) {
+			t.Reminder = at
+			t.Updated = time.Now()
+		}); err != nil {
+			return err
+		}
+		task.CancelReminder(id)
+		if at != nil {
+			if updated, err := tasks.Get(id); err == nil {
+				task.ScheduleReminder(updated)
+			} else {
+				log.Printf("task: re-arming reminder for %s: %v", id, err)
+			}
+		}
+		RefreshMainWindowIfOpen(store, meetings, tasks)
+		return nil
+	})
+
 	// removeRejected forgets a "Not a task" correction: the entry stops being
 	// a negative example for the classifier and disappears from the list.
 	w.Bind("removeRejected", func(text string) error {

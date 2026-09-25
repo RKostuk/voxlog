@@ -203,7 +203,7 @@ func TestSharedHelpersLiveOnlyInTheKit(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, decl := range []string{"function escapeHtml(", "function entityColor(", "var taskStatusLabel =", "function taskStatusClass(", "function duration(", "function clockTime("} {
+	for _, decl := range []string{"function escapeHtml(", "function entityColor(", "function entityOptionsHTML(", "var taskStatusLabel =", "function taskStatusClass(", "function duration(", "function clockTime("} {
 		if !strings.Contains(string(kit), decl) {
 			t.Errorf("kit.js is missing %q", decl)
 		}
@@ -214,7 +214,7 @@ func TestSharedHelpersLiveOnlyInTheKit(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		for _, decl := range []string{"function escapeHtml(", "function escapeHTML(", "function entityColor(", "function duration(", "function clockTime(", "var taskStatusLabel", "var STATUS_LABEL"} {
+		for _, decl := range []string{"function escapeHtml(", "function escapeHTML(", "function entityColor(", "function entityOptionsHTML(", "function duration(", "function clockTime(", "var taskStatusLabel", "var STATUS_LABEL"} {
 			if strings.Contains(string(body), decl) {
 				t.Errorf("%s declares its own %q instead of using kit.js", page, decl)
 			}
@@ -370,5 +370,88 @@ func TestLongVoiceListsAreCapped(t *testing.T) {
 		if !strings.Contains(string(page), needle) {
 			t.Errorf("main.html is missing %q", needle)
 		}
+	}
+}
+
+// The drawer's composer is the only way to write a task down by hand, and it
+// is three steps deep now: text, details, project. The ids are what the page
+// wires its keyboard to, and what the hotkey's focusComposer reaches for --
+// a renamed one leaves the drawer opening on nothing.
+func TestDrawerCarriesTheStepwiseComposer(t *testing.T) {
+	body, err := assets.ReadFile("assets/drawer.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	page := string(body)
+	for _, id := range []string{`id="draft-text"`, `id="draft-notes"`, `id="draft-entity"`, `id="draft-resume"`, `id="draft-step"`} {
+		if !strings.Contains(page, id) {
+			t.Errorf("drawer.html is missing %s", id)
+		}
+	}
+	// Go evals this by name on every show of the window.
+	if !strings.Contains(page, "window.focusComposer = focusComposer") {
+		t.Error("drawer.html no longer exports focusComposer, so the hotkey would open a window with no caret in it")
+	}
+	// Three arguments, matching the drawerAddTask binding: a task written by
+	// hand carries its notes and its project, not just a line of text.
+	if !strings.Contains(page, "window.drawerAddTask(text, draft.notes.trim(), entity)") {
+		t.Error("drawer.html no longer passes notes and project to drawerAddTask")
+	}
+	// The old single-line box, and the project coming from whichever chip
+	// happened to be on, are what this replaces.
+	if strings.Contains(page, `id="new-task"`) {
+		t.Error("drawer.html still carries the one-line add box the composer replaced")
+	}
+}
+
+// A task opens beside the list, not inside it: expanding a row in place
+// pushed every task under it down the page, which is the thing this pane was
+// asked to stop doing.
+func TestTasksPaneOpensATaskBesideTheList(t *testing.T) {
+	body, err := assets.ReadFile("assets/main.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	page := string(body)
+	for _, needle := range []string{`class="task-split"`, `id="task-panel"`, "function renderTaskDetail(", "function selectTask(",
+		// The project and the reminder are set from the panel, not only read
+		// off it: both used to be a line of grey text.
+		"task-entity-pick", "task-reminder-at", "window.setTaskEntity(", "window.setTaskReminder("} {
+		if !strings.Contains(page, needle) {
+			t.Errorf("main.html is missing %s", needle)
+		}
+	}
+	for _, gone := range []string{`class="task-detail"`, "openTaskIDs"} {
+		if strings.Contains(page, gone) {
+			t.Errorf("main.html still carries %s, the in-row detail this replaced", gone)
+		}
+	}
+}
+
+// Rejecting and deleting are the two irreversible things this pane can do.
+// They used to sit on every row, revealed on hover, and fire on one click --
+// a misclick on a list people scroll through. They belong to the open task,
+// and they ask first.
+func TestDestructiveTaskActionsAreConfirmedAndPanelOnly(t *testing.T) {
+	body, err := assets.ReadFile("assets/main.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	page := string(body)
+	if strings.Contains(page, `class="task-acts"`) {
+		t.Error("the hover-revealed row actions are back on the list rows")
+	}
+	if !strings.Contains(page, `class="task-side-acts"`) {
+		t.Error("the panel has lost its actions")
+	}
+	for _, needle := range []string{`data-confirm="Not a task`, `data-confirm="Delete`, "task-act-cancel", "classList.add('confirming')"} {
+		if !strings.Contains(page, needle) {
+			t.Errorf("main.html is missing %s -- the confirmation step", needle)
+		}
+	}
+	// confirm() cannot be the confirmation: this webview has no
+	// WKUIDelegate, so it answers false without asking.
+	if strings.Contains(page, "confirm(") && !strings.Contains(page, "data-confirm") {
+		t.Error("main.html calls confirm(), which is a no-op in this webview")
 	}
 }
