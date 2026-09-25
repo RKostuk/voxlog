@@ -726,7 +726,12 @@ func modelForSettings(cfg settings.Settings) (asr.ModelSpec, bool) {
 // placement from settings each time rather than at startup: unlike the
 // hotkey itself, where the drawer opens can change without a restart.
 func toggleTasksDrawer(store *settings.Store, tasks *task.Store) {
-	ui.SetDrawerPlacement(store.Get().TasksDrawerPlacement)
+	cfg := store.Get()
+	ui.SetDrawerPlacement(cfg.TasksDrawerPlacement)
+	// The composer's project picker offers the same closed list the
+	// classifier files against, so a hand-written task lands in a project the
+	// Tasks pane already groups by rather than inventing a new one.
+	ui.SetDrawerProjects(cfg.EntityDictionary)
 	ui.ToggleTasksDrawer(tasks)
 }
 

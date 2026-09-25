@@ -157,9 +157,11 @@ type Settings struct {
 	AlwaysOnExcludedApps []string `json:"always_on_excluded_apps"`
 
 	// TasksKeyID opens the quick-tasks drawer -- the small always-on-top
-	// window listing what is still open, with a one-line box for adding to
-	// it. Empty by default, like the meeting key: an unbound drawer is a
-	// feature that costs nothing until it is asked for.
+	// window listing what is still open, with the stepwise composer for
+	// adding to it. Command-/ by default: writing a task down is the one
+	// thing in this app that has to work while something else has the
+	// keyboard, and a drawer nobody can reach from the keyboard is a drawer
+	// nobody uses. Rebindable in Settings, like the other three.
 	TasksKeyID string `json:"tasks_key"`
 	// TasksDrawerPlacement is where the drawer opens, using the same
 	// vocabulary as the recording indicator's placement (ui.DrawerPlacements
@@ -259,7 +261,12 @@ type Settings struct {
 // currentSettingsVersion is what a freshly written file carries. Bump it and
 // add a step to migrate when a default changes in a way that has to reach
 // files already on disk.
-const currentSettingsVersion = 1
+const currentSettingsVersion = 2
+
+// DefaultTasksKeyID is the quick-tasks binding a fresh install gets, and the
+// one a file written before it existed is migrated onto: Command-/ ("vk:44"
+// is the slash key -- see hotkey/labels.go).
+const DefaultTasksKeyID = "cmd+vk:44"
 
 // When always-on opens the system-audio tap.
 const (
@@ -343,7 +350,7 @@ func DefaultSettings() Settings {
 		AlwaysOnSystemAudio:    AlwaysOnTapAlways,
 		Version:                currentSettingsVersion,
 		AlwaysOnRetentionHours: 24,
-		TasksKeyID:             "",
+		TasksKeyID:             DefaultTasksKeyID,
 		TasksDrawerPlacement:   "top_centre",
 		DictateActivation:      ActivationToggle,
 		MeetingTranscribe:      MeetingTranscribeStop,
@@ -444,11 +451,19 @@ func (s *Store) Load() error {
 // end speaks first, nothing is recorded, and the meeting is missed entirely.
 // Files written before this carry no version at all, and the value they hold
 // is the old default rather than a choice, so it is moved on.
+//
+// Version 2: the quick-tasks key had no default, so every existing install
+// has an empty tasks_key that was never a decision -- nobody turned the
+// drawer's hotkey off, it simply never had one. Only an empty binding is
+// moved onto Command-/; a key the user actually set is left alone.
 func migrate(v *Settings, fileVersion int) {
 	if fileVersion < 1 {
 		if v.AlwaysOnSystemAudio == "" || v.AlwaysOnSystemAudio == AlwaysOnTapSession {
 			v.AlwaysOnSystemAudio = AlwaysOnTapAlways
 		}
+	}
+	if fileVersion < 2 && v.TasksKeyID == "" {
+		v.TasksKeyID = DefaultTasksKeyID
 	}
 	v.Version = currentSettingsVersion
 }

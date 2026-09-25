@@ -125,13 +125,44 @@
   @keyframes spin { to { transform: rotate(360deg); } }
   @media (prefers-reduced-motion: reduce) { .decoding .spin { animation: none; } }
 
-  .add { display: flex; gap: 6px; padding: 8px 10px; border-top: 0.5px solid var(--separator); flex: none; }
-  .add input {
-    flex: 1; font: inherit; color: var(--label);
+  /* The composer. Three steps -- task, details, project -- one visible at a
+     time, because the window is 340px wide and a three-field form in it reads
+     as a form to fill in rather than a line to type. Enter goes forward,
+     Escape folds the whole thing away and keeps what was typed. */
+  .add { padding: 8px 10px; border-top: 0.5px solid var(--separator); flex: none; }
+  .add input[type=text], .add textarea, .add select {
+    width: 100%; box-sizing: border-box; font: inherit; color: var(--label);
     background: var(--card); border: 0.5px solid var(--separator);
     border-radius: 7px; padding: 5px 8px;
   }
-  .add input:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+  .add textarea { resize: none; line-height: 1.35; }
+  .add input:focus, .add textarea:focus, .add select:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+  .add [hidden] { display: none; }
+  /* The step line: which of the three fields this is, and what Enter does
+     next. Both are the whole reason the single field is not confusing. */
+  .draft-head {
+    display: flex; align-items: baseline; gap: 6px;
+    font-size: var(--fs-caption); color: var(--tertiary);
+    margin-bottom: 4px; min-width: 0;
+  }
+  .draft-head .step { font-weight: var(--fw-bold); color: var(--secondary); flex: none; }
+  .draft-head .said {
+    flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    color: var(--tertiary);
+  }
+  .draft-head .hint { flex: none; }
+  /* Folded state: one button where the composer was, so the list gets the
+     window back but the draft is still one keystroke away. */
+  .draft-resume {
+    width: 100%; text-align: left; font: inherit; cursor: pointer;
+    color: var(--secondary); background: var(--field);
+    border: 0.5px solid var(--separator); border-radius: 7px; padding: 5px 8px;
+  }
+  .draft-resume:hover { color: var(--label); }
+  .draft-resume .dot-unsaved {
+    display: inline-block; width: 6px; height: 6px; border-radius: 50%;
+    background: var(--accent); margin-left: 5px; vertical-align: middle;
+  }
 </style>
 </head>
 <body>
@@ -146,7 +177,15 @@
   <div class="chips" id="chips"></div>
   <div class="list" id="list"></div>
   <div class="add">
-    <input type="text" id="new-task" placeholder="Add a task" autofocus>
+    <div class="draft-head" id="draft-head" hidden>
+      <span class="step" id="draft-step"></span>
+      <span class="said" id="draft-said"></span>
+      <span class="hint" id="draft-hint"></span>
+    </div>
+    <input type="text" id="draft-text" placeholder="What needs doing" autofocus>
+    <textarea id="draft-notes" rows="2" placeholder="Details &mdash; optional" hidden></textarea>
+    <select id="draft-entity" hidden></select>
+    <button type="button" class="draft-resume" id="draft-resume" hidden></button>
   </div>
 
   <script>
@@ -244,26 +283,187 @@
           window.drawerSetStatus(b.dataset.id, b.dataset.next);
         });
       });
+
+      if (typeof refreshProjectOptions === 'function') refreshProjectOptions();
     }
 
     document.getElementById('close').addEventListener('click', function () { window.drawerClose(); });
     document.getElementById('open-main').addEventListener('click', function () { window.drawerOpenMain(); });
 
-    var input = document.getElementById('new-task');
-    input.addEventListener('keydown', function (ev) {
-      if (ev.key === 'Escape') { ev.preventDefault(); window.drawerClose(); return; }
-      if (ev.key !== 'Enter') return;
+    // --- the composer ---------------------------------------------------
+    // Three steps, one field on screen: task, details, project. Enter goes
+    // forward and Enter on the last step files the task; Escape folds the
+    // composer away without losing a word of it, so "let me just look at
+    // what is already open" costs one key and no retyping. The draft lives
+    // here rather than in the fields because folding hides them, and because
+    // the window is only ordered out of sight when it closes (HideTasksDrawer
+    // keeps the page alive) -- a half-written task survives every close and
+    // reopen until the app itself quits.
+    var STEPS = [
+      { id: 'draft-text', step: '1/3 Task', hint: 'Enter for details' },
+      { id: 'draft-notes', step: '2/3 Details', hint: 'Enter for project' },
+      { id: 'draft-entity', step: '3/3 Project', hint: 'Enter to add' }
+    ];
+    var draft = { text: '', notes: '', entity: null, step: 0, folded: false };
+
+    var textField = document.getElementById('draft-text');
+    var notesField = document.getElementById('draft-notes');
+    var entityField = document.getElementById('draft-entity');
+    var resumeBtn = document.getElementById('draft-resume');
+    var headEl = document.getElementById('draft-head');
+
+    function fieldFor(step) { return document.getElementById(STEPS[step].id); }
+
+    // Everything the user has typed, read back off whichever fields are on
+    // screen. Called before any change that hides one.
+    function readDraft() {
+      draft.text = textField.value;
+      draft.notes = notesField.value;
+      if (!entityField.hidden) draft.entity = entityField.value;
+    }
+
+    function draftHasContent() {
+      return !!(draft.text.trim() || draft.notes.trim());
+    }
+
+    // Every project the user has configured, not only the ones already in
+    // use: filing a task under a project that has none yet is most of what
+    // the picker is for. window.voxlog.projects is the Settings dictionary,
+    // pushed by Go with the task list.
+    function projectNames() {
+      var names = [];
+      ((window.voxlog && window.voxlog.projects) || []).forEach(function (n) {
+        if (n && names.indexOf(n) === -1) names.push(n);
+      });
+      ((window.voxlog && window.voxlog.tasks) || []).forEach(function (t) {
+        if (t.entity && names.indexOf(t.entity) === -1) names.push(t.entity);
+      });
+      names.sort();
+      return names;
+    }
+
+    // The default project is the chip that is on, if one is: a task added
+    // while the list is filtered to a project belongs to that project, which
+    // is what the chip was saying all along. entity stays null until either
+    // that or the user has picked, so switching chips before step 3 still
+    // moves the default.
+    function defaultEntity() {
+      return entityFilter === 'Unfiltered' ? '' : entityFilter;
+    }
+
+    // Rebuilt on every list refresh as well as on every step, because the
+    // dictionary and the projects in use both come from Go and both change
+    // under the drawer. Only the <option>s are touched: a refresh landing
+    // while someone types must not reach the text they are typing.
+    function refreshProjectOptions() {
+      if (!entityField) return;
+      var selected = entityField.hidden
+        ? (draft.entity === null ? defaultEntity() : draft.entity)
+        : entityField.value;
+      entityField.innerHTML = entityOptionsHTML(projectNames(), selected, 'No project');
+      entityField.value = selected;
+    }
+
+    function renderComposer() {
+      if (!textField) return; // Go's first render() can land before this block runs
+      var folded = draft.folded;
+      headEl.hidden = folded || draft.step === 0;
+      resumeBtn.hidden = !folded;
+      if (folded) {
+        resumeBtn.innerHTML = (draftHasContent()
+          ? escapeHtml(draft.text.trim() || 'Unfinished task') + '<span class="dot-unsaved"></span>'
+          : 'Add a task');
+      }
+
+      textField.value = draft.text;
+      notesField.value = draft.notes;
+      refreshProjectOptions();
+
+      STEPS.forEach(function (s, i) {
+        document.getElementById(s.id).hidden = folded || i !== draft.step;
+      });
+      document.getElementById('draft-step').textContent = STEPS[draft.step].step;
+      document.getElementById('draft-hint').textContent = STEPS[draft.step].hint;
+      document.getElementById('draft-said').textContent = draft.step === 0 ? '' : draft.text.trim();
+    }
+
+    // focusComposer is what the hotkey reaches: unfold and put the caret back
+    // where it was, so pressing it again continues the same draft rather than
+    // starting a new one. Called from Go on every show (see ShowTasksDrawer).
+    function focusComposer() {
+      draft.folded = false;
+      renderComposer();
+      fieldFor(draft.step).focus();
+    }
+    window.focusComposer = focusComposer;
+
+    function foldComposer() {
+      readDraft();
+      draft.folded = true;
+      renderComposer();
+    }
+
+    function goToStep(step) {
+      readDraft();
+      draft.step = Math.max(0, Math.min(STEPS.length - 1, step));
+      renderComposer();
+      var el = fieldFor(draft.step);
+      el.focus();
+      if (el.setSelectionRange && el.value) el.setSelectionRange(el.value.length, el.value.length);
+    }
+
+    function submitDraft() {
+      readDraft();
+      var text = draft.text.trim();
+      if (!text) { goToStep(0); return; }
+      var entity = draft.entity === null ? defaultEntity() : draft.entity;
+      window.drawerAddTask(text, draft.notes.trim(), entity).then(function () {
+        draft = { text: '', notes: '', entity: null, step: 0, folded: false };
+        renderComposer();
+        textField.focus();
+      }).catch(function (e) {
+        document.getElementById('draft-hint').textContent = String(e);
+      });
+    }
+
+    // Escape is handled on the document, not per field: it means the same
+    // thing wherever the focus happens to be -- fold the composer, or, with
+    // it already folded, close the drawer.
+    document.addEventListener('keydown', function (ev) {
+      if (ev.key !== 'Escape') return;
       ev.preventDefault();
-      var v = input.value.trim();
-      if (!v) return;
-      input.value = '';
-      // Filtered to one project: a task added while a chip is on belongs to
-      // that project, which is what the chip was saying all along.
-      window.drawerAddTask(v, entityFilter === 'Unfiltered' ? '' : entityFilter);
+      if (draft.folded) { window.drawerClose(); return; }
+      foldComposer();
+    });
+
+    resumeBtn.addEventListener('click', focusComposer);
+
+    STEPS.forEach(function (s, i) {
+      document.getElementById(s.id).addEventListener('keydown', function (ev) {
+        // Shift+Tab walks back a step. So does ArrowUp from the very start of
+        // a text field, where it has nothing else to do.
+        var el = ev.currentTarget;
+        var atStart = el.selectionStart === 0 && el.selectionEnd === 0;
+        if (ev.key === 'Tab' && ev.shiftKey && i > 0) { ev.preventDefault(); goToStep(i - 1); return; }
+        if (ev.key === 'ArrowUp' && i > 0 && el.tagName !== 'SELECT' && atStart) {
+          ev.preventDefault();
+          goToStep(i - 1);
+          return;
+        }
+        if (ev.key !== 'Enter') return;
+        // Shift+Enter is the only way to get a second line into the details,
+        // so it is left to the textarea.
+        if (ev.shiftKey && el.tagName === 'TEXTAREA') return;
+        ev.preventDefault();
+        if (i === 0 && !el.value.trim()) return; // a task with no text is not a task
+        if (i === STEPS.length - 1) { submitDraft(); return; }
+        goToStep(i + 1);
+      });
     });
 
     render();
-    input.focus();
+    renderComposer();
+    textField.focus();
   </script>
 </body>
 </html>

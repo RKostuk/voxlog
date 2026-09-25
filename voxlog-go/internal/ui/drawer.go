@@ -41,6 +41,7 @@ var (
 	drawerWin       webview.WebView
 	drawerPlacement = DefaultDrawerPlacement
 	drawerTasks     *task.Store
+	drawerProjects  []string
 )
 
 // SetDrawerPlacement records where the drawer opens. Applied on the next
@@ -49,6 +50,22 @@ var (
 func SetDrawerPlacement(placement string) {
 	drawerMu.Lock()
 	drawerPlacement = normalizeDrawerPlacement(placement)
+	drawerMu.Unlock()
+}
+
+// SetDrawerProjects records the project dictionary the composer's picker
+// offers. Held here rather than read from settings, for the same reason every
+// other cross-package handle in this file is: the ui package does not own the
+// settings store, and the drawer needs the list on every refresh.
+func SetDrawerProjects(names []string) {
+	list := make([]string, 0, len(names))
+	for _, n := range names {
+		if n != "" {
+			list = append(list, n)
+		}
+	}
+	drawerMu.Lock()
+	drawerProjects = list
 	drawerMu.Unlock()
 }
 
@@ -96,6 +113,11 @@ func ShowTasksDrawer(tasks *task.Store) {
 			placeDrawer(w, placement)
 			activateApp()
 			makeKeyAndOrderFront(w.Window())
+			// Unfold the composer and put the caret back where it was. The
+			// hotkey's whole job is "write this down", so it has to land in
+			// the field -- and on the half-written draft, if there is one,
+			// rather than on a cleared box.
+			w.Eval("typeof focusComposer === 'function' && focusComposer()")
 		})
 		return
 	}
@@ -176,13 +198,14 @@ func newDrawerWindow(tasks *task.Store, placement string) {
 	// A task typed here never went through the classifier, so it has no
 	// source: SourceKind and SourceKey stay empty, which is exactly how the
 	// rest of the app already reads "written by hand".
-	w.Bind("drawerAddTask", func(text, entity string) error {
+	w.Bind("drawerAddTask", func(text, notes, entity string) error {
 		if text == "" {
 			return nil
 		}
 		if err := tasks.Append(task.Task{
 			ID:      task.NewID(),
 			Text:    text,
+			Notes:   notes,
 			Entity:  entity,
 			Status:  task.StatusTodo,
 			Created: time.Now(),
@@ -266,11 +289,21 @@ func refreshDrawer() {
 	if err != nil {
 		return
 	}
+	drawerMu.Lock()
+	names := drawerProjects
+	drawerMu.Unlock()
+	if names == nil {
+		names = []string{}
+	}
+	projects, err := json.Marshal(names)
+	if err != nil {
+		return
+	}
 	queue := decodeQueueJSON()
 	runOnMain(func() {
 		w.Eval(fmt.Sprintf(
-			"window.voxlog = window.voxlog || {}; window.voxlog.tasks = %s; window.voxlog.decodeQueue = %s; typeof render === 'function' && render();",
-			data, queue))
+			"window.voxlog = window.voxlog || {}; window.voxlog.tasks = %s; window.voxlog.projects = %s; window.voxlog.decodeQueue = %s; typeof render === 'function' && render();",
+			data, projects, queue))
 	})
 }
 

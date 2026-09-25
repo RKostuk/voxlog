@@ -27,6 +27,17 @@ function entityColor(name) {
   return hues[hash % hues.length];
 }
 
+// The same list of <option>s every project picker needs, each of which used
+// to build it: the meetings filter, the project on an open meeting, the tasks
+// filter, and the drawer's composer. Only the label on the empty choice
+// differs, so that is the argument.
+function entityOptionsHTML(names, selected, emptyLabel) {
+  return '<option value="">' + escapeHtml(emptyLabel) + '</option>' +
+    names.map(function (n) {
+      return '<option value="' + escapeHtml(n) + '"' + (n === selected ? ' selected' : '') + '>' + escapeHtml(n) + '</option>';
+    }).join('');
+}
+
 // One name per status, everywhere it is shown.
 var taskStatusLabel = { todo: 'To do', in_progress: 'In progress', blocked: 'Blocked', done: 'Done' };
 

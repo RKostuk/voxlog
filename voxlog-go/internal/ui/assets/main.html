@@ -670,18 +670,53 @@
 
   /* Hidden until hovered, same as History/Meetings row actions -- a resting
      task list should read as a list, not a wall of buttons. */
-  .task-acts { display: none; gap: 4px; flex: none; }
-  .task-row:hover .task-acts { display: flex; }
+  /* A row is clickable and says which task the panel beside it is showing.
+     The accent rule is the same "this one is open" language the Voices pane
+     uses for a selected speaker. */
+  .task-row { cursor: pointer; }
+  .task-row:hover .text { color: var(--accent); }
+  .task-row.selected { background: color-mix(in srgb, var(--accent) 9%, transparent); box-shadow: inset 3px 0 0 var(--accent); }
+  .task-row.kbd-selected { background: color-mix(in srgb, var(--accent) 6%, transparent); }
 
-  /* The task row is a <summary>: strip the disclosure triangle so it still
-     reads as a row, and keep the cursor honest about being clickable. */
-  .task-detail > summary { cursor: pointer; list-style: none; }
-  .task-detail > summary::-webkit-details-marker { display: none; }
-  .task-detail > summary:hover .text { color: var(--accent); }
-  .task-detail[open] > summary { border-bottom: 0.5px solid var(--separator); }
+  /* The split: list on the left, the open task on the right. .content is
+     still the only scroller on the pane -- the panel sticks rather than
+     scrolling on its own, so the page never has two scrollbars racing. */
+  .task-split { display: flex; align-items: flex-start; gap: 16px; }
+  #task-groups { flex: 1; min-width: 0; }
+  .task-side {
+    flex: none; width: 340px; position: sticky; top: 16px;
+    max-height: calc(100vh - 140px); overflow-y: auto;
+    background: var(--card); border-radius: var(--r-md);
+    box-shadow: var(--glass-low);
+    margin-top: 16px;
+  }
+  /* Narrow window: the panel goes under the list rather than squeezing it
+     into a column of single words. */
+  @media (max-width: 820px) {
+    .task-split { flex-direction: column; }
+    .task-side { width: 100%; position: static; max-height: none; }
+  }
+  .task-side-head {
+    display: flex; align-items: flex-start; gap: 8px;
+    padding: 11px 13px; border-bottom: 0.5px solid var(--separator);
+  }
+  .task-side-head .who { flex: 1; min-width: 0; font-weight: 600; }
+  .task-side-close {
+    flex: none; border: none; background: none; cursor: pointer;
+    color: var(--tertiary); font: inherit; font-size: 13px; line-height: 1;
+    padding: 2px 4px; border-radius: 5px;
+  }
+  .task-side-close:hover { background: var(--field); color: var(--label); }
+  .task-side-acts { display: flex; flex-wrap: wrap; gap: 6px; padding: 0 13px 12px; }
+  /* An armed button says so in the colour the rest of the app uses for
+     "this one does not come back". */
+  .task-act.confirming {
+    background: color-mix(in srgb, var(--red) 16%, transparent);
+    color: var(--red-ink); font-weight: var(--fw-bold);
+  }
   .task-panel {
     display: flex; flex-direction: column; gap: 10px;
-    padding: 12px 13px 14px; background: var(--field);
+    padding: 12px 13px 14px;
   }
   .task-field { display: flex; flex-direction: column; gap: 4px; }
   .task-field-label { font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--tertiary); }
@@ -690,6 +725,20 @@
     border: 0.5px solid var(--separator); border-radius: 6px;
     padding: 6px 8px; width: 100%; resize: vertical;
   }
+  /* The project picker in the panel is the same pill the pane filters use --
+     one look for "pick a project", wherever it is being picked. */
+  .task-panel select {
+    font: inherit; font-size: 11.5px; color: var(--label);
+    background: var(--field); border: none; border-radius: var(--r-sm);
+    padding: 5px 9px; cursor: pointer; width: 100%;
+  }
+  .task-remind { display: flex; align-items: center; gap: 6px; }
+  .task-remind input[type=datetime-local] {
+    flex: 1; min-width: 0; font: inherit; font-size: 11.5px; color: var(--label);
+    background: var(--card); border: 0.5px solid var(--separator);
+    border-radius: 6px; padding: 4px 6px;
+  }
+  .task-remind-presets { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
   .task-panel-meta {
     display: flex; flex-wrap: wrap; gap: 4px 12px;
     font-size: 11px; color: var(--tertiary);
@@ -812,7 +861,13 @@
       <div class="pane" data-pane="tasks">
         <div class="task-summary" id="task-summary"></div>
         <div class="pane-filters" id="task-filters"></div>
-        <div id="task-groups"></div>
+        <!-- List and one task open beside it. The detail used to expand
+             inside the row, which pushed everything under it down the page;
+             a task is read while the list it came out of is still in view. -->
+        <div class="task-split">
+          <div id="task-groups"></div>
+          <aside class="task-side" id="task-panel" hidden></aside>
+        </div>
       </div>
       <div class="pane" data-pane="settings">
   <!-- SETTINGS_PANE -->
@@ -1066,17 +1121,6 @@
             : 'no speaker data') + '</span>' +
         '</div>' +
       '</button>';
-    }
-
-    // The same list of <option>s three pickers needed, each of which used to
-    // build it: the meetings filter, the project on an open meeting, and the
-    // tasks filter. Only the label on the empty choice differs, so that is
-    // the argument.
-    function entityOptionsHTML(names, selected, emptyLabel) {
-      return '<option value="">' + escapeHtml(emptyLabel) + '</option>' +
-        names.map(function (n) {
-          return '<option value="' + escapeHtml(n) + '"' + (n === selected ? ' selected' : '') + '>' + escapeHtml(n) + '</option>';
-        }).join('');
     }
 
     function renderMeetingFilter(root, meetings) {
@@ -2441,10 +2485,10 @@
     // for why) -- picked once, kept until changed, not reset every time a
     // classification lands and re-triggers render().
     var taskFilter = { entity: '', status: '' };
-    // Which task detail sections are expanded. Kept by id, not by element:
-    // every save redraws the whole pane from fresh data, and a row that was
-    // open before the redraw must still be open after it.
-    var openTaskIDs = {};
+    // Which task the side panel is showing. Kept by id, not by element:
+    // every save redraws the whole pane from fresh data, and the task that
+    // was open before the redraw must still be open after it.
+    var selectedTaskID = '';
 
     function taskByID(id) {
       var list = (window.voxlog && window.voxlog.tasks) || [];
@@ -2531,49 +2575,20 @@
         var options = ['todo', 'in_progress', 'blocked', 'done'].map(function (s) {
           return '<option value="' + s + '"' + (s === t.status ? ' selected' : '') + '>' + taskStatusLabel[s] + '</option>';
         }).join('');
-        var created = t.created
-          ? new Date(t.created).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
-          : '';
-        var updated = t.updated
-          ? new Date(t.updated).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
-          : '';
-        // The row is the <summary> of a <details>: same idiom as the
-        // "N completed" toggle above, so clicking a task opens it in place
-        // rather than navigating away from the list.
-        return '<details class="task-detail"' + (openTaskIDs[t.id] ? ' open' : '') + ' data-id="' + t.id + '">' +
-          '<summary class="task-row' + (t.status === 'done' ? ' done' : '') + '">' +
+        // Just a row. Clicking it opens the task in the panel beside the
+        // list (renderTaskDetail); the fields it used to expand into live
+        // there, where opening one no longer moves the rest of the list.
+        return '<div class="task-row' + (t.status === 'done' ? ' done' : '') +
+            (t.id === selectedTaskID ? ' selected' : '') + '" data-id="' + t.id + '">' +
             '<div class="body">' +
               '<div class="text">' + escapeHtml(t.text) + '</div>' +
               '<div class="meta">' + reminderHTML +
+                (t.notes ? '<span>' + escapeHtml(t.notes.split('\n')[0].slice(0, 60)) + '</span>' : '') +
                 '<a data-source-pane="' + sourcePane + '">from ' + (sourcePane === 'meetings' ? 'meeting' : 'dictation') + ' ↗</a>' +
               '</div>' +
             '</div>' +
             '<select class="status-select ' + taskStatusClass(t.status) + '" data-id="' + t.id + '">' + options + '</select>' +
-            '<div class="task-acts">' +
-              '<button type="button" class="act task-act" data-act="reject" data-id="' + t.id + '" title="Wrong -- not actually a task">Not a task</button>' +
-              '<button type="button" class="act task-act" data-act="delete" data-id="' + t.id + '" title="Remove">Delete</button>' +
-            '</div>' +
-          '</summary>' +
-          '<div class="task-panel">' +
-            '<label class="task-field"><span class="task-field-label">Task</span>' +
-              '<input type="text" class="task-text-edit" data-id="' + t.id + '" value="' + escapeHtml(t.text) + '">' +
-            '</label>' +
-            '<label class="task-field"><span class="task-field-label">Notes</span>' +
-              '<textarea class="task-notes" data-id="' + t.id + '" rows="3" placeholder="Anything the one-line summary left out">' +
-                escapeHtml(t.notes || '') + '</textarea>' +
-            '</label>' +
-            '<div class="task-panel-meta">' +
-              '<span>Project: ' + escapeHtml(t.entity || 'Unfiltered') + '</span>' +
-              '<span>Status: ' + escapeHtml(taskStatusLabel[t.status] || t.status) + '</span>' +
-              '<span>Reminder: ' + (t.reminder
-                ? escapeHtml(new Date(t.reminder).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }))
-                : 'none') + '</span>' +
-              (created ? '<span>Created ' + escapeHtml(created) + '</span>' : '') +
-              (updated ? '<span>Edited ' + escapeHtml(updated) + '</span>' : '') +
-              '<a data-source-pane="' + sourcePane + '">Open the ' + (sourcePane === 'meetings' ? 'meeting' : 'dictation') + ' it came from ↗</a>' +
-            '</div>' +
-          '</div>' +
-        '</details>';
+          '</div>';
       }
 
       groupsRoot.innerHTML = byEntity.length ? byEntity.map(function (g) {
@@ -2593,58 +2608,17 @@
         ((taskFilter.entity || taskFilter.status) && allTasks.length ? 'No tasks match this filter.' : 'No tasks yet.') +
         '</div>';
 
-      groupsRoot.querySelectorAll('.task-detail').forEach(function (det) {
-        det.addEventListener('toggle', function () {
-          if (det.open) openTaskIDs[det.dataset.id] = true;
-          else delete openTaskIDs[det.dataset.id];
-        });
-      });
-      // The status select and the action buttons live inside the <summary>,
-      // where a plain click would also toggle the section open or shut.
-      groupsRoot.querySelectorAll('.task-row .status-select, .task-row .task-act').forEach(function (el) {
-        el.addEventListener('click', function (ev) { ev.preventDefault(); ev.stopPropagation(); });
+      // The status select sits inside the row, where a plain click would
+      // also change which task the panel is showing. Rejecting and deleting
+      // are not here at all any more: they are irreversible, they were one
+      // hover away from a row anybody scrolls past, and they now live in the
+      // panel behind a confirmation.
+      groupsRoot.querySelectorAll('.task-row .status-select').forEach(function (el) {
+        el.addEventListener('click', function (ev) { ev.stopPropagation(); });
       });
 
-      // Notes save on a debounce while typing. Deliberately no redraw of the
-      // pane afterwards (setTaskNotes does not refresh): a redraw mid-sentence
-      // would replace the textarea under the caret. The in-memory task is
-      // updated here instead, so the next redraw -- whatever triggers it --
-      // still draws what was typed.
-      groupsRoot.querySelectorAll('.task-notes').forEach(function (area) {
-        var timer = null;
-        function commit() {
-          timer = null;
-          var t = taskByID(area.dataset.id);
-          if (t) t.notes = area.value;
-          window.setTaskNotes(area.dataset.id, area.value).catch(function (e) { alert(e); });
-        }
-        area.addEventListener('input', function () {
-          if (timer) clearTimeout(timer);
-          timer = setTimeout(commit, 600);
-        });
-        area.addEventListener('blur', function () {
-          if (!timer) return;
-          clearTimeout(timer);
-          commit();
-        });
-      });
-
-      // The task line itself commits on blur or Enter, not on every
-      // keystroke: unlike notes it is what the collapsed row shows, and
-      // setTaskText does redraw the pane.
-      groupsRoot.querySelectorAll('.task-text-edit').forEach(function (input) {
-        var original = input.value;
-        function commit() {
-          var v = input.value.trim();
-          if (!v || v === original) { input.value = original; return; }
-          original = v;
-          window.setTaskText(input.dataset.id, v).catch(function (e) { alert(e); });
-        }
-        input.addEventListener('blur', commit);
-        input.addEventListener('keydown', function (ev) {
-          if (ev.key === 'Enter') { ev.preventDefault(); input.blur(); }
-          if (ev.key === 'Escape') { ev.preventDefault(); input.value = original; input.blur(); }
-        });
+      groupsRoot.querySelectorAll('.task-row').forEach(function (row) {
+        row.addEventListener('click', function () { selectTask(row.dataset.id); });
       });
 
       groupsRoot.querySelectorAll('.status-select').forEach(function (sel) {
@@ -2656,22 +2630,292 @@
       });
       groupsRoot.querySelectorAll('[data-source-pane]').forEach(function (a) {
         a.addEventListener('click', function (ev) {
-          // Inside a <summary>, so the click has to be stopped from also
-          // toggling the section on the way out.
+          // Inside a clickable row, so the click has to be stopped from also
+          // opening the task in the panel on the way out.
           ev.preventDefault();
           ev.stopPropagation();
           window.selectPane(a.dataset.sourcePane);
         });
       });
-      groupsRoot.querySelectorAll('.task-act').forEach(function (btn) {
-        btn.addEventListener('click', function () {
+      // Whatever was open stays open across a redraw, and closes if the task
+      // it was showing is gone (deleted, rejected, or filtered out of the
+      // list the panel sits beside).
+      syncTaskDetail();
+    }
+
+    // wireTaskActs hooks up "Not a task" and Delete. Both are irreversible --
+    // a deleted task is gone, and a rejected line becomes a negative example
+    // for the classifier -- so neither fires on the first click: the button
+    // turns into its own confirmation, with a Cancel beside it, and the
+    // second click is the one that acts. confirm() is not an option here at
+    // all: webview_go installs no WKUIDelegate, so it answers false without
+    // ever asking (see toast in kit.js).
+    function wireTaskActs(root) {
+      var pending = null;
+
+      function reset() {
+        pending = null;
+        root.querySelectorAll('.task-act').forEach(function (b) {
+          b.textContent = b.dataset.label;
+          b.classList.remove('confirming');
+          b.disabled = false;
+        });
+        root.querySelector('.task-act-cancel').hidden = true;
+      }
+
+      root.querySelector('.task-act-cancel').addEventListener('click', reset);
+
+      root.querySelectorAll('.task-act').forEach(function (btn) {
+        btn.dataset.label = btn.textContent;
+        btn.addEventListener('click', function (ev) {
+          ev.stopPropagation();
+          if (pending !== btn) {
+            // Arming one disarms the other: two buttons both reading
+            // "Confirm" is how the wrong one gets pressed.
+            reset();
+            pending = btn;
+            btn.textContent = btn.dataset.confirm;
+            btn.classList.add('confirming');
+            root.querySelector('.task-act-cancel').hidden = false;
+            return;
+          }
           var id = btn.dataset.id;
           var call = btn.dataset.act === 'reject' ? window.rejectTask : window.deleteTask;
           btn.disabled = true;
-          call(id).catch(function (e) { alert(e); btn.disabled = false; });
+          call(id).catch(function (e) { alert(e); reset(); });
         });
       });
+
+      // Escape steps back out of an armed button before it means anything
+      // else -- the same key that closes the panel, in the order the user
+      // would expect it.
+      root.addEventListener('keydown', function (ev) {
+        if (ev.key === 'Escape' && pending) { ev.stopPropagation(); reset(); }
+      });
     }
+
+    // Every project the picker offers: the Settings dictionary plus whatever
+    // the classifier has already filed tasks under, so moving a task to a
+    // project that only exists in the data is possible too.
+    function taskProjectNames() {
+      var names = [];
+      ((window.voxlog && window.voxlog.settings && window.voxlog.settings.entity_dictionary) || [])
+        .forEach(function (n) { if (n && names.indexOf(n) === -1) names.push(n); });
+      ((window.voxlog && window.voxlog.tasks) || [])
+        .forEach(function (t) { if (t.entity && names.indexOf(t.entity) === -1) names.push(t.entity); });
+      names.sort();
+      return names;
+    }
+
+    // The three times a reminder is actually set for. Typing a date into the
+    // field is the other way; these are the ones worth one click.
+    var REMINDER_PRESETS = [
+      { label: 'This evening', at: function () { var d = new Date(); d.setHours(18, 0, 0, 0); if (d <= new Date()) d.setDate(d.getDate() + 1); return d; } },
+      { label: 'Tomorrow 9:00', at: function () { var d = new Date(); d.setDate(d.getDate() + 1); d.setHours(9, 0, 0, 0); return d; } },
+      { label: 'Next week', at: function () { var d = new Date(); d.setDate(d.getDate() + 7); d.setHours(9, 0, 0, 0); return d; } }
+    ];
+
+    // <input type="datetime-local"> speaks local wall-clock time with no zone
+    // ("2026-09-25T18:00"), and the store speaks RFC3339. These two are the
+    // only places that conversion happens.
+    function localInputValue(iso) {
+      if (!iso) return '';
+      var d = new Date(iso);
+      if (isNaN(d)) return '';
+      var pad = function (n) { return (n < 10 ? '0' : '') + n; };
+      return d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()) +
+        'T' + pad(d.getHours()) + ':' + pad(d.getMinutes());
+    }
+
+    function saveReminder(id, date) {
+      window.setTaskReminder(id, date ? date.toISOString() : '').catch(function (e) { alert(e); });
+    }
+
+    function taskWhen(iso) {
+      return iso
+        ? new Date(iso).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
+        : '';
+    }
+
+    // selectTask opens a task in the side panel. Clicking the open one again
+    // closes it: the panel is worth 340px only while it is being read.
+    function selectTask(id) {
+      selectedTaskID = (id && id !== selectedTaskID) ? id : '';
+      document.querySelectorAll('#task-groups .task-row').forEach(function (row) {
+        row.classList.toggle('selected', row.dataset.id === selectedTaskID);
+      });
+      renderTaskDetail();
+    }
+
+    function closeTaskDetail() { selectTask(''); }
+
+    // syncTaskDetail is the redraw-safe half: the panel is rebuilt from the
+    // fresh task, or closed if that task no longer exists. Called at the end
+    // of every renderTasks.
+    function syncTaskDetail() {
+      if (selectedTaskID && !taskByID(selectedTaskID)) selectedTaskID = '';
+      renderTaskDetail();
+    }
+
+    function renderTaskDetail() {
+      var root = document.getElementById('task-panel');
+      if (!root) return;
+      var t = selectedTaskID ? taskByID(selectedTaskID) : null;
+      if (!t) {
+        root.hidden = true;
+        root.innerHTML = '';
+        return;
+      }
+      var sourcePane = t.source_kind === 'meeting' ? 'meetings' : 'history';
+      var created = taskWhen(t.created), updated = taskWhen(t.updated);
+      root.hidden = false;
+      root.innerHTML =
+        '<div class="task-side-head">' +
+          '<span class="who">' + escapeHtml(t.entity || 'Unfiltered') + '</span>' +
+          '<button type="button" class="task-side-close" title="Close (Esc)">&#10005;</button>' +
+        '</div>' +
+        '<div class="task-panel">' +
+          '<label class="task-field"><span class="task-field-label">Task</span>' +
+            '<input type="text" class="task-text-edit" data-id="' + t.id + '" value="' + escapeHtml(t.text) + '">' +
+          '</label>' +
+          '<label class="task-field"><span class="task-field-label">Notes</span>' +
+            '<textarea class="task-notes" data-id="' + t.id + '" rows="6" placeholder="Anything the one-line summary left out">' +
+              escapeHtml(t.notes || '') + '</textarea>' +
+          '</label>' +
+          '<label class="task-field"><span class="task-field-label">Project</span>' +
+            '<select class="task-entity-pick" data-id="' + t.id + '">' +
+              entityOptionsHTML(taskProjectNames(), t.entity || '', 'Unfiltered') +
+            '</select>' +
+          '</label>' +
+          '<div class="task-field"><span class="task-field-label">Reminder</span>' +
+            '<div class="task-remind">' +
+              '<input type="datetime-local" class="task-reminder-at" data-id="' + t.id + '" value="' + localInputValue(t.reminder) + '">' +
+              '<button type="button" class="act task-remind-clear"' + (t.reminder ? '' : ' disabled') + '>Clear</button>' +
+            '</div>' +
+            '<div class="task-remind-presets">' +
+              REMINDER_PRESETS.map(function (p, i) {
+                return '<button type="button" class="act task-remind-preset" data-preset="' + i + '">' + p.label + '</button>';
+              }).join('') +
+            '</div>' +
+          '</div>' +
+          '<div class="task-panel-meta">' +
+            '<span>Status: ' + escapeHtml(taskStatusLabel[t.status] || t.status) + '</span>' +
+            (created ? '<span>Created ' + escapeHtml(created) + '</span>' : '') +
+            (updated ? '<span>Edited ' + escapeHtml(updated) + '</span>' : '') +
+            '<a data-source-pane="' + sourcePane + '">Open the ' + (sourcePane === 'meetings' ? 'meeting' : 'dictation') + ' it came from ↗</a>' +
+          '</div>' +
+        '</div>' +
+        '<div class="task-side-acts">' +
+          '<button type="button" class="act task-act" data-act="reject" data-id="' + t.id + '" data-confirm="Not a task &mdash; confirm" title="Wrong -- not actually a task, and a negative example for the classifier">Not a task</button>' +
+          '<button type="button" class="act task-act" data-act="delete" data-id="' + t.id + '" data-confirm="Delete &mdash; confirm" title="Remove this task for good">Delete</button>' +
+          '<button type="button" class="act task-act-cancel" hidden>Cancel</button>' +
+        '</div>';
+
+      root.querySelector('.task-side-close').addEventListener('click', closeTaskDetail);
+      root.querySelector('.task-entity-pick').addEventListener('change', function (ev) {
+        window.setTaskEntity(ev.target.dataset.id, ev.target.value).catch(function (e) { alert(e); });
+      });
+      var at = root.querySelector('.task-reminder-at');
+      at.addEventListener('change', function () {
+        // An emptied field means "no reminder", which is the same thing
+        // Clear does -- a half-typed date the browser rejects leaves the
+        // value empty too, so the field is only read once it validates.
+        saveReminder(at.dataset.id, at.value ? new Date(at.value) : null);
+      });
+      root.querySelector('.task-remind-clear').addEventListener('click', function () {
+        saveReminder(at.dataset.id, null);
+      });
+      root.querySelectorAll('.task-remind-preset').forEach(function (btn) {
+        btn.addEventListener('click', function () {
+          saveReminder(at.dataset.id, REMINDER_PRESETS[parseInt(btn.dataset.preset, 10)].at());
+        });
+      });
+      wireTaskActs(root);
+      root.querySelectorAll('[data-source-pane]').forEach(function (a) {
+        a.addEventListener('click', function (ev) {
+          ev.preventDefault();
+          window.selectPane(a.dataset.sourcePane);
+        });
+      });
+
+      // Notes save on a debounce while typing. Deliberately no redraw of the
+      // pane afterwards (setTaskNotes does not refresh): a redraw mid-sentence
+      // would replace the textarea under the caret. The in-memory task is
+      // updated here instead, so the next redraw -- whatever triggers it --
+      // still draws what was typed.
+      var area = root.querySelector('.task-notes');
+      var timer = null;
+      function commitNotes() {
+        timer = null;
+        var task = taskByID(area.dataset.id);
+        if (task) task.notes = area.value;
+        window.setTaskNotes(area.dataset.id, area.value).catch(function (e) { alert(e); });
+      }
+      area.addEventListener('input', function () {
+        if (timer) clearTimeout(timer);
+        timer = setTimeout(commitNotes, 600);
+      });
+      area.addEventListener('blur', function () {
+        if (!timer) return;
+        clearTimeout(timer);
+        commitNotes();
+      });
+
+      // The task line itself commits on blur or Enter, not on every
+      // keystroke: unlike notes it is what the row shows, and setTaskText
+      // does redraw the pane.
+      var input = root.querySelector('.task-text-edit');
+      var original = input.value;
+      function commitText() {
+        var v = input.value.trim();
+        if (!v || v === original) { input.value = original; return; }
+        original = v;
+        window.setTaskText(input.dataset.id, v).catch(function (e) { alert(e); });
+      }
+      input.addEventListener('blur', commitText);
+      input.addEventListener('keydown', function (ev) {
+        if (ev.key === 'Enter') { ev.preventDefault(); input.blur(); }
+        if (ev.key === 'Escape') { ev.preventDefault(); input.value = original; input.blur(); }
+      });
+    }
+
+    // Keyboard in the Tasks pane: up and down walk the visible rows and the
+    // panel follows, Escape closes it. The row list here is .task-row rather
+    // than the .entry rows the History/Meetings navigation below drives, and
+    // Enter means "open", not "paste", so it is its own handler.
+    document.addEventListener('keydown', function (ev) {
+      if (ev.key !== 'Escape' && ev.key !== 'ArrowDown' && ev.key !== 'ArrowUp') return;
+      var nav = document.querySelector('#shell-nav .navitem[aria-selected="true"]');
+      if (!nav || nav.dataset.pane !== 'tasks') return;
+      var tag = document.activeElement && document.activeElement.tagName;
+      var typing = tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA';
+
+      if (ev.key === 'Escape') {
+        if (typing) return; // the field's own Escape reverts the edit first
+        if (!selectedTaskID) return;
+        ev.preventDefault();
+        closeTaskDetail();
+        return;
+      }
+      if (typing || tag === 'BUTTON') return;
+      // Only rows actually on screen: the completed tasks inside a closed
+      // "N completed" section are still in the DOM, and walking onto one
+      // would move the panel to a task nobody can see.
+      var rows = Array.prototype.slice.call(document.querySelectorAll('#task-groups .task-row'))
+        .filter(function (r) {
+          var section = r.closest('details');
+          return !section || section.open;
+        });
+      if (!rows.length) return;
+      ev.preventDefault();
+      var ids = rows.map(function (r) { return r.dataset.id; });
+      var idx = ids.indexOf(selectedTaskID);
+      if (idx === -1) idx = ev.key === 'ArrowDown' ? 0 : rows.length - 1;
+      else idx = ev.key === 'ArrowDown' ? Math.min(idx + 1, rows.length - 1) : Math.max(idx - 1, 0);
+      selectedTaskID = '';       // selectTask toggles the open one shut
+      selectTask(ids[idx]);
+      rows[idx].scrollIntoView({ block: 'nearest' });
+    });
 
     // wireEntries hooks up the hover-revealed expand/collapse and Transcribe
     // buttons shared by both lists. entryFor maps a row back to the JS object
@@ -3034,12 +3278,12 @@
 
     function openTaskInPane(id) {
       if (!id) return;
-      openTaskIDs[id] = true;
+      selectedTaskID = id;
       renderTasks(document.getElementById('task-summary'), document.getElementById('task-filters'),
         document.getElementById('task-groups'), (window.voxlog && window.voxlog.tasks) || []);
       window.selectPane('tasks');
-      var opened = document.querySelector('#task-groups .task-detail[data-id="' + id.replace(/"/g, '\\"') + '"]');
-      if (opened) opened.scrollIntoView({ block: 'center' });
+      var row = document.querySelector('#task-groups .task-row[data-id="' + id.replace(/"/g, '\\"') + '"]');
+      if (row) row.scrollIntoView({ block: 'center' });
     }
 
     // decodeQueue is what the app last told us is queued or decoding. The
