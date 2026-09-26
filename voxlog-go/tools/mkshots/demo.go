@@ -18,6 +18,11 @@ func day(offset int) time.Time {
 	return time.Now().AddDate(0, 0, -offset)
 }
 
+// atNine is t's day at 9:00, so a reminder reads like one someone set.
+func atNine(t time.Time) time.Time {
+	return time.Date(t.Year(), t.Month(), t.Day(), 9, 0, 0, 0, t.Location())
+}
+
 func stamp(t time.Time) string { return t.Format(time.RFC3339Nano) }
 
 // voxlogJSON is the object internal/ui assigns in one Eval at window
@@ -36,6 +41,8 @@ func voxlogJSON(pane string) string {
 	// which means a stubbed saveSettings and a re-render mid-screenshot.
 	cfg.EntityDictionarySeeded = true
 	cfg.EntityDictionary = []string{"Voxlog", "Website"}
+	cfg.OpenRouterAccounts = []settings.OpenRouterAccount{{ID: demoAccount, Label: "Personal"}}
+	cfg.OpenRouterActive = demoAccount
 
 	raw, err := json.Marshal(cfg)
 	if err != nil {
@@ -114,7 +121,7 @@ func demoMeetings() []map[string]any {
 		{
 			"id": meetingID, "time": "10:04", "day": day(1).Format("2006-01-02"),
 			"recording_seconds": 2748, "duration_seconds": 74.2,
-			"summary": "Agreed to cut the importer's scope for the first release and ship the CSV path only. Alex takes the migration notes, Priya checks the pricing page copy before Thursday.",
+			"summary": "Agreed to cut the importer's scope for the first release and ship the CSV path only; the rest waits for real usage. The pricing page has to say so before the launch post goes out.\n\nACTION ITEMS:\n- Alex: write the migration notes this week, one page\n- Priya: check the pricing page copy before Thursday\n- Cut the importer down to the CSV path for the first release",
 			"text":    "Full transcript of the design review.",
 			"entity":  "Website", "audio": "meeting-2026-09-22T10-04-00.wav",
 			"system_audio": "meeting-2026-09-22T10-04-00-system.wav", "has_audio": true, "has_turns": true,
@@ -213,6 +220,23 @@ func demoTasks() []map[string]any {
 			"entity": "Voxlog", "status": "todo", "created": stamp(day(1)),
 		},
 		{
+			"id": "20260923-111200.401000000", "source_kind": "dictation",
+			"source_key": stamp(day(0)), "text": "Send the launch post to the newsletter list",
+			"entity": "Website", "status": "blocked", "created": stamp(day(0)),
+			"notes": "Waiting on the pricing page.",
+		},
+		{
+			"id": "20260923-091500.733000000", "source_kind": "dictation",
+			"source_key": stamp(day(0)), "text": "Renew the code signing certificate",
+			"entity": "Voxlog", "status": "todo", "created": stamp(day(0)),
+			"reminder": stamp(atNine(day(-2))),
+		},
+		{
+			"id": "20260921-142000.305000000", "source_kind": "meeting",
+			"source_key": stamp(day(2)), "text": "Answer the Homebrew cask review",
+			"entity": "Voxlog", "status": "done", "created": stamp(day(2)),
+		},
+		{
 			"id": "20260920-093400.019000000", "source_kind": "meeting",
 			"source_key": stamp(day(3)), "text": "Fix the timing issue in the decode queue test",
 			"entity": "Voxlog", "status": "done", "created": stamp(day(3)),
@@ -252,7 +276,20 @@ func demoModels() []map[string]any {
 // bindingAnswers is what the page gets back from the bindings it calls while
 // it is loading. Anything missing here is a broken screenshot: several call
 // sites .then() the answer and stop rendering if it is not a Promise.
+// demoAccount is the one OpenRouter account the demo settings hold.
+const demoAccount = "acc-personal"
+
 var bindingAnswers = mustJSON(map[string]any{
+	"openRouterKeysStored": map[string]bool{demoAccount: true},
+	"openRouterLimits": map[string]any{
+		demoAccount: map[string]int{"used": 12, "limit": 50, "remaining": 38},
+	},
+	"openRouterFreeModels": []map[string]string{
+		{"id": "nvidia/nemotron-3-super-120b-a12b:free", "name": "NVIDIA: Nemotron 3 Super (free)"},
+		{"id": "google/gemma-4-31b-it:free", "name": "Google: Gemma 4 31B (free)"},
+		{"id": "openrouter/free", "name": "OpenRouter: Free router"},
+	},
+	"notificationState":     map[string]bool{"decided": true, "granted": true, "fell_back": false},
 	"keyLabel":              "Right Command",
 	"inputDevices":          []string{"MacBook Pro Microphone", "Studio Display Microphone"},
 	"recordingsSize":        map[string]any{"bytes": 4_930_000_000, "human": "4.9 GB"},
@@ -318,6 +355,10 @@ func demoTurns() []map[string]any {
 // never triggers them, but a stray event might, and an undefined function
 // throws where a no-op does not.
 var silentBindings = mustJSON([]string{
+	"clearCorrection", "correctTurn", "correctTurnAs", "drawerAddTask", "drawerClose",
+	"drawerOpenMain", "drawerSetStatus", "logJS", "openNotificationSettings",
+	"setOpenRouterKey", "setTaskEntity", "setTaskReminder", "setVoiceSample",
+	"similarToVoice", "testLLMConnection", "toggleMeetingMute", "voiceClips",
 	"applyEntry", "pasteEntry", "transcribeEntry", "stopMeeting", "deleteRecording",
 	"saveSettings", "revealModels", "chooseDirectory", "restartApp", "settingsWindowClosed",
 	"setMicVolume", "startMicTest", "stopMicTest", "startModelTest", "cancelModelTest",

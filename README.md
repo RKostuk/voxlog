@@ -31,7 +31,7 @@ speech models, the summaries, the search — runs on the machine in front of
 you. No account, no upload, no network call the app makes on its own except
 downloading a model you asked for.
 
-![The Overview section: today's counts, a fourteen-day chart, and the most recent takes](media/overview.png)
+![The Overview section: today's figures beside an eight-week chart, the tasks by status, and how many free AI requests are left](media/overview.png)
 
 > The screenshots on this page are the real interface rendered with invented
 > data — see [`tools/mkshots`](voxlog-go/tools/mkshots). Nobody's transcripts
@@ -115,7 +115,7 @@ system audio together, written to disk as they arrive rather than held in
 memory, so an hour costs about 115 MB of disk and nothing in RAM, and a crash
 mid-call loses nothing.
 
-![A recorded meeting: summary, talk time per speaker, and the transcript as per-speaker turns](media/meeting.png)
+![A recorded meeting: the summary, its action items as a numbered list, and talk time per speaker](media/meeting.png)
 
 With system audio on, the two sides are transcribed apart instead of mixed.
 Far-end speakers are told apart with pyannote segmentation plus speaker
@@ -164,7 +164,7 @@ Neither is on by default.
 A local LLM reads each finished transcript and pulls out what sounded like a
 commitment, filing it under one of your projects.
 
-![The Tasks section: tasks grouped by project, with status and where each came from](media/tasks.png)
+![The Tasks section: tasks grouped by project, each with its status, reminder, and where it came from](media/tasks.png)
 
 Everything here is optional and local too: the classifier runs on Apple's MLX
 runtime, installed on first use rather than shipped in the app, and nothing is
