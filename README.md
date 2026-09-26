@@ -5,14 +5,14 @@
 <h1 align="center">Voxlog</h1>
 
 <p align="center">
-  <b>A menu bar dictation and meeting recorder for macOS that never talks to a server.</b>
+  <b>A menu bar dictation and meeting recorder for macOS. Speech is turned into text on your Mac.</b>
 </p>
 
 <p align="center">
   <a href="https://github.com/RKostuk/voxlog/releases/latest"><img src="https://img.shields.io/github/v/release/RKostuk/voxlog?label=release&color=6552e0" alt="Latest release"></a>
   <img src="https://img.shields.io/badge/macOS-13%2B-1d1d1f?logo=apple" alt="macOS 13+">
   <img src="https://img.shields.io/badge/Apple%20Silicon-arm64-1d1d1f" alt="Apple Silicon">
-  <img src="https://img.shields.io/badge/runs-local%20by%20default-34c759" alt="Runs locally by default">
+  <img src="https://img.shields.io/badge/speech-on%20device-34c759" alt="Speech recognition on device">
 </p>
 
 <p align="center">
@@ -26,10 +26,11 @@
 
 Hold a key, speak, and the transcript lands in whatever app you were typing in.
 Record a whole call and get it back as a transcript with the speakers told
-apart, a summary, and the tasks that were said out loud. Everything — the
-speech models, the summaries, the search — runs on the machine in front of
-you. No account, no upload, no network call the app makes on its own except
-downloading a model you asked for.
+apart, a summary with its action items, and the tasks that were said out
+loud. The speech models and the search run on the machine in front of you, and
+no audio ever leaves it. Tasks and summaries go to an LLM you choose:
+OpenRouter's free models, a model on this Mac, or any OpenAI-compatible API —
+and no transcript leaves the Mac until you give OpenRouter or your API a key.
 
 ![The Overview section: today's figures beside an eight-week chart, the tasks by status, and how many free AI requests are left](media/overview.png)
 
@@ -58,7 +59,7 @@ downloading a model you asked for.
 |---|---|---|
 | Accessibility | Global hotkeys | The event tap is created and silently never receives a key. This is the one that looks like the app is broken. |
 | Microphone | Recording | Nothing records |
-| Screen Recording | System audio | Meetings capture your side only — macOS treats audio-only capture as screen capture |
+| Screen Recording | The other side of a call | Asked for only if you turn on **Record the other side of the call**. Without it a meeting records your microphone alone — macOS treats audio-only capture as screen capture |
 
 ---
 
@@ -68,7 +69,8 @@ The first launch opens a welcome, one step at a time: the permissions and what
 each is for, the microphone with a live level to check it hears you, whether
 Voxlog listens on a key or all the time, the shortcuts (press a new one to
 rebind it), where the recording indicator sits, how calls are recorded, and
-whether tasks and summaries run on this Mac or through an API. The last step
+whether tasks and summaries go through OpenRouter, a model on this Mac, or an
+API of your own. The last step
 downloads the speech model if it is not on disk yet.
 
 ![The welcome, on the step that decides whether Voxlog listens on a key or all the time](media/welcome.png)
@@ -86,7 +88,8 @@ Welcome tour**.
 
 Tap the dictate key to start, tap again to stop — or switch to hold-to-talk,
 where the recording lasts exactly as long as the key is down. The transcript
-is pasted into the focused app, copied, both, or neither. A hold shorter than
+is pasted into the focused app, copied, both, or neither — or pasted unless it
+is a task, in which case it is filed in Tasks instead. A hold shorter than
 250 ms is thrown away rather than decoded: that was a key brushed on the way
 to something else, not a sentence.
 
@@ -110,12 +113,16 @@ is worse than having no cancel key.
 
 ### Meetings
 
-A second binding records a whole call for as long as it takes: microphone and
-system audio together, written to disk as they arrive rather than held in
+A second binding records a whole call for as long as it takes: the microphone
+and, with **Record the other side of the call** on, the Mac's system audio,
+written to disk as they arrive rather than held in
 memory, so an hour costs about 115 MB of disk and nothing in RAM, and a crash
 mid-call loses nothing.
 
 ![A recorded meeting: the summary, its action items as a numbered list, and talk time per speaker](media/meeting.png)
+
+Each call gets a title, a few sentences on what was discussed, and the action
+items as a numbered list — who is to do what, and by when if it was said.
 
 With system audio on, the two sides are transcribed apart instead of mixed.
 Far-end speakers are told apart with pyannote segmentation plus speaker
@@ -161,22 +168,28 @@ Neither is on by default.
 
 ### Tasks
 
-A local LLM reads each finished transcript and pulls out what sounded like a
-commitment, filing it under one of your projects.
+An LLM reads each finished transcript and pulls out what sounded like a
+commitment, filing it under one of your projects with a status and, if a time
+was said, a reminder.
 
 ![The Tasks section: tasks grouped by project, each with its status, reminder, and where it came from](media/tasks.png)
 
-Everything here is optional and local too: the classifier runs on Apple's MLX
-runtime, installed on first use rather than shipped in the app, and nothing is
-sent anywhere. "Not a task" removes a line and remembers not to suggest it
-again.
+What counts as a task is yours to say. **Settings → Task detection rules**
+takes plain words — *a task only when I say "заведи задачу"* — and when the
+rules name a trigger, it is the only way a task is made, so a dictated message
+full of things to do is still pasted as text. "Not a task" removes a line and
+remembers not to suggest it again. Overview counts the tasks by status; click a
+count to open Tasks on it.
 
-The one way to change that is a choice you have to make yourself. Settings →
-LLM model can point this work at an OpenAI-compatible API instead of the local
-model, and then the transcripts it summarizes and reads for tasks are sent to
-whatever endpoint you configured — nothing else is, and the key lives in your
-login keychain rather than in Voxlog's settings file. On this Mac stays the
-default.
+Where the transcripts go for this is a choice in **Settings → LLM model**:
+
+| Provider | What is sent, and where |
+|---|---|
+| OpenRouter (the default) | The transcript, to the free model you picked and its fallbacks. Up to four accounts; Overview shows how many free requests the active one has left today. Nothing is sent until an account has a key. |
+| On this Mac | Nothing. The model runs on Apple's MLX runtime, installed on first use. |
+| OpenAI-compatible API | The transcript, to the endpoint you configured. |
+
+Keys live in `secrets.json`, readable only by you, not in the settings file.
 
 ### Letting an LLM read it
 
@@ -225,10 +238,14 @@ is decoded in the middle of that meeting's hour of audio, not after it.
 
 ## Privacy
 
-- No network call the app makes on its own, ever, except downloading a model
-  or the MLX runtime you asked for.
+- Audio never leaves the Mac: speech is recognised on device.
+- Transcripts leave it only for tasks and summaries, and only to the provider
+  you set up — OpenRouter or your own API once it has a key, nothing at all
+  with the model on this Mac. Beyond that, the app downloads the models or the
+  MLX runtime you ask for, and nothing else.
 - Recordings and transcripts live in `~/Documents/Voxlog`; the database, the
-  settings and the MCP token live in `~/Library/Application Support/Voxlog`.
+  settings, the API keys and the MCP token live in
+  `~/Library/Application Support/Voxlog`.
 - The MCP server is off by default, binds loopback only, and answers a wrong
   token with a 404 rather than a 401 — a caller cannot tell a bad token from a
   server that was never there.
@@ -277,7 +294,8 @@ webview gets and fills it with invented data.
 | `internal/voiceid` | Speaker embeddings, and telling one voice from another |
 | `internal/history` | The SQLite database: dictations, meetings, turns, voices, search, retention |
 | `internal/task` | Tasks, their reminders, and the lines marked "not a task" |
-| `internal/llm` | The local MLX classifier and its runtime |
+| `internal/llm` | Task detection and meeting summaries: the prompts, the OpenRouter and API clients, and the local MLX runtime |
+| `internal/secrets` | API keys, in a file only you can read |
 | `internal/mcp` | The MCP server: JSON-RPC over loopback HTTP, and its tools |
 | `internal/hotkey` | CGEventTap listener, bindings, key labels |
 | `internal/output` | Clipboard and simulated paste, via NSPasteboard |
