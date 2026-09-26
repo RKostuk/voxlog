@@ -7,9 +7,12 @@ import (
 	"time"
 )
 
+// Result is one task found in a transcript.
 type Result struct {
-	IsTask bool
-	Text   string
+	Text string
+	// Notes is a short description the model adds when the transcript says
+	// more about the task than fits its one line; "" otherwise.
+	Notes  string
 	Entity string
 	// Status is one of "todo"/"in_progress"/"blocked"/"done" -- validated in
 	// Classify, falls back to "todo" if the model returns anything else or
@@ -18,12 +21,16 @@ type Result struct {
 	Reminder *time.Time
 }
 
-type classifyJSON struct {
-	IsTask   bool    `json:"is_task"`
+type taskJSON struct {
 	Text     string  `json:"text"`
+	Notes    string  `json:"notes"`
 	Entity   string  `json:"entity"`
 	Status   string  `json:"status"`
 	Reminder *string `json:"reminder"`
+}
+
+type classifyJSON struct {
+	Tasks []taskJSON `json:"tasks"`
 }
 
 var validStatuses = map[string]bool{"todo": true, "in_progress": true, "blocked": true, "done": true}
@@ -56,52 +63,63 @@ func normalizeEntity(entity string, allowed []string) string {
 // long meetings start getting misclassified in practice.
 const maxTranscriptChars = 3000
 
-// Classify asks the model whether text describes an actionable task, and if
-// so extracts the task text, an entity/project name (reused from entities
-// when the transcript is plainly about one of them, or a short new one), and
-// an optional reminder time resolved against now. modelDir is the directory
-// asr.ModelDir(baseDir, Spec) resolves to -- mlx_lm's --model flag. rejected
-// is a short list of past task texts the user explicitly marked "Not a
-// task" (see task.Store.LoadRejected) -- a bounded negative-example nudge,
-// not training, so it stays short enough to not meaningfully grow the
-// prompt. rules is the user's own "what counts as a task" text from Settings
-// (see buildPrompt), "" for none.
-func (c *Cache) Classify(modelDir, text string, entities, rejected []string, rules string, now time.Time, ep Endpoint) (Result, error) {
+// Classify asks the model which tasks, if any, text contains -- none for a
+// passing remark, one or several when the speaker listed them -- and for
+// each the task text, a description, a project (one of entities, or
+// UnfilteredEntity), a status, and an optional reminder resolved against
+// now. modelDir is the directory asr.ModelDir(baseDir, Spec) resolves to --
+// mlx_lm's --model flag. rejected is a short list of past task texts the
+// user explicitly marked "Not a task" (see task.Store.LoadRejected) -- a
+// bounded negative-example nudge, not training. rules is the user's own
+// "what counts as a task" text from Settings (see buildPrompt), "" for none.
+//
+// On OpenRouter each configured model is asked in turn until one answers
+// with JSON that parses (see askInTurn).
+func (c *Cache) Classify(modelDir, text string, entities, rejected []string, rules string, now time.Time, ep Endpoint) ([]Result, error) {
 	target, err := c.resolve(modelDir, ep)
 	if err != nil {
-		return Result{}, err
+		return nil, err
 	}
+	var out []Result
+	err = askInTurn(target, buildPrompt(text, entities, rejected, rules, now), func(reply string) error {
+		var perr error
+		out, perr = parseClassification(reply, entities)
+		return perr
+	})
+	return out, err
+}
 
-	content, err := chatCompletion(target, buildPrompt(text, entities, rejected, rules, now))
+// parseClassification reads the model's reply into tasks. A reply that is
+// not the JSON asked for is an error, so the next model gets a turn; a task
+// with no text is dropped, and a reminder that does not parse is dropped
+// from its task -- the task itself is still worth keeping.
+func parseClassification(reply string, entities []string) ([]Result, error) {
+	jsonText, err := extractJSONObject(reply)
 	if err != nil {
-		return Result{}, err
+		return nil, fmt.Errorf("no JSON object in reply: %w (raw: %s)", err, reply)
 	}
-
-	jsonText, err := extractJSONObject(content)
-	if err != nil {
-		return Result{}, fmt.Errorf("llm: no JSON object in reply: %w (raw: %s)", err, content)
-	}
-
 	var parsed classifyJSON
 	if err := json.Unmarshal([]byte(jsonText), &parsed); err != nil {
-		return Result{}, fmt.Errorf("llm: parsing classification: %w (raw: %s)", err, jsonText)
+		return nil, fmt.Errorf("parsing classification: %w (raw: %s)", err, jsonText)
 	}
-	if !parsed.IsTask {
-		return Result{IsTask: false}, nil
-	}
-
-	res := Result{IsTask: true, Text: parsed.Text, Entity: normalizeEntity(parsed.Entity, entities), Status: "todo"}
-	if validStatuses[parsed.Status] {
-		res.Status = parsed.Status
-	}
-	if parsed.Reminder != nil && *parsed.Reminder != "" {
-		// A reminder that fails to parse is dropped, not an error -- the task
-		// itself is still worth keeping.
-		if t, err := time.Parse(time.RFC3339, *parsed.Reminder); err == nil {
-			res.Reminder = &t
+	var out []Result
+	for _, t := range parsed.Tasks {
+		text := strings.TrimSpace(t.Text)
+		if text == "" {
+			continue
 		}
+		res := Result{Text: text, Notes: strings.TrimSpace(t.Notes), Entity: normalizeEntity(t.Entity, entities), Status: "todo"}
+		if validStatuses[t.Status] {
+			res.Status = t.Status
+		}
+		if t.Reminder != nil && *t.Reminder != "" {
+			if when, err := time.Parse(time.RFC3339, *t.Reminder); err == nil {
+				res.Reminder = &when
+			}
+		}
+		out = append(out, res)
 	}
-	return res, nil
+	return out, nil
 }
 
 // extractJSONObject pulls the first balanced {...} substring out of s. The
@@ -163,8 +181,8 @@ func rejectedBlock(rejected []string) string {
 		quoted[i] = `"` + r + `"`
 	}
 	return "\nThe user has explicitly marked text like the following as NOT " +
-		"actual tasks before -- if this transcript reads similarly, prefer " +
-		"is_task=false: " + strings.Join(quoted, "; ") + "\n"
+		"actual tasks before -- if part of this transcript reads similarly, " +
+		"do not make a task of it: " + strings.Join(quoted, "; ") + "\n"
 }
 
 // maxTaskRulesChars bounds the user's rules the way maxTranscriptChars bounds
@@ -184,8 +202,30 @@ func rulesBlock(rules string) string {
 	if len(rules) > maxTaskRulesChars {
 		rules = strings.ToValidUTF8(rules[:maxTaskRulesChars], "")
 	}
+	// A dictation meant as text -- a message, a reply, a prompt -- is full
+	// of things to do, and with output mode "paste unless task" every one
+	// read as a task is text that never arrives where it was dictated. So a
+	// trigger the user names is the only way in, not one way among several.
 	return "\nAdditional rules from the user, to follow as long as they do not\n" +
-		"contradict the JSON format asked for below:\n" + rules + "\n"
+		"contradict the JSON format asked for below. If these rules say what\n" +
+		"makes something a task -- trigger words or phrases such as \"створи\n" +
+		"задачу\" -- they are the ONLY way a task is made: a transcript that does\n" +
+		"not match them has no tasks, however actionable it sounds, and\n" +
+		"{\"tasks\": []} is the answer:\n" + rules + "\n"
+}
+
+// upcomingDays lists the next seven days by name and date. Small models
+// resolve "by Friday" to a day already past, or to tomorrow, when left to do
+// the calendar arithmetic themselves; looking a date up is something they
+// get right.
+func upcomingDays(now time.Time) string {
+	days := make([]string, 7)
+	for i := range days {
+		d := now.AddDate(0, 0, i+1)
+		days[i] = d.Format("Monday 2006-01-02")
+	}
+	days[0] = "tomorrow = " + days[0]
+	return strings.Join(days, ", ")
 }
 
 func buildPrompt(text string, entities, rejected []string, rules string, now time.Time) string {
@@ -196,18 +236,20 @@ func buildPrompt(text string, entities, rejected []string, rules string, now tim
 	if len(entities) > 0 {
 		entityList = strings.Join(entities, ", ")
 	}
-	return fmt.Sprintf(`You classify a dictated or meeting transcript for a task-tracking app.
-Decide if it contains a concrete, actionable task the speaker (or someone
-they mention) needs to do. Casual notes, questions, or general discussion
-are NOT tasks.
+	return fmt.Sprintf(`You turn a dictated or meeting transcript into tasks for a task-tracking app.
+Find every concrete, actionable task the speaker (or someone they mention)
+needs to do. Casual notes, questions, thinking out loud or general
+discussion are NOT tasks -- then the list is empty. If the speaker names
+several tasks, return each one separately.
 %s%s
 The only allowed projects are this fixed list: %s.
-You MUST set entity to one of these EXACTLY as written, matching by meaning
-even if the transcript spells or pronounces it differently. Never invent a
-new project name. If the transcript is not clearly about any of these, or
-the list is empty, set entity to exactly "Unfiltered".
+Set a task's entity to one of these EXACTLY as written only when the
+transcript names that project or is plainly about it, matching by meaning
+even if it is spelled or pronounced differently. Never invent a new project
+name and never guess: a task that does not mention one of them -- most
+everyday tasks -- gets entity exactly "Unfiltered".
 
-Also judge the task's status from how the speaker talks about it:
+Judge each task's status from how the speaker talks about it:
 - "blocked" if they say they're stuck, waiting on someone/something, or
   can't proceed.
 - "done" if they say it's already finished (a task logged after the fact).
@@ -216,16 +258,27 @@ Also judge the task's status from how the speaker talks about it:
 - "todo" otherwise -- the default when nothing suggests progress has begun.
 
 The current date and time is %s -- resolve any relative time ("tomorrow",
-"Friday", "in an hour") against it. If no time is mentioned, reminder must be
-null.
+"Friday", "in an hour") against it. A reminder is always in the future.
+Never work a date out yourself; take it from this list, where the first day
+is tomorrow: %s.
+If the speaker asks to be reminded or names a time or deadline for a task,
+set its reminder; otherwise reminder must be null.
 
 Transcript:
 """
 %s
 """
 
+Write "text" as a short, self-contained task title with speech filler and
+false starts cleaned up. Write "notes" only when the transcript gives
+details the title leaves out (who, what exactly, how) -- never repeat the
+title or the time; otherwise "".
+LANGUAGE: "text" and "notes" MUST be in the transcript's own language -- a
+Ukrainian transcript gives Ukrainian tasks. Never translate into English.
+
 Respond with ONLY a single JSON object, nothing before or after it, no
-markdown code fence, exactly these keys:
-{"is_task": true or false, "text": "...", "entity": "...", "status": "todo" or "in_progress" or "blocked" or "done", "reminder": "RFC3339 timestamp or null"}`,
-		rejectedBlock(rejected), rulesBlock(rules), entityList, now.Format(time.RFC3339), text)
+markdown code fence, exactly this shape:
+{"tasks": [{"text": "...", "notes": "...", "entity": "...", "status": "todo" or "in_progress" or "blocked" or "done", "reminder": "RFC3339 timestamp or null"}]}
+Use {"tasks": []} when there is no task.`,
+		rejectedBlock(rejected), rulesBlock(rules), entityList, now.Format("Monday, ")+now.Format(time.RFC3339), upcomingDays(now), text)
 }

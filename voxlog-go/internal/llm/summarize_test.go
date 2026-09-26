@@ -174,3 +174,30 @@ func TestThePromptAsksForATitle(t *testing.T) {
 		t.Error("the title instruction lands after the transcript")
 	}
 }
+
+// The action items come back under a label the model decorates as it likes;
+// they are stored under one exact label, one "- " line each, and not at all
+// when there were none.
+func TestParseSummaryKeepsActionItems(t *testing.T) {
+	reply := "TITLE: Реліз велкому\nДомовились випустити велком у п'ятницю.\n\n**Action items**\n* Роман: доробити велком до п'ятниці\n- перевірити мітки спікерів\n\nPROJECT: Voxlog"
+	title, summary, entity := parseSummary(reply, []string{"Voxlog"})
+	want := "Домовились випустити велком у п'ятницю.\n\nACTION ITEMS:\n- Роман: доробити велком до п'ятниці\n- перевірити мітки спікерів"
+	if title != "Реліз велкому" || entity != "Voxlog" || summary != want {
+		t.Errorf("got %q / %q / %q", title, summary, entity)
+	}
+
+	_, summary, _ = parseSummary("They chatted.\nACTION ITEMS:\n- none\nPROJECT: none", []string{"Voxlog"})
+	if summary != "They chatted." {
+		t.Errorf("no action items: summary = %q", summary)
+	}
+}
+
+// Told to write "- ", a model still numbers its list now and then; the
+// number is the list's to draw, not part of the item.
+func TestNormalizeActionItemsDropsNumbering(t *testing.T) {
+	got := normalizeActionItems("Говорили про документи.\nACTION ITEMS:\n1. Подати на грін-карту до кінця жовтня\n2) Знайти адвоката")
+	want := "Говорили про документи.\n\nACTION ITEMS:\n- Подати на грін-карту до кінця жовтня\n- Знайти адвоката"
+	if got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}

@@ -2,6 +2,7 @@ package llm
 
 import (
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -155,5 +156,125 @@ func TestRateLimitSaysWhatToDo(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "rate limit") || !strings.Contains(err.Error(), "another account or model") {
 		t.Errorf("error = %q, want it to say to switch account or model", err)
+	}
+}
+
+// Every free model on OpenRouter thinks before it answers, and a budget
+// sized for the answer alone ("ok" in 8 tokens) is spent entirely on the
+// thinking -- the model then "answers" with nothing. So OpenRouter requests
+// ask for no reasoning and leave room for it anyway.
+func TestOpenRouterRequestsLeaveRoomForReasoning(t *testing.T) {
+	got := &captured{}
+	var title string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		title = r.Header.Get("X-Title")
+		raw, _ := io.ReadAll(r.Body)
+		json.Unmarshal(raw, &got.body)
+		io.WriteString(w, `{"choices":[{"message":{"role":"assistant","content":"ok"}}]}`)
+	}))
+	defer srv.Close()
+
+	ep := Endpoint{BaseURL: srv.URL, Model: "m:free", openRouter: true}
+	if err := Ping(ep); err != nil {
+		t.Fatal(err)
+	}
+	if got.body.MaxTokens < minOpenRouterTokens {
+		t.Errorf("max_tokens = %d, want at least %d", got.body.MaxTokens, minOpenRouterTokens)
+	}
+	if got.body.Reasoning == nil || got.body.Reasoning.Enabled {
+		t.Errorf("reasoning = %+v, want it disabled", got.body.Reasoning)
+	}
+	if title != "Voxlog" {
+		t.Errorf("X-Title = %q", title)
+	}
+
+	// Anyone else gets the request exactly as before.
+	plain, got2 := fakeEndpoint(t, http.StatusOK, `{"choices":[{"message":{"role":"assistant","content":"ok"}}]}`)
+	if err := Ping(Endpoint{BaseURL: plain.URL}); err != nil {
+		t.Fatal(err)
+	}
+	if got2.body.Reasoning != nil || got2.body.MaxTokens != 8 {
+		t.Errorf("non-OpenRouter request changed: %+v", got2.body)
+	}
+}
+
+// An empty reply cut off by the length limit is a model that spent its
+// budget thinking; the error should say that rather than just "nothing".
+func TestEmptyReplySaysWhy(t *testing.T) {
+	srv, _ := fakeEndpoint(t, http.StatusOK, `{"choices":[{"message":{"role":"assistant","content":null},"finish_reason":"length"}]}`)
+	err := Ping(Endpoint{BaseURL: srv.URL})
+	if err == nil || !strings.Contains(err.Error(), "length") {
+		t.Errorf("error = %v, want it to mention the length cut-off", err)
+	}
+}
+
+// OpenRouter models are asked one at a time, in the user's order, and a
+// model that fails -- by status or by an answer that does not parse -- hands
+// over to the next.
+func TestAskInTurnFallsThroughTheModels(t *testing.T) {
+	var asked []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body chatRequest
+		raw, _ := io.ReadAll(r.Body)
+		json.Unmarshal(raw, &body)
+		if body.Models != nil {
+			t.Errorf("models = %v, want one model per request", body.Models)
+		}
+		asked = append(asked, body.Model)
+		switch body.Model {
+		case "a:free":
+			w.WriteHeader(http.StatusTooManyRequests)
+		case "b:free":
+			io.WriteString(w, `{"choices":[{"message":{"role":"assistant","content":"not json"}}]}`)
+		default:
+			io.WriteString(w, `{"choices":[{"message":{"role":"assistant","content":"{\"tasks\":[]}"}}]}`)
+		}
+	}))
+	defer srv.Close()
+
+	ep := Endpoint{BaseURL: srv.URL, Model: "a:free", Fallbacks: []string{"b:free", "c:free"}, openRouter: true}
+	var got string
+	err := askInTurn(ep, "p", func(reply string) error {
+		if _, err := extractJSONObject(reply); err != nil {
+			return err
+		}
+		got = reply
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(asked, ",") != "a:free,b:free,c:free" || got != `{"tasks":[]}` {
+		t.Errorf("asked %v, got %q", asked, got)
+	}
+
+	asked = nil
+	if err := askInTurn(Endpoint{BaseURL: srv.URL, Model: "a:free", Fallbacks: []string{"b:free"}, openRouter: true}, "p", func(reply string) error { _, err := extractJSONObject(reply); return err }); err == nil {
+		t.Error("every model failing came back as success")
+	}
+}
+
+// OpenRouter's "free-models-per-day" 429 is the account running out, not a
+// model: it is recognised with its reset time, and no further model is asked.
+func TestDailyLimitStopsTheFallbacks(t *testing.T) {
+	var asked int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		asked++
+		w.WriteHeader(http.StatusTooManyRequests)
+		io.WriteString(w, `{"error":{"message":"Rate limit exceeded: free-models-per-day.","code":429,"metadata":{"headers":{"X-RateLimit-Limit":"50","X-RateLimit-Remaining":"0","X-RateLimit-Reset":"1790380800000"},"limit_source":"openrouter_free_tier_daily"}}}`)
+	}))
+	defer srv.Close()
+
+	ep := Endpoint{BaseURL: srv.URL, Model: "a:free", Fallbacks: []string{"b:free"}, openRouter: true}
+	err := askInTurn(ep, "p", func(string) error { return nil })
+	var limit *RateLimitError
+	if !errors.As(err, &limit) || !limit.Daily {
+		t.Fatalf("err = %v, want a daily RateLimitError", err)
+	}
+	if limit.Reset.UnixMilli() != 1790380800000 {
+		t.Errorf("reset = %v", limit.Reset)
+	}
+	if asked != 1 {
+		t.Errorf("asked %d models, want 1: the limit is the account's", asked)
 	}
 }

@@ -21,9 +21,9 @@ import (
 	"voxlog-go/internal/diarize"
 	"voxlog-go/internal/history"
 	"voxlog-go/internal/hotkey"
-	"voxlog-go/internal/keychain"
 	"voxlog-go/internal/llm"
 	"voxlog-go/internal/permissions"
+	"voxlog-go/internal/secrets"
 	"voxlog-go/internal/settings"
 	"voxlog-go/internal/sfsymbol"
 	"voxlog-go/internal/task"
@@ -1229,22 +1229,31 @@ func onReady(store *settings.Store, histStore *history.Store, meetStore *history
 
 	// The LLM pane's key and its "Test connection" button. Installed here
 	// rather than reached for inside internal/ui, which deliberately knows
-	// nothing about the model or the keychain.
+	// nothing about the model or where keys are kept.
 	ui.SetLLMKeyFuncs(
-		func(key string) error { return keychain.Set(keychain.LLMService, keychain.LLMAccount, key) },
-		func() bool {
-			_, err := keychain.Get(keychain.LLMService, keychain.LLMAccount)
-			return err == nil
-		},
+		func(key string) error { return a.secrets.Set(secrets.LLMService, secrets.LLMAccount, key) },
+		func() bool { return a.secrets.Exists(secrets.LLMService, secrets.LLMAccount) },
 	)
 	ui.SetLLMTestFunc(a.testLLM)
+	ui.SetOpenRouterLimitsFunc(a.openRouterQuotas)
 	ui.SetOpenRouterFuncs(
-		func(id, key string) error { return keychain.Set(keychain.OpenRouterService, id, key) },
+		func(id, key string) error {
+			// Empty removes the account's key; anything else has to look
+			// like one, or it only comes back later as a baffling 401.
+			if key != "" {
+				if err := llm.CheckOpenRouterKey(key); err != nil {
+					return err
+				}
+			}
+			return a.secrets.Set(secrets.OpenRouterService, id, strings.TrimSpace(key))
+		},
+		// "Stored" means stored and usable: a key that is not an OpenRouter
+		// key shows its row as empty, so the pane asks for a real one.
 		func(ids []string) map[string]bool {
 			stored := make(map[string]bool, len(ids))
 			for _, id := range ids {
-				_, err := keychain.Get(keychain.OpenRouterService, id)
-				stored[id] = err == nil
+				key, err := a.secrets.Get(secrets.OpenRouterService, id)
+				stored[id] = err == nil && llm.CheckOpenRouterKey(key) == nil
 			}
 			return stored
 		},

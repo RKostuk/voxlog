@@ -1,7 +1,7 @@
 package main
 
 import (
-	"errors"
+	"fmt"
 	"log"
 	"os"
 	"path/filepath"
@@ -12,10 +12,9 @@ import (
 	"voxlog-go/internal/audio"
 	"voxlog-go/internal/history"
 	"voxlog-go/internal/hotkey"
+	"voxlog-go/internal/llm"
 	"voxlog-go/internal/output"
-	"voxlog-go/internal/permissions"
 	"voxlog-go/internal/settings"
-	"voxlog-go/internal/systemaudio"
 	"voxlog-go/internal/ui"
 )
 
@@ -65,13 +64,6 @@ type dictation struct {
 	live       asr.StreamingTranscriber
 	liveChunks chan []float32
 	liveDone   chan struct{}
-
-	// System audio arrives on ScreenCaptureKit's own queue, independent of the
-	// mic callback, so it is collected separately and mixed at the end.
-	sysMu      sync.Mutex
-	sysSamples []float32
-	sysVoiced  float64
-	sysRunning bool
 }
 
 // level is the loudest moment since the last read, for the overlay's meter.
@@ -156,8 +148,6 @@ func (a *app) startDictation() {
 	// for the first moment of speech.
 	a.overlay.Show()
 
-	a.startDictationSystemAudio(d, cfg)
-
 	// Live streaming needs the model resident BEFORE audio starts, since
 	// chunks are decoded as they arrive. That means paying the load here
 	// (usually already warm from the preload) instead of in the background as
@@ -184,44 +174,6 @@ func (a *app) startDictation() {
 	// the time the user stops talking. If it's still loading then, the stop
 	// path's get() just waits on the same mutex.
 	go a.models.warm(spec, asr.ModelDir(a.modelsDir, spec), cfg.Language)
-}
-
-// startDictationSystemAudio adds what is playing on the Mac to this take, when
-// the setting asks for it and the tap is free.
-func (a *app) startDictationSystemAudio(d *dictation, cfg settings.Settings) {
-	// Preflight, never a prompt: a dictation is not where anyone should be
-	// asked for Screen Recording.
-	if !cfg.CaptureSystemAudio || !permissions.ScreenRecording() {
-		return
-	}
-	err := systemaudio.Start(func(chunk []float32) {
-		// The level is needed for the meter anyway, so counting voiced time
-		// off it costs one comparison per chunk.
-		level := audio.Level(chunk)
-		d.sysMu.Lock()
-		d.sysSamples = append(d.sysSamples, chunk...)
-		if level >= systemVoicedThreshold {
-			d.sysVoiced += float64(len(chunk)) / audio.SampleRate
-		}
-		d.sysMu.Unlock()
-		// Drive the same meter as the mic, so the overlay reacts to what's
-		// playing even when nobody is talking.
-		a.overlay.SetLevel(level)
-	})
-	switch {
-	case err == nil:
-		d.sysRunning = true
-		log.Printf("DEBUG system audio: capture started")
-	case errors.Is(err, systemaudio.ErrBusy):
-		// The meeting has it, and there is only one tap in the machine. Not a
-		// failure worth interrupting anyone over: during a call, a dictation
-		// being microphone-only is what the user would have asked for.
-		log.Printf("system audio: held by the meeting; this take is microphone-only")
-	default:
-		// Not fatal: fall back to mic-only rather than refusing to record.
-		log.Printf("system audio: %v", err)
-		notifyPane("Could not capture system audio; recording microphone only.", ui.PaneHistory)
-	}
 }
 
 // startLiveDecoder wires up the streaming recognizer for takes that show text
@@ -312,10 +264,6 @@ func (a *app) startCapture(d *dictation) error {
 
 // abandon tears down a take that never got started.
 func (a *app) abandon(d *dictation) {
-	if d.sysRunning {
-		systemaudio.Stop()
-		d.sysRunning = false
-	}
 	if d.liveChunks != nil {
 		close(d.liveChunks)
 		<-d.liveDone
@@ -346,25 +294,6 @@ func (a *app) stopDictation() {
 		d.detachMeter()
 	}
 
-	var systemSamples []float32
-	separate := false
-	if d.sysRunning {
-		systemaudio.Stop()
-		d.sysMu.Lock()
-		systemSamples = d.sysSamples
-		voiced := d.sysVoiced
-		d.sysSamples = nil
-		d.sysMu.Unlock()
-
-		// separate keeps the two sources apart all the way through decoding
-		// instead of summing them into one stream. It needs the system side to
-		// have actually carried sound: with the tap on but silent there is
-		// only one speaker in the room, and splitting would buy a second
-		// decode pass and a "Call:" heading over nothing.
-		separate = cfg.SeparateSpeakers && voiced >= minVoicedSeconds && len(systemSamples) > 0
-		log.Printf("DEBUG system audio: captured %d samples (mic %d), %.1fs voiced, separate=%v",
-			len(systemSamples), len(samples), voiced, separate)
-	}
 	recordingSeconds := time.Since(d.start).Seconds()
 	log.Printf("DEBUG mic: %.1fs, peak %.1f dBFS at gain %.2f (%.0f%%)",
 		float64(len(samples))/audio.SampleRate, audio.PeakDBFS(samples), cfg.MicGain, cfg.MicGain*100)
@@ -385,7 +314,7 @@ func (a *app) stopDictation() {
 		liveText = final
 	}
 
-	if len(samples) == 0 && len(systemSamples) == 0 {
+	if len(samples) == 0 {
 		a.finishRecording(cfg, false) // nothing captured (stopped before audio started)
 		return
 	}
@@ -393,20 +322,11 @@ func (a *app) stopDictation() {
 	a.finishRecording(cfg, true)
 	a.queue.submit("Dictation, "+d.start.Format("15:04"), "", recordingSeconds, func(yield func()) {
 		start := time.Now()
-		var text string
-		switch {
-		case liveText != "" && !separate:
-			text = liveText
-		case separate:
-			// The live transcript is one string with no timing in it, so it
-			// cannot be interleaved; the recorder buffered the same audio
-			// anyway, so the conversation is rebuilt from that.
-			text = a.transcribeSamples(d.spec, d.language, samples, systemSamples, true, yield)
-			if text == "" && liveText != "" {
-				text = labelSpeakers(liveText, a.transcribeBlock(d.spec, d.language, nil, systemSamples, false))
-			}
-		default:
-			text = a.transcribeSamples(d.spec, d.language, samples, systemSamples, false, yield)
+		// A dictation is the microphone alone: what is playing on the Mac
+		// belongs to a meeting, never to a note.
+		text := liveText
+		if text == "" {
+			text = a.transcribeSamples(d.spec, d.language, samples, nil, false, yield)
 		}
 
 		a.releaseOverlay()
@@ -420,9 +340,26 @@ func (a *app) stopDictation() {
 // take's audio is exactly what settings.KeepDictationAudio is for: the
 // recording is the only thing a wrong -- or missing -- transcript can be
 // checked against, so it must not be the one case where saving it is skipped.
+//
+// With output.ModePasteUnlessTask the LLM is asked first, here, before
+// anything is pasted: a dictation it reads as a task becomes the task and is
+// not pasted; anything else -- no task, or no answer (a rate limit, no key)
+// -- is pasted as usual, so a failing LLM never swallows the text.
 func (a *app) recordDictationResult(cfg settings.Settings, text string, start, dictStart time.Time, recordingSeconds float64, samples []float32) {
+	var found []llm.Result
+	asked := false
 	if text != "" {
-		if err := output.Emit(text, cfg.OutputMode); err != nil {
+		mode := cfg.OutputMode
+		if mode == output.ModePasteUnlessTask {
+			asked = true
+			results, err := a.findTasks(history.KindDictation, text)
+			if err != nil {
+				log.Printf("task classify: %v -- pasting the text instead", err)
+			}
+			found = results
+			mode = dictationOutputMode(mode, found)
+		}
+		if err := output.Emit(text, mode); err != nil {
 			log.Printf("output: %v", err)
 		}
 	}
@@ -441,7 +378,11 @@ func (a *app) recordDictationResult(cfg settings.Settings, text string, start, d
 		// user closes and reopens it (meeting.go's equivalent paths already
 		// do this; this one never did).
 		ui.RefreshMainWindowIfOpen(a.hist, a.meetings, a.tasks)
-		if text != "" {
+		switch {
+		case len(found) > 0:
+			a.saveTasks(history.KindDictation, ts.Format(time.RFC3339Nano), found)
+			notifyPane(taskSavedMessage(found), ui.PaneTasks)
+		case text != "" && !asked:
 			go a.classifyForTasks(history.KindDictation, ts.Format(time.RFC3339Nano), text)
 		}
 	}
@@ -586,12 +527,6 @@ func (a *app) cancelDictationLocked() {
 	a.reclaimMic()
 
 	d.take() // discard whatever was captured
-	if d.sysRunning {
-		systemaudio.Stop()
-		d.sysMu.Lock()
-		d.sysSamples = nil
-		d.sysMu.Unlock()
-	}
 	if d.detachMeter != nil {
 		d.detachMeter()
 	}
@@ -604,4 +539,23 @@ func (a *app) cancelDictationLocked() {
 	a.overlay.SetTranscribing(false)
 	a.overlay.ClearText()
 	a.overlay.Hide()
+}
+
+// taskSavedMessage says where a dictation went when it was not pasted:
+// without it, a take that turned into a task looks like one that was lost.
+func taskSavedMessage(found []llm.Result) string {
+	if len(found) == 1 {
+		return "Saved as a task: " + found[0].Text
+	}
+	return fmt.Sprintf("Saved as %d tasks", len(found))
+}
+
+// dictationOutputMode is how a take is delivered once the classifier has
+// answered: a take that became tasks is not pasted; everything else goes out
+// as mode says.
+func dictationOutputMode(mode string, found []llm.Result) string {
+	if mode == output.ModePasteUnlessTask && len(found) > 0 {
+		return output.ModeNone
+	}
+	return mode
 }

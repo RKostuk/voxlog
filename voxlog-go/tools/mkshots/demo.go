@@ -30,7 +30,6 @@ func voxlogJSON(pane string) string {
 	cfg.TranscriptsDir = "/Users/you/Documents/Voxlog/Transcripts"
 	cfg.AlwaysOn = true
 	cfg.MCPEnabled = true
-	cfg.CaptureSystemAudio = true
 	cfg.MeetingSystemAudio = true
 	cfg.SeparateSpeakers = true
 	// Otherwise the pane seeds the project dictionary on load and saves,

@@ -110,12 +110,15 @@
       <div class="group-title">After transcription</div>
       <div class="card">
         <div class="item">
-          <div class="title">Do with the text</div>
+          <div class="title">Do with the text
+            <div class="subtext">&ldquo;Unless it is a task&rdquo; asks the AI first: a dictation it reads as a task goes to Tasks instead of being pasted. If the AI cannot answer, the text is pasted.</div>
+          </div>
           <select id="output_mode">
             <option value="none">Nothing (history only)</option>
             <option value="copy">Copy to clipboard</option>
             <option value="paste">Paste into the focused app</option>
             <option value="paste_copy">Paste and keep on clipboard</option>
+            <option value="paste_unless_task">Paste, unless it is a task</option>
           </select>
         </div>
       </div>
@@ -308,7 +311,7 @@
         </div>
         <div class="item" id="llm-api-key-row" style="display:none">
           <div class="title">API key
-            <div class="subtext" id="llm-key-state">Stored in your login keychain, not in Voxlog's settings file.</div>
+            <div class="subtext" id="llm-key-state">Stored in its own file only you can read, not in Voxlog's settings file.</div>
           </div>
           <input type="password" id="llm_api_key" placeholder="sk-…">
         </div>
@@ -318,8 +321,9 @@
         <div class="item stacked" id="or-accounts-row" style="display:none">
           <div class="title">OpenRouter accounts
             <div class="subtext">Up to 4. Requests go out on the selected one &mdash; switch when one runs out
-              of its free daily requests. Keys are stored in your login keychain.</div>
+              of its free daily requests. Keys are kept in a file only you can read, not in the settings file.</div>
           </div>
+          <div class="subtext warn" id="or-limit-banner" style="display:none; margin-bottom:8px;"></div>
           <div id="or-accounts-list"></div>
           <div style="display:flex; justify-content:flex-end; margin-top:6px;">
             <button type="button" id="or-account-add">Add account</button>
@@ -353,14 +357,6 @@
     <div class="group">
       <div class="group-title">Task Hub <span class="badge" style="background:#ff9500">EXPERIMENTAL</span></div>
       <div class="card">
-        <div class="item stacked">
-          <div class="title">Automatically detect tasks in your transcripts
-            <div class="subtext warn">Experimental. Downloads a ~4.5 GB model and runs it locally after each
-              dictation or meeting to look for actionable tasks -- this can use significant CPU and memory while
-              classifying. Stays off until the model below is downloaded.</div>
-          </div>
-          <input type="checkbox" class="switch" id="task_hub_enabled" disabled>
-        </div>
         <div class="item">
           <div class="title">Qwen3 4B (MLX, 8-bit)
             <div class="subtext">~4.5 GB &middot; used only for Task Hub classification</div>
@@ -370,11 +366,11 @@
         <div class="item stacked">
           <div class="title">Task detection rules
             <div class="subtext">Your own rules for what counts as a task, which project it belongs to and when
-              to remind you. Added to Voxlog's own prompt, not a replacement for it. Leave empty for the
-              default.</div>
+              to remind you. Added to Voxlog's own prompt, not a replacement for it. Name trigger words here
+              and only a dictation that says them becomes a task. Leave empty for the default.</div>
           </div>
           <textarea id="task_prompt_extra" rows="4"
-            placeholder="e.g. &quot;Створи задачу&quot; always means a task. Thinking out loud is not a task. &quot;Завтра зранку&quot; means 9:00."></textarea>
+            placeholder="e.g. A task only when I say &quot;заведи задачу&quot; or &quot;створи задачу&quot;. &quot;Завтра зранку&quot; means 9:00."></textarea>
           <div style="display:flex; justify-content:flex-end; margin-top:6px;">
             <button type="button" id="task_prompt_reset">Reset to default</button>
           </div>
@@ -518,15 +514,9 @@
           </div>
           <input type="checkbox" class="switch" id="keep_dictation_audio">
         </div>
-        <div class="item">
-          <div class="title">Include system audio in dictation too
-            <div class="subtext">Adds what is playing to plain dictation, when no meeting is running &middot; needs Screen &amp; System Audio Recording</div>
-          </div>
-          <input type="checkbox" class="switch" id="capture_system_audio">
-        </div>
         <div class="item" id="separate-speakers-wrap">
           <div class="title">Separate speakers
-            <div class="subtext">Label your microphone and the system audio apart, instead of mixing them</div>
+            <div class="subtext">In a meeting, label your microphone and the system audio apart, instead of mixing them</div>
           </div>
           <input type="checkbox" class="switch" id="separate_speakers">
         </div>
@@ -1001,19 +991,6 @@
           window.downloadLLMModel();
         });
       }
-      syncTaskHubAvailable();
-    }
-
-    // Task Hub needs a model to ask, which is either the one on disk or an
-    // API. Gating only on the download -- as this used to -- left the switch
-    // dead for a user who configured an endpoint precisely so they would
-    // never have to download 4.5 GB.
-    function syncTaskHubAvailable() {
-      var enable = document.getElementById('task_hub_enabled');
-      var provider = document.getElementById('llm_provider').value;
-      var remote = provider === 'api' || (provider === 'openrouter' && !!document.getElementById('or_model').value);
-      enable.disabled = !(llmModel.downloaded || remote);
-      if (enable.disabled) enable.checked = false;
     }
 
     // renderEntityDict draws the dictionary as removable chips. escapeHtml is
@@ -1567,7 +1544,6 @@
         indicator_outline: document.getElementById('indicator_outline').checked,
         indicator_wave_width: parseInt(document.getElementById('indicator_wave_width').value, 10),
         indicator_wave_height: parseInt(document.getElementById('indicator_wave_height').value, 10),
-        capture_system_audio: document.getElementById('capture_system_audio').checked,
         meeting_system_audio: document.getElementById('meeting_system_audio').checked,
         separate_speakers: document.getElementById('separate_speakers').checked,
         audio_retention: document.getElementById('audio_retention').value,
@@ -1577,7 +1553,6 @@
         history_click_action: document.getElementById('history_click_action').value,
         history_retention: document.getElementById('history_retention').value,
         transcripts_dir: transcriptsDir,
-        task_hub_enabled: document.getElementById('task_hub_enabled').checked,
         llm_provider: document.getElementById('llm_provider').value,
         llm_base_url: document.getElementById('llm_base_url').value.trim(),
         llm_model: document.getElementById('llm_model').value.trim(),
@@ -1615,17 +1590,6 @@
       }, 300);
     }
 
-    // Separating speakers needs two streams to separate, so the row is only
-    // live while system audio is being captured. Disabled rather than hidden:
-    // hiding it would make the option look like it does not exist, when the
-    // real answer is "turn on the row above first".
-    function syncSeparateSpeakers() {
-      var on = document.getElementById('capture_system_audio').checked;
-      var box = document.getElementById('separate_speakers');
-      box.disabled = !on;
-      document.getElementById('separate-speakers-wrap').style.opacity = on ? '' : '0.45';
-    }
-    document.getElementById('capture_system_audio').addEventListener('change', syncSeparateSpeakers);
 
     // A style owns where it goes and how much room it has, so the controls
     // it cannot honor are taken away rather than left to do nothing. That is
@@ -2021,7 +1985,6 @@
         refreshORKeyState();
         if (!orModels.length) refreshORModels();
       }
-      syncTaskHubAvailable();
     }
 
     // The window never receives the key, only whether one is stored -- a
@@ -2029,14 +1992,14 @@
     function refreshLLMKeyState() {
       window.llmAPIKeyStored().then(function (stored) {
         document.getElementById('llm-key-state').textContent = stored
-          ? 'A key is stored in your login keychain. Type a new one to replace it.'
-          : 'Stored in your login keychain, not in Voxlog\'s settings file.';
+          ? 'A key is stored. Type a new one to replace it.'
+          : 'Stored in its own file only you can read, not in Voxlog\'s settings file.';
       }).catch(function () {});
     }
 
     document.getElementById('llm_provider').addEventListener('change', syncLLMProvider);
 
-    // The key is handed straight to the keychain rather than carried in the
+    // The key is handed straight to the secrets file rather than carried in the
     // settings payload, and the field is emptied once it is: nothing in this
     // window should still be holding it.
     document.getElementById('llm_api_key').addEventListener('change', function (ev) {
@@ -2097,55 +2060,117 @@
     var orSelected = ['', '', ''];
     var MAX_OR_ACCOUNTS = 4;
 
+    // renderORAccounts draws one row per account. An account without a key
+    // (or one whose key is being replaced) shows a name field, a key field
+    // and Save; once the key is stored the key field goes away and
+    // the row says so, with Replace to bring it back. A field that merely
+    // empties itself after saving -- as the first version did -- reads as
+    // "it lost my key".
+    var orEditing = {};
     function renderORAccounts() {
       var root = document.getElementById('or-accounts-list');
       if (!orAccounts.length) {
         root.innerHTML = '<div class="subtext">No accounts yet. Create a key at openrouter.ai/keys and add it here.</div>';
       } else {
         root.innerHTML = orAccounts.map(function (a, i) {
-          return '<div class="or-account" style="display:flex; gap:6px; align-items:center; margin-bottom:6px;">' +
-            '<input type="radio" name="or_active" data-index="' + i + '"' + (a.id === orActive ? ' checked' : '') + ' aria-label="Use this account">' +
-            '<input type="text" class="or-label" data-index="' + i + '" value="' + escapeHtml(a.label) + '" placeholder="Account name" style="flex:1">' +
-            '<input type="password" class="or-key" data-index="' + i + '" placeholder="' + (orKeyStored[a.id] ? 'Key stored &mdash; type to replace' : 'sk-or-…') + '" style="flex:1.4">' +
-            '<button type="button" class="or-remove" data-index="' + i + '">Remove</button>' +
-            '</div>';
+          var editing = orEditing[a.id] || !orKeyStored[a.id];
+          var row = '<div class="or-account" data-index="' + i + '" style="display:flex; gap:6px; align-items:center; margin-bottom:6px;">' +
+            '<input type="radio" name="or_active" data-index="' + i + '"' + (a.id === orActive ? ' checked' : '') + ' title="Use this account">' +
+            '<input type="text" class="or-label" data-index="' + i + '" value="' + escapeHtml(a.label) + '" placeholder="Account name" style="flex:1">';
+          if (editing) {
+            row += '<input type="password" class="or-key" data-index="' + i + '" placeholder="Paste key: sk-or-…" style="flex:1.4">' +
+              '<button type="button" class="or-save" data-index="' + i + '">Save key</button>' +
+              (orKeyStored[a.id] ? '<button type="button" class="or-cancel" data-index="' + i + '">Cancel</button>' : '');
+          } else if (orLimited[a.id] && orLimited[a.id].reset) {
+            row += '<span class="pill-limit" style="flex:1.4; text-align:center;" title="OpenRouter allows 50 free-model requests a day per account without credits">' +
+              'Free limit used up &middot; back at ' + new Date(orLimited[a.id].reset).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) + '</span>' +
+              '<button type="button" class="or-replace" data-index="' + i + '">Replace</button>';
+          } else {
+            var q = orLimited[a.id];
+            row += '<span class="pill-ok" style="flex:1.4; text-align:center;" title="Free-model requests left today; the count resets at midnight UTC">&#10003; Key saved' +
+              (q && q.limit ? ' &middot; ' + q.remaining + ' of ' + q.limit + ' left today' : '') + '</span>' +
+              '<button type="button" class="or-replace" data-index="' + i + '">Replace</button>';
+          }
+          row += '<button type="button" class="or-remove" data-index="' + i + '">Remove</button></div>';
+          row += '<div class="subtext warn or-error" data-index="' + i + '" style="display:none; margin:-2px 0 6px 24px;"></div>';
+          return row;
         }).join('');
       }
       document.getElementById('or-account-add').disabled = orAccounts.length >= MAX_OR_ACCOUNTS;
 
+      function account(el) { return orAccounts[parseInt(el.dataset.index, 10)]; }
+
       root.querySelectorAll('input[name=or_active]').forEach(function (r) {
-        r.addEventListener('change', function () {
-          orActive = orAccounts[parseInt(r.dataset.index, 10)].id;
-        });
+        r.addEventListener('change', function () { orActive = account(r).id; refreshORLimits(); });
       });
       root.querySelectorAll('.or-label').forEach(function (inp) {
-        inp.addEventListener('input', function () {
-          orAccounts[parseInt(inp.dataset.index, 10)].label = inp.value;
+        inp.addEventListener('input', function () { account(inp).label = inp.value; });
+      });
+      // The key goes straight to the secrets file, never into the settings
+      // payload -- and never through the form's autosave either.
+      function saveKey(inp) {
+        var a = account(inp);
+        var key = inp.value.trim();
+        var err = root.querySelector('.or-error[data-index="' + inp.dataset.index + '"]');
+        if (!key) {
+          err.textContent = 'Paste the key first.';
+          err.style.display = '';
+          return;
+        }
+        // Every OpenRouter key starts this way. Anything else is the wrong
+        // thing on the clipboard -- a link to the keys page, say -- and
+        // storing it only turns into a "Missing Authentication" 401 later.
+        if (key.indexOf('sk-or-') !== 0) {
+          err.textContent = 'That is not an OpenRouter key -- keys start with "sk-or-". Copy it from openrouter.ai/keys.';
+          err.style.display = '';
+          return;
+        }
+        window.setOpenRouterKey(a.id, key).then(function () {
+          delete orEditing[a.id];
+          orKeyStored[a.id] = true;
+          renderORAccounts();
+          save();
+        }).catch(function (e) {
+          err.textContent = 'Could not store the key: ' + e;
+          err.style.display = '';
+        });
+      }
+      root.querySelectorAll('.or-key').forEach(function (inp) {
+        ['input', 'change'].forEach(function (t) {
+          inp.addEventListener(t, function (ev) { ev.stopPropagation(); });
+        });
+        inp.addEventListener('keydown', function (ev) {
+          if (ev.key === 'Enter') { ev.preventDefault(); saveKey(inp); }
         });
       });
-      // Same rule as the API key: straight to the keychain, then emptied.
-      root.querySelectorAll('.or-key').forEach(function (inp) {
-        inp.addEventListener('change', function (ev) {
-          ev.stopPropagation();
-          var key = inp.value;
-          if (!key) return;
-          var id = orAccounts[parseInt(inp.dataset.index, 10)].id;
-          window.setOpenRouterKey(id, key).then(function () {
-            inp.value = '';
-            refreshORKeyState();
-          }).catch(function (e) {
-            inp.value = '';
-            inp.placeholder = 'Could not store the key: ' + e;
-          });
+      root.querySelectorAll('.or-save').forEach(function (btn) {
+        btn.addEventListener('click', function () {
+          saveKey(root.querySelector('.or-key[data-index="' + btn.dataset.index + '"]'));
+        });
+      });
+      root.querySelectorAll('.or-replace').forEach(function (btn) {
+        btn.addEventListener('click', function () {
+          orEditing[account(btn).id] = true;
+          renderORAccounts();
+          var inp = root.querySelector('.or-key[data-index="' + btn.dataset.index + '"]');
+          if (inp) inp.focus();
+        });
+      });
+      root.querySelectorAll('.or-cancel').forEach(function (btn) {
+        btn.addEventListener('click', function () {
+          delete orEditing[account(btn).id];
+          renderORAccounts();
         });
       });
       root.querySelectorAll('.or-remove').forEach(function (btn) {
         btn.addEventListener('click', function () {
           var i = parseInt(btn.dataset.index, 10);
           var gone = orAccounts.splice(i, 1)[0];
-          // An empty key deletes the keychain item: a removed account should
+          // An empty key deletes the stored key: a removed account should
           // not leave its secret behind.
           window.setOpenRouterKey(gone.id, '').catch(function () {});
+          delete orEditing[gone.id];
+          delete orKeyStored[gone.id];
           if (orActive === gone.id) orActive = orAccounts[0] ? orAccounts[0].id : '';
           renderORAccounts();
           save();
@@ -2160,6 +2185,31 @@
         orKeyStored = stored || {};
         renderORAccounts();
       }).catch(function () {});
+      refreshORLimits();
+    }
+
+    // refreshORLimits marks the accounts whose free requests for today are
+    // used up -- the app learns it from OpenRouter's refusals -- and says so
+    // above the list, with what to do about it.
+    var orLimited = {};
+    function refreshORLimits() {
+      var ids = orAccounts.map(function (a) { return a.id; });
+      if (!ids.length || !window.openRouterLimits) return;
+      window.openRouterLimits(ids).then(function (limits) {
+        orLimited = limits || {};
+        var banner = document.getElementById('or-limit-banner');
+        var active = orLimited[orActive] && orLimited[orActive].reset;
+        if (active) {
+          var free = orAccounts.some(function (a) { return a.id !== orActive && orKeyStored[a.id] && !(orLimited[a.id] && orLimited[a.id].reset); });
+          banner.textContent = 'The selected account has used up its free requests for today. Tasks and meeting summaries wait until ' +
+            new Date(active).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) + '. ' +
+            (free ? 'Select another account below to carry on now.' : 'Add another account to carry on now.');
+          banner.style.display = '';
+        } else {
+          banner.style.display = 'none';
+        }
+        renderORAccounts();
+      }).catch(function () {});
     }
 
     document.getElementById('or-account-add').addEventListener('click', function () {
@@ -2169,6 +2219,8 @@
       if (!orActive) orActive = id;
       renderORAccounts();
       save();
+      var label = document.querySelector('#or-accounts-list .or-label[data-index="' + (orAccounts.length - 1) + '"]');
+      if (label) { label.focus(); label.select(); }
     });
 
     // renderORModels fills the model and fallback selects from orModels,
@@ -2191,6 +2243,41 @@
       });
     }
 
+    // Preference order for empty slots -- settings.DefaultOpenRouterModels'
+    // order, and only models that are on today's free list.
+    var OR_DEFAULTS = ['nvidia/nemotron-3-super-120b-a12b:free', 'google/gemma-4-31b-it:free', 'openrouter/free'];
+
+    // fillORDefaults picks a model when none is chosen, and fallbacks when
+    // there are none at all, so OpenRouter works the moment it is selected.
+    // A slot left empty next to a chosen fallback is a choice, and kept.
+    // Returns whether anything changed.
+    function fillORDefaults() {
+      var ids = orModels.map(function (m) { return m.id; });
+      var pool = OR_DEFAULTS.filter(function (id) { return ids.indexOf(id) !== -1; });
+      var changed = false;
+      function take() {
+        for (var i = 0; i < pool.length; i++) {
+          if (orSelected.indexOf(pool[i]) === -1) return pool[i];
+        }
+        return '';
+      }
+      if (!orSelected[0]) {
+        orSelected[0] = take();
+        changed = changed || !!orSelected[0];
+      }
+      if (!orSelected[1] && !orSelected[2]) {
+        orSelected[1] = take();
+        orSelected[2] = orSelected[1] ? take() : '';
+        changed = changed || !!orSelected[1];
+      }
+      ['or_model', 'or_fallback_1', 'or_fallback_2'].forEach(function (id, slot) {
+        var sel = document.getElementById(id);
+        sel.innerHTML = '<option value="' + escapeHtml(orSelected[slot]) + '"></option>';
+        sel.value = orSelected[slot];
+      });
+      return changed;
+    }
+
     function refreshORModels() {
       var state = document.getElementById('or-models-state');
       var btn = document.getElementById('or-models-refresh');
@@ -2202,6 +2289,7 @@
       state.textContent = 'Loading free models…';
       window.openRouterFreeModels().then(function (models) {
         orModels = models || [];
+        if (fillORDefaults()) save();
         renderORModels();
         state.textContent = orModels.length + ' free models. Fallbacks are tried in order when the model ' +
           'above is busy or rate-limited.';
@@ -2214,7 +2302,6 @@
     }
 
     document.getElementById('or-models-refresh').addEventListener('click', refreshORModels);
-    document.getElementById('or_model').addEventListener('change', syncTaskHubAvailable);
 
     document.getElementById('form').addEventListener('change', save);
     document.getElementById('form').addEventListener('input', save);
@@ -2263,7 +2350,6 @@
       document.getElementById('indicator_wave_width').value = settings.indicator_wave_width || 96;
       document.getElementById('indicator_wave_height').value = settings.indicator_wave_height || 16;
       syncIndicatorStyle();
-      document.getElementById('capture_system_audio').checked = !!settings.capture_system_audio;
       document.getElementById('meeting_system_audio').checked = !!settings.meeting_system_audio;
       document.getElementById('separate_speakers').checked = !!settings.separate_speakers;
       document.getElementById('escape_cancels').checked = !!settings.escape_cancels;
@@ -2278,7 +2364,6 @@
       document.getElementById('keep_dictation_audio').checked = settings.keep_dictation_audio !== false;
       document.getElementById('audio_retention').value = settings.audio_retention || 'disabled';
       document.getElementById('audio_max_gb').value = settings.audio_max_gb || 0;
-      syncSeparateSpeakers();
       refreshRecordingsSize();
 
       keys.dictate_key = settings.dictate_key || '';
@@ -2295,7 +2380,6 @@
       // and syncIndicatorStyle ran above, before showKeyLabel had filled it in.
       syncIndicatorStyle();
 
-      document.getElementById('task_hub_enabled').checked = !!settings.task_hub_enabled;
       // Defaulted the way settings.DefaultSettings does, not to false/empty:
       // a file written before these fields existed has no summary_enabled in
       // it, and reading that as "off" would silently stop summarizing for

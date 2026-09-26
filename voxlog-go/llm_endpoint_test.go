@@ -3,8 +3,8 @@ package main
 import (
 	"testing"
 
-	"voxlog-go/internal/keychain"
 	"voxlog-go/internal/llm"
+	"voxlog-go/internal/secrets"
 	"voxlog-go/internal/settings"
 )
 
@@ -13,7 +13,7 @@ func fakeKeys(items map[string]string) func(service, account string) (string, er
 		if k, ok := items[service+"/"+account]; ok {
 			return k, nil
 		}
-		return "", keychain.ErrNotFound
+		return "", secrets.ErrNotFound
 	}
 }
 
@@ -25,8 +25,8 @@ func TestOpenRouterEndpointUsesTheActiveAccount(t *testing.T) {
 	cfg.OpenRouterModel = "m/one:free"
 	cfg.OpenRouterFallbacks = []string{"m/two:free", "m/three:free", "m/four:free"}
 	keys := fakeKeys(map[string]string{
-		keychain.OpenRouterService + "/a1": "sk-or-main",
-		keychain.OpenRouterService + "/a2": "sk-or-spare",
+		secrets.OpenRouterService + "/a1": "sk-or-main",
+		secrets.OpenRouterService + "/a2": "sk-or-spare",
 	})
 
 	ep := endpointFor(cfg, keys)
@@ -46,6 +46,7 @@ func TestOpenRouterEndpointUsesTheActiveAccount(t *testing.T) {
 func TestOpenRouterWithoutAModelIsNotReady(t *testing.T) {
 	cfg := settings.DefaultSettings()
 	cfg.LLMProvider = settings.LLMProviderOpenRouter
+	cfg.OpenRouterModel = ""
 	if ep := endpointFor(cfg, fakeKeys(nil)); ep.Remote() {
 		t.Errorf("endpoint = %+v, want the zero endpoint", ep)
 	}
@@ -56,7 +57,7 @@ func TestAPIEndpointIsUnchanged(t *testing.T) {
 	cfg.LLMProvider = settings.LLMProviderAPI
 	cfg.LLMBaseURL = "https://api.openai.com"
 	cfg.LLMModel = "gpt-4o-mini"
-	ep := endpointFor(cfg, fakeKeys(map[string]string{keychain.LLMService + "/" + keychain.LLMAccount: "sk"}))
+	ep := endpointFor(cfg, fakeKeys(map[string]string{secrets.LLMService + "/" + secrets.LLMAccount: "sk"}))
 	if ep.BaseURL != cfg.LLMBaseURL || ep.Model != "gpt-4o-mini" || ep.APIKey != "sk" || ep.Fallbacks != nil {
 		t.Errorf("endpoint = %+v", ep)
 	}

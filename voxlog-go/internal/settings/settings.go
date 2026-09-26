@@ -18,7 +18,8 @@ type Settings struct {
 	HistoryKeyID string `json:"history_key"`
 	InputDevice  string `json:"input_device"` // capture device name; "" = system default
 	// OutputMode is what happens to a finished transcript:
-	// "none" | "copy" | "paste" | "paste_copy" (see internal/output).
+	// "none" | "copy" | "paste" | "paste_copy" | "paste_unless_task"
+	// (see internal/output).
 	OutputMode string  `json:"output_mode"`
 	MicGain    float64 `json:"mic_gain"`
 	// LiveStreamingText only applies to models with SupportsStreaming.
@@ -67,10 +68,6 @@ type Settings struct {
 	// screen_bottom_* slots down beside the Dock (see internal/ui's
 	// OverlayPositions).
 	OverlayPosition string `json:"overlay_position"`
-	// CaptureSystemAudio mixes whatever is playing through the speakers
-	// into the recording alongside the microphone. Needs Screen Recording
-	// permission (macOS treats even audio-only capture as screen capture).
-	CaptureSystemAudio bool `json:"capture_system_audio"`
 	// MeetingSystemAudio records the other side of a call alongside the
 	// microphone. Off by default: it is the only thing in the app that needs
 	// Screen Recording, and a meeting recorded from the microphone alone
@@ -78,8 +75,8 @@ type Settings struct {
 	MeetingSystemAudio bool `json:"meeting_system_audio"`
 	// SeparateSpeakers transcribes the microphone and the system audio as
 	// two streams and labels them, instead of mixing them into one. Only
-	// meaningful with CaptureSystemAudio on, and only takes effect when the
-	// system side actually carried sound -- a take with nothing playing has
+	// meaningful for a meeting with MeetingSystemAudio on, and only takes
+	// effect when the system side actually carried sound -- a take with nothing playing has
 	// exactly one speaker and nothing to separate.
 	SeparateSpeakers bool `json:"separate_speakers"`
 	// HistoryClickAction is what CLICKING an entry in the History pane does:
@@ -212,11 +209,9 @@ type Settings struct {
 	// Idle by default. Re-reading hours of old audio is real CPU, and the
 	// machine belongs to the user, not to the backlog.
 	BackfillTurns string `json:"backfill_turns"`
-	// TaskHubEnabled turns on background LLM classification of finished
-	// transcripts (Settings > LLM model). Off by default: experimental,
-	// downloads a multi-gigabyte model, and the checkbox itself stays
-	// disabled in the UI until that model is on disk.
-	TaskHubEnabled bool `json:"task_hub_enabled"`
+	// Task detection has no switch: every finished transcript goes to the
+	// LLM (see classifyForTasks). A task_hub_enabled key left in an older
+	// settings file is ignored.
 	// EntityDictionary is the user-maintained list of canonical
 	// project/client names Task Hub's classifier is told to reuse instead of
 	// inventing near-duplicates. Editable in Settings > LLM model -- fixing a
@@ -224,13 +219,10 @@ type Settings struct {
 	// rewritten retroactively.
 	EntityDictionary []string `json:"entity_dictionary"`
 	// LLMProvider is which model answers Task Hub's prompts:
-	// LLMProviderLocal (the downloaded model run by mlx_lm, the default) or
-	// LLMProviderAPI (an OpenAI-compatible endpoint the user configures).
-	//
-	// Local is the default and stays the default. The app's first promise is
-	// that nothing it hears leaves the machine, and the API option breaks
-	// that promise for the transcripts it summarizes -- so it is a thing the
-	// user goes and turns on, with the consequence spelled out beside it.
+	// LLMProviderOpenRouter (the default: OpenRouter's free models, asked in
+	// the user's order), LLMProviderAPI (an OpenAI-compatible endpoint the
+	// user configures) or LLMProviderLocal (the downloaded model run by
+	// mlx_lm).
 	LLMProvider string `json:"llm_provider"`
 	// LLMBaseURL is the endpoint's root, e.g. "https://api.openai.com" --
 	// "/v1/chat/completions" is appended (see llm.Endpoint).
@@ -239,8 +231,8 @@ type Settings struct {
 	// serves the one model it was started with.
 	LLMModel string `json:"llm_model"`
 	// OpenRouterAccounts are the OpenRouter keys the user has stored, by
-	// label; the keys themselves are in the keychain under each ID (see
-	// keychain.OpenRouterService). Several, switched by hand, because a free
+	// label; the keys themselves are in the secrets file under each ID (see
+	// secrets.OpenRouterService). Several, switched by hand, because a free
 	// tier's daily limit is per account -- at most MaxOpenRouterAccounts.
 	OpenRouterAccounts []OpenRouterAccount `json:"openrouter_accounts"`
 	// OpenRouterActive is the ID of the account requests go out on.
@@ -258,12 +250,12 @@ type Settings struct {
 	TaskPromptExtra string `json:"task_prompt_extra"`
 	// The API key itself is deliberately not here. settings.json is a plain
 	// file in Application Support that gets opened, copied and synced; the
-	// key lives in the login keychain instead (internal/keychain).
+	// key lives in its own file instead (internal/secrets).
 
 	// SummaryEnabled is whether a finished meeting gets a summary written
-	// for it. Split out of TaskHubEnabled, which used to imply it: finding
-	// tasks and writing a paragraph about the call are separate wants, and a
-	// user who only wanted one had to take both.
+	// for it. Split out of the old task_hub_enabled switch, which used to
+	// imply it: finding tasks and writing a paragraph about the call are
+	// separate wants, and a user who only wanted one had to take both.
 	SummaryEnabled bool `json:"summary_enabled"`
 	// SummaryLength is how much summary to ask for:
 	// SummaryBrief | SummaryNormal | SummaryDetailed.
@@ -327,11 +319,21 @@ const (
 	LLMProviderOpenRouter = "openrouter"
 )
 
-// OpenRouterAccount names one stored OpenRouter key. ID is what the keychain
+// OpenRouterAccount names one stored OpenRouter key. ID is what the secrets file
 // item is filed under; Label is what the user calls it.
 type OpenRouterAccount struct {
 	ID    string `json:"id"`
 	Label string `json:"label"`
+}
+
+// DefaultOpenRouterModels is the preference order the defaults are taken
+// from, and the one the settings pane fills an empty model slot from when
+// these are on the current free list. Free models come and go; the last is
+// OpenRouter's router over whatever is free today.
+var DefaultOpenRouterModels = []string{
+	"nvidia/nemotron-3-super-120b-a12b:free",
+	"google/gemma-4-31b-it:free",
+	"openrouter/free",
 }
 
 const (
@@ -383,7 +385,6 @@ func DefaultSettings() Settings {
 		IndicatorWaveWidth:  96,
 		IndicatorWaveHeight: 16,
 		OverlayPosition:     "cursor",
-		CaptureSystemAudio:  false,
 		SeparateSpeakers:    false,
 		HistoryClickAction:  "copy",
 		HistoryRetention:    "disabled",
@@ -417,7 +418,12 @@ func DefaultSettings() Settings {
 		// only gains a switch to turn it off.
 		SummaryEnabled: true,
 		SummaryLength:  SummaryNormal,
-		LLMProvider:    LLMProviderLocal,
+		LLMProvider:    LLMProviderOpenRouter,
+		// Picked so that choosing OpenRouter works on the spot: instruction-
+		// following models that read Ukrainian as well as English, and
+		// OpenRouter's own free router last, which is always there.
+		OpenRouterModel:     DefaultOpenRouterModels[0],
+		OpenRouterFallbacks: append([]string(nil), DefaultOpenRouterModels[1:1+MaxOpenRouterFallbacks]...),
 	}
 }
 

@@ -129,8 +129,8 @@ func TestExistingSettingsFileGetsTheNewDefaults(t *testing.T) {
 		t.Errorf("KeepMeetingAudio is %v, want true", got.KeepMeetingAudio)
 	}
 	// And the settings that only moved sections in the UI keep their values.
-	if !got.CaptureSystemAudio || !got.SeparateSpeakers {
-		t.Errorf("got %+v, want system audio and speaker separation still enabled", got)
+	if !got.SeparateSpeakers {
+		t.Errorf("got %+v, want speaker separation still enabled", got)
 	}
 	if got.DictateKeyID != "vk:54" {
 		t.Errorf("DictateKeyID is %q, want the stored binding", got.DictateKeyID)
@@ -365,5 +365,25 @@ func TestOpenRouterSettingsPersist(t *testing.T) {
 		got.OpenRouterModel != v.OpenRouterModel || !reflect.DeepEqual(got.OpenRouterFallbacks, v.OpenRouterFallbacks) ||
 		got.TaskPromptExtra != v.TaskPromptExtra || got.LLMProvider != LLMProviderOpenRouter {
 		t.Fatalf("got %+v, want the OpenRouter fields back", got)
+	}
+}
+
+// Choosing OpenRouter has to work without first picking a model, and the
+// defaults have to be distinct -- a fallback that is the primary again is
+// no fallback.
+func TestOpenRouterDefaultsAreUsable(t *testing.T) {
+	d := DefaultSettings()
+	if d.OpenRouterModel == "" {
+		t.Fatal("no default OpenRouter model")
+	}
+	if len(d.OpenRouterFallbacks) != MaxOpenRouterFallbacks {
+		t.Fatalf("fallbacks = %v", d.OpenRouterFallbacks)
+	}
+	seen := map[string]bool{d.OpenRouterModel: true}
+	for _, f := range d.OpenRouterFallbacks {
+		if seen[f] {
+			t.Errorf("%q is listed twice", f)
+		}
+		seen[f] = true
 	}
 }

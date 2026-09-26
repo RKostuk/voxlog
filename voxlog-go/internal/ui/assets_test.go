@@ -172,7 +172,7 @@ func TestTheMCPSwitchesAreSavedAndLoaded(t *testing.T) {
 }
 
 // The API key must not be part of the settings payload: it belongs in the
-// keychain, and settings.json is a plain file that gets opened and synced.
+// secrets file, and settings.json is a plain file that gets opened and synced.
 func TestTheAPIKeyIsNeverPutInTheSettingsPayload(t *testing.T) {
 	frag, err := assets.ReadFile("assets/settings-pane.html")
 	if err != nil {
@@ -190,7 +190,7 @@ func TestTheAPIKeyIsNeverPutInTheSettingsPayload(t *testing.T) {
 		t.Error("the API key field is not a password field")
 	}
 	if !strings.Contains(body, "window.setLLMAPIKey(") {
-		t.Error("nothing hands the key to the keychain")
+		t.Error("nothing hands the key to the secrets store")
 	}
 }
 
@@ -287,9 +287,9 @@ func TestInkColoursAreRedefinedForDark(t *testing.T) {
 }
 
 // Overview's weight: the chart is drawn straight onto the pane (a card around
-// eight short columns reads as an empty band), and Recent takes ten rows from
-// three sources rather than three rows from two.
-func TestOverviewGivesRecentTheWeight(t *testing.T) {
+// eight short columns reads as an empty band), and in place of Recent -- a
+// repeat of History and Meetings -- one line on the AI and its limit.
+func TestOverviewLayout(t *testing.T) {
 	page, err := assets.ReadFile("assets/main.html")
 	if err != nil {
 		t.Fatal(err)
@@ -298,14 +298,20 @@ func TestOverviewGivesRecentTheWeight(t *testing.T) {
 	if strings.Contains(body, `class="card chart"`) {
 		t.Error("the chart is back inside a card")
 	}
-	if !strings.Contains(body, "overviewRecentRows = 10") {
-		t.Error("Recent is no longer ten rows")
+	if strings.Contains(body, `id="overview-recent"`) {
+		t.Error("Recent is back on Overview; it only repeated History and Meetings")
+	}
+	if !strings.Contains(body, `id="overview-ai"`) {
+		t.Error("Overview no longer says how the AI and its free limit stand")
+	}
+	if !strings.Contains(body, `id="overview-tasks"`) {
+		t.Error("Overview no longer counts the tasks by status")
+	}
+	if strings.Contains(body, `id="task-summary"`) {
+		t.Error("the status counts are back on Tasks; they live on Overview")
 	}
 	if !strings.Contains(body, `id="overview-span"`) {
 		t.Error("the Today / All time toggle is gone")
-	}
-	if !strings.Contains(body, "function taskRecentRowHTML(") {
-		t.Error("tasks no longer reach Recent")
 	}
 }
 

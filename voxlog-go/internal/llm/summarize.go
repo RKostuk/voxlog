@@ -1,6 +1,10 @@
 package llm
 
-import "strings"
+import (
+	"errors"
+	"regexp"
+	"strings"
+)
 
 // SummaryOptions is what the user has said about summaries in
 // Settings > LLM model. A struct rather than more positional arguments: the
@@ -44,12 +48,14 @@ func (c *Cache) Summarize(modelDir, text string, entities []string, opts Summary
 	if err != nil {
 		return "", "", "", err
 	}
-	content, err := chatCompletion(target, buildSummaryPrompt(text, entities, opts))
-	if err != nil {
-		return "", "", "", err
-	}
-	title, summary, entity = parseSummary(content, entities)
-	return title, summary, entity, nil
+	err = askInTurn(target, buildSummaryPrompt(text, entities, opts), func(reply string) error {
+		if strings.TrimSpace(reply) == "" {
+			return errors.New("empty summary")
+		}
+		title, summary, entity = parseSummary(reply, entities)
+		return nil
+	})
+	return title, summary, entity, err
 }
 
 // parseSummary splits the reply into the title, the summary and the project.
@@ -58,6 +64,11 @@ func (c *Cache) Summarize(modelDir, text string, entities []string, opts Summary
 // worth keeping, and a local model forgets a marker often enough that losing
 // the whole reply over it would be the wrong trade.
 func parseSummary(content string, entities []string) (title, summary, entity string) {
+	title, summary, entity = parseSummaryParts(content, entities)
+	return title, normalizeActionItems(summary), entity
+}
+
+func parseSummaryParts(content string, entities []string) (title, summary, entity string) {
 	lines := strings.Split(strings.TrimSpace(content), "\n")
 
 	// The title is the first non-empty line, and only if it is labelled: an
@@ -158,8 +169,8 @@ discussed and any decisions made.`
 }
 
 func buildSummaryPrompt(text string, entities []string, opts SummaryOptions) string {
-	if len(text) > maxTranscriptChars {
-		text = text[:maxTranscriptChars]
+	if len(text) > maxMeetingChars {
+		text = strings.ToValidUTF8(text[:maxMeetingChars], "")
 	}
 	entityHint := ""
 	if len(entities) > 0 {
@@ -184,7 +195,22 @@ of thing it is ("` + titleLabel + ` CSV importer scope", never "` + titleLabel +
 No quotes, no full stop, and write it in the language the transcript is in.
 
 Then ` + lowerFirst(summaryShape(opts.Length)) + ` No preamble ("This meeting..."), no
-markdown, no bullet points -- just the sentences.
+markdown, no bullet points in the summary -- just the sentences.
+
+Then a line reading exactly "` + ActionItemsLabel + `", followed by the action items
+that came out of the meeting, one per line, each starting with "- ". An
+action item is anything someone has to do after this meeting: a follow-up
+agreed or asked for, a next step, a document to file, a deadline to meet, a
+requirement a participant must still fulfil ("the application has to be in
+by the end of October" is an action item). Write each as a short imperative
+line -- who (when the transcript says), what, and by when if a date or
+deadline was named -- and never repeat an item. Keep them OUT of the summary
+sentences' job: the sentences say what was discussed, the list says what to
+do. Write "- none" only when truly nothing is left for anyone to do.
+
+LANGUAGE: the title, the summary and the action items MUST be in the
+transcript's own language -- a Ukrainian meeting gets a Ukrainian summary.
+Never translate into English. Only the labels stay as written above.
 
 ` + projectAsk(entities) + extra + entityHint + `Transcript:
 """
@@ -215,4 +241,52 @@ the transcript spells or pronounces it differently. Never invent a project.
 If the meeting is not clearly about any of them, write "` + projectLabel + ` none".
 
 `
+}
+
+// maxMeetingChars is how much of a meeting transcript the summary reads.
+// Far above maxTranscriptChars: the summary and its action items are about
+// the whole meeting, and cutting it after the first few minutes (3000
+// characters is about that) summarized the small talk at the start. The
+// OpenRouter models it goes to read well past this.
+const maxMeetingChars = 60000
+
+var numberedItem = regexp.MustCompile(`^\d{1,2}[.)]\s+`)
+
+// ActionItemsLabel heads the list of action items inside a stored summary:
+// the summary sentences, a blank line, this label, then one "- " line per
+// item. The UI splits on it to show the list apart from the sentences.
+const ActionItemsLabel = "ACTION ITEMS:"
+
+// normalizeActionItems rewrites whatever the model made of the action item
+// section into the stored shape: the label exactly as ActionItemsLabel, one
+// "- item" per line, and no section at all when there were none. The label
+// is matched loosely -- models bold it, drop the colon, or change its case.
+func normalizeActionItems(summary string) string {
+	lines := strings.Split(summary, "\n")
+	at := -1
+	for i, line := range lines {
+		l := strings.ToUpper(strings.Trim(strings.TrimSpace(line), "*#: "))
+		if l == strings.TrimSuffix(ActionItemsLabel, ":") {
+			at = i
+			break
+		}
+	}
+	if at == -1 {
+		return summary
+	}
+	var items []string
+	for _, line := range lines[at+1:] {
+		item := strings.TrimSpace(strings.TrimLeft(strings.TrimSpace(line), "-*•"))
+		// Told to write "- ", models still number the list ("1. ", "2) ").
+		item = strings.TrimSpace(numberedItem.ReplaceAllString(item, ""))
+		if item == "" || strings.EqualFold(strings.Trim(item, "."), "none") {
+			continue
+		}
+		items = append(items, "- "+item)
+	}
+	text := strings.TrimSpace(strings.Join(lines[:at], "\n"))
+	if len(items) == 0 {
+		return text
+	}
+	return text + "\n\n" + ActionItemsLabel + "\n" + strings.Join(items, "\n")
 }

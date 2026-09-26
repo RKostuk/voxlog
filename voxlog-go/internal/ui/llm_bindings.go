@@ -9,7 +9,7 @@ import (
 
 // The LLM pane's seams. Like the MCP pane's (mcp_bindings.go), these exist so
 // this package does not import internal/llm: a window must not be able to
-// start a model server, install a Python runtime, or reach into the keychain
+// start a model server, install a Python runtime, or read an API key
 // by being opened.
 
 var (
@@ -29,7 +29,37 @@ var (
 	orKeysStoredFn func(ids []string) map[string]bool
 	// orFreeModelsFn fetches OpenRouter's current free models.
 	orFreeModelsFn func() ([]llm.ModelInfo, error)
+	// orLimitsFn says, per account ID, how today's free requests stand.
+	orLimitsFn func(ids []string) map[string]OpenRouterQuota
 )
+
+// OpenRouterQuota is one account's free requests today, as the window sees
+// it. Limit is 0 when the count could not be read; Reset (Unix
+// milliseconds) is set only once they are used up.
+type OpenRouterQuota struct {
+	Used      int   `json:"used"`
+	Limit     int   `json:"limit"`
+	Remaining int   `json:"remaining"`
+	Reset     int64 `json:"reset"`
+}
+
+// SetOpenRouterLimitsFunc installs what the panes ask to show each
+// account's free requests left today.
+func SetOpenRouterLimitsFunc(fn func(ids []string) map[string]OpenRouterQuota) {
+	winMu.Lock()
+	orLimitsFn = fn
+	winMu.Unlock()
+}
+
+func orLimits(ids []string) map[string]OpenRouterQuota {
+	winMu.Lock()
+	fn := orLimitsFn
+	winMu.Unlock()
+	if fn == nil {
+		return map[string]OpenRouterQuota{}
+	}
+	return fn(ids)
+}
 
 // SetOpenRouterFuncs installs the OpenRouter accounts' key storage and the
 // free-model list behind the pane's Refresh button.

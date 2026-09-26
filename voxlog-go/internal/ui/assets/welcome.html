@@ -536,7 +536,6 @@
           '<div class="wl-task"><span class="wl-box"></span><span>Check speaker labels on 3 meetings<br><span class="wl-proj">Voxlog</span></span></div></div>' +
           '</div>' +
           '<div class="wl-group">' +
-          row('Find tasks', 'Experimental. They show up under Tasks.', sw('taskhub', S.task_hub_enabled)) +
           row('Summarize meetings', '', sw('summary', S.summary_enabled)) +
           row('Model', local ? 'On this Mac.' : 'Any OpenAI-compatible endpoint. The text is sent there.', seg('llm', local ? 'local' : 'api', [['local', 'Local'], ['api', 'API key']])) +
           modelRow +
@@ -559,10 +558,10 @@
           '<div class="wl-group wl-summary">' +
           r('Microphone', esc(S.input_device || 'System default') + ' · ×' + (S.mic_gain || 1).toFixed(1)) +
           r('Listening', S.always_on ? 'Always on' : (S.dictate_activation === 'hold' ? 'Hold the key' : 'Tap the key')) +
-          r('Text goes', { paste: 'Where the cursor is', copy: 'To the clipboard', none: 'History only' }[S.output_mode] || 'Where the cursor is') +
+          r('Text goes', { paste: 'Where the cursor is', copy: 'To the clipboard', none: 'History only', paste_unless_task: 'Where the cursor is, unless it is a task' }[S.output_mode] || 'Where the cursor is') +
           r('Indicator', styleName() === 'transcript' ? 'Live text' : 'Capsule') +
           r('Quick task', '<span class="wl-kbd">' + esc(keyLabel(S.tasks_key)) + '</span>') +
-          r('Tasks', S.task_hub_enabled ? (S.llm_provider === 'api' ? 'Through an API' : 'Local model') : 'Off') +
+          r('Tasks', { api: 'Through an API', local: 'Local model' }[S.llm_provider] || 'OpenRouter') +
           '</div><div class="wl-err" role="status">' + esc(keyError) + '</div>';
       }
     };
@@ -721,13 +720,12 @@
       else if (t.id === 'wl-sysaudio') set('meeting_system_audio', t.checked);
       else if (t.name === 'wl-mt') set('meeting_transcribe', t.value);
       else if (t.id === 'wl-notice') set('recording_notice', t.checked);
-      else if (t.id === 'wl-taskhub') set('task_hub_enabled', t.checked);
       else if (t.id === 'wl-summary') set('summary_enabled', t.checked);
       else if (t.name === 'wl-llm') set('llm_provider', t.value);
       else return;
       if (rerender) render();
     });
-    // The key goes straight to the keychain, never into the settings payload.
+    // The key goes straight to the secrets file, never into the settings payload.
     pane.addEventListener('change', function (e) {
       if (e.target.id !== 'wl-apikey' || !e.target.value) return;
       window.setLLMAPIKey(e.target.value).then(function () {

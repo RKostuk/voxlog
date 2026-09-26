@@ -543,6 +543,21 @@ func TestRecordDictationResultStillHandlesNonEmptyText(t *testing.T) {
 	}
 }
 
+// "Paste, unless it is a task": a take the LLM made tasks of is not pasted;
+// one with no tasks -- or no answer, which leaves found empty -- is.
+func TestDictationOutputModeSkipsPasteForATask(t *testing.T) {
+	task := []llm.Result{{Text: "call the accountant"}}
+	if got := dictationOutputMode(output.ModePasteUnlessTask, task); got != output.ModeNone {
+		t.Errorf("a task was delivered as %q, want %q", got, output.ModeNone)
+	}
+	if got := dictationOutputMode(output.ModePasteUnlessTask, nil); got != output.ModePasteUnlessTask {
+		t.Errorf("a non-task was delivered as %q, want it pasted", got)
+	}
+	if got := dictationOutputMode(output.ModePaste, task); got != output.ModePaste {
+		t.Errorf("plain paste changed to %q because of a task", got)
+	}
+}
+
 func TestSegmentAtFindsTheCoveringSegment(t *testing.T) {
 	segments := []diarize.Segment{
 		{Start: 0, End: 2, Speaker: 0},

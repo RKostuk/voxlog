@@ -116,6 +116,11 @@ const (
 	// the clipboard afterward (no restore) -- for when the transcript is
 	// wanted in both places.
 	ModePasteCopy = "paste_copy"
+	// ModePasteUnlessTask pastes like ModePaste, except a dictation the LLM
+	// reads as a task is not pasted at all -- it was said to be written down,
+	// not typed. Emit itself just pastes: whether to call it is the caller's
+	// decision, made on the classifier's answer (see recordDictationResult).
+	ModePasteUnlessTask = "paste_unless_task"
 )
 
 // Emit delivers text according to mode. If text is empty it does nothing
@@ -127,7 +132,7 @@ func Emit(text string, mode string) error {
 	}
 
 	switch mode {
-	case ModePaste:
+	case ModePaste, ModePasteUnlessTask:
 		// A pasteboard holding an image or a file has no text to put back, so
 		// hadText decides whether the restore happens at all -- writing an
 		// empty string instead would silently clear whatever was there.

@@ -343,7 +343,8 @@ func (a *app) transcribeMeetingEntry(m history.Meeting, spec asr.ModelSpec, lang
 			log.Printf("meeting: attaching the transcript: %v", err)
 			return
 		}
-		go a.classifyForTasks(history.KindMeeting, m.Start.Format(time.RFC3339Nano), text)
+		// No tasks out of a meeting: what it leaves to do is listed as the
+		// summary's action items instead (see llm.ActionItemsLabel).
 		go a.summarizeMeeting(m.Start, text)
 		a.discardMeetingAudioIfDisabled(m)
 		ui.RefreshMainWindowIfOpen(a.hist, a.meetings, a.tasks)

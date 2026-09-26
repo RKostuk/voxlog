@@ -2,6 +2,7 @@ package main
 
 import (
 	"errors"
+	"fmt"
 	"log"
 	"path/filepath"
 	"strings"
@@ -10,9 +11,9 @@ import (
 
 	"voxlog-go/internal/asr"
 	"voxlog-go/internal/history"
-	"voxlog-go/internal/keychain"
 	"voxlog-go/internal/llm"
 	"voxlog-go/internal/mcp"
+	"voxlog-go/internal/secrets"
 	"voxlog-go/internal/settings"
 	"voxlog-go/internal/task"
 	"voxlog-go/internal/ui"
@@ -25,11 +26,13 @@ import (
 // handful of variables closed over by one function the way a single take's
 // was.
 type app struct {
-	store     *settings.Store
-	hist      *history.Store
-	meetings  *history.MeetingStore
-	tasks     *task.Store
-	llm       *llm.Cache
+	store    *settings.Store
+	hist     *history.Store
+	meetings *history.MeetingStore
+	tasks    *task.Store
+	llm      *llm.Cache
+	// secrets holds the LLM providers' API keys (see internal/secrets).
+	secrets   *secrets.Store
 	modelsDir string
 	overlay   *ui.Overlay
 	models    *transcriberCache
@@ -53,6 +56,16 @@ type app struct {
 	// a recording starts, re-made when the next re-read asks for it.
 	backfillStop chan struct{}
 
+	// orLimits is when each OpenRouter account's free daily limit comes
+	// back, by account ID, for the accounts that have hit it (see
+	// noteLLMResult). In memory only: a restart forgets it, and the next
+	// refused request learns it again.
+	orLimitMu sync.Mutex
+	orLimits  map[string]time.Time
+	// orQuotas is the last free-request count read per account, and when:
+	// the panes redraw often, and the count only moves with a request.
+	orQuotas map[string]cachedQuota
+
 	// onMeetingState shows or hides the tray's "Stop meeting recording" item.
 	// A menu entry that does nothing most of the time is worse than no entry.
 	onMeetingState func(running bool)
@@ -73,6 +86,7 @@ func newApp(store *settings.Store, hist *history.Store, meetings *history.Meetin
 		meetings:  meetings,
 		tasks:     tasks,
 		llm:       llm.NewCache(modelsDir),
+		secrets:   secrets.Open(secrets.DefaultPath(settings.Path())),
 		modelsDir: modelsDir,
 		overlay:   overlay,
 		models:    &transcriberCache{},
@@ -165,17 +179,17 @@ func currentLLMJobs() []ui.DecodeStatus {
 // downloaded model (llm starts and owns that server itself), or the API or
 // OpenRouter account the user configured. The key is read here, per call, rather than held in
 // memory for the life of the process -- it changes in Settings, and the
-// keychain is the one copy of it.
+// secrets file is the one copy of it.
 func (a *app) llmEndpoint(cfg settings.Settings) llm.Endpoint {
-	return endpointFor(cfg, keychain.Get)
+	return endpointFor(cfg, a.secrets.Get)
 }
 
-// endpointFor is llmEndpoint with the keychain passed in, so which key and
-// which address a configuration ends up using can be tested without one.
+// endpointFor is llmEndpoint with the key lookup passed in, so which key and
+// which address a configuration ends up using can be tested without a file.
 func endpointFor(cfg settings.Settings, getKey func(service, account string) (string, error)) llm.Endpoint {
 	readKey := func(service, account string) string {
 		key, err := getKey(service, account)
-		if err != nil && !errors.Is(err, keychain.ErrNotFound) {
+		if err != nil && !errors.Is(err, secrets.ErrNotFound) {
 			// Not fatal: an endpoint on the local network may want no key at
 			// all, and a provider that does will say so itself in the reply.
 			log.Printf("llm: reading the API key: %v", err)
@@ -190,7 +204,7 @@ func endpointFor(cfg settings.Settings, getKey func(service, account string) (st
 		return llm.Endpoint{
 			BaseURL: cfg.LLMBaseURL,
 			Model:   cfg.LLMModel,
-			APIKey:  readKey(keychain.LLMService, keychain.LLMAccount),
+			APIKey:  readKey(secrets.LLMService, secrets.LLMAccount),
 		}
 	case settings.LLMProviderOpenRouter:
 		// No model picked means nothing to ask: the zero endpoint keeps
@@ -204,7 +218,7 @@ func endpointFor(cfg settings.Settings, getKey func(service, account string) (st
 		}
 		key := ""
 		if cfg.OpenRouterActive != "" {
-			key = readKey(keychain.OpenRouterService, cfg.OpenRouterActive)
+			key = readKey(secrets.OpenRouterService, cfg.OpenRouterActive)
 		}
 		return llm.Endpoint{
 			BaseURL:   llm.OpenRouterBaseURL,
@@ -221,8 +235,10 @@ func endpointFor(cfg settings.Settings, getKey func(service, account string) (st
 // anyway, as this used to, would mean a remote-only setup silently did
 // nothing.
 func (a *app) llmReady(cfg settings.Settings) bool {
-	if a.llmEndpoint(cfg).Remote() {
-		return true
+	if ep := a.llmEndpoint(cfg); ep.Remote() {
+		// OpenRouter answers nothing without a key, and there is no point
+		// sending every dictation off to be refused.
+		return cfg.LLMProvider != settings.LLMProviderOpenRouter || strings.TrimSpace(ep.APIKey) != ""
 	}
 	return asr.IsDownloaded(a.modelsDir, llm.Spec)
 }
@@ -234,9 +250,21 @@ func (a *app) llmReady(cfg settings.Settings) bool {
 // classification is a background feature quietly doing nothing, not a
 // failure worth a banner.
 func (a *app) classifyForTasks(sourceKind, sourceKey, text string) {
-	cfg := a.store.Get()
-	if !cfg.TaskHubEnabled || !a.llmReady(cfg) {
+	results, err := a.findTasks(sourceKind, text)
+	if err != nil {
+		log.Printf("task classify: %v", err)
 		return
+	}
+	a.saveTasks(sourceKind, sourceKey, results)
+}
+
+// findTasks asks the LLM which tasks text holds. An error means the question
+// could not be answered -- no model, no key, a rate limit -- which is not
+// the same as the empty answer "no tasks".
+func (a *app) findTasks(sourceKind, text string) ([]llm.Result, error) {
+	cfg := a.store.Get()
+	if !a.llmReady(cfg) {
+		return nil, fmt.Errorf("no model is ready (provider %q)", cfg.LLMProvider)
 	}
 	label := "Dictation"
 	if sourceKind == history.KindMeeting {
@@ -244,37 +272,43 @@ func (a *app) classifyForTasks(sourceKind, sourceKey, text string) {
 	}
 	defer trackLLM(label, "Finding tasks")()
 
-	entities := a.entityNames(cfg)
 	rejected, err := a.tasks.LoadRejected()
 	if err != nil {
 		log.Printf("task classify: rejected examples: %v", err)
 	}
+	if err := a.limitedLLM(cfg); err != nil {
+		return nil, err
+	}
 	modelDir := asr.ModelDir(a.modelsDir, llm.Spec)
-	result, err := a.llm.Classify(modelDir, text, entities, rejected, cfg.TaskPromptExtra, time.Now(), a.llmEndpoint(cfg))
-	if err != nil {
-		log.Printf("task classify: %v", err)
-		return
-	}
-	if !result.IsTask {
-		return
-	}
+	results, err := a.llm.Classify(modelDir, text, a.entityNames(cfg), rejected, cfg.TaskPromptExtra, time.Now(), a.llmEndpoint(cfg))
+	a.noteLLMResult(cfg, err)
+	return results, err
+}
 
-	t := task.Task{
-		ID:         task.NewID(),
-		SourceKind: sourceKind,
-		SourceKey:  sourceKey,
-		Text:       result.Text,
-		Entity:     a.taskEntity(sourceKind, sourceKey, result.Entity),
-		Status:     task.Status(result.Status),
-		Reminder:   result.Reminder,
-		Created:    time.Now(),
-	}
-	if err := a.tasks.Append(t); err != nil {
-		log.Printf("task append: %v", err)
+// saveTasks files what findTasks found under the transcript it came from.
+func (a *app) saveTasks(sourceKind, sourceKey string, results []llm.Result) {
+	if len(results) == 0 {
 		return
 	}
-	if t.Reminder != nil {
-		task.ScheduleReminder(t)
+	for _, result := range results {
+		t := task.Task{
+			ID:         task.NewID(),
+			SourceKind: sourceKind,
+			SourceKey:  sourceKey,
+			Text:       result.Text,
+			Notes:      result.Notes,
+			Entity:     a.taskEntity(sourceKind, sourceKey, result.Entity),
+			Status:     task.Status(result.Status),
+			Reminder:   result.Reminder,
+			Created:    time.Now(),
+		}
+		if err := a.tasks.Append(t); err != nil {
+			log.Printf("task append: %v", err)
+			continue
+		}
+		if t.Reminder != nil {
+			task.ScheduleReminder(t)
+		}
 	}
 	ui.RefreshMainWindowIfOpen(a.hist, a.meetings, a.tasks)
 }
@@ -324,6 +358,10 @@ func (a *app) summarizeMeeting(start time.Time, text string) {
 	if !cfg.SummaryEnabled || !a.llmReady(cfg) {
 		return
 	}
+	if err := a.limitedLLM(cfg); err != nil {
+		log.Printf("meeting summarize: %v", err)
+		return
+	}
 	defer trackLLM("Meeting, "+start.Format("15:04"), "Summarising")()
 
 	entities := a.entityNames(cfg)
@@ -332,6 +370,7 @@ func (a *app) summarizeMeeting(start time.Time, text string) {
 		Length: cfg.SummaryLength,
 		Extra:  cfg.SummaryPromptExtra,
 	}, a.llmEndpoint(cfg))
+	a.noteLLMResult(cfg, err)
 	if err != nil {
 		log.Printf("meeting summarize: %v", err)
 		return
@@ -486,6 +525,17 @@ func (a *app) releaseOverlay() {
 // meeting with no summary.
 func (a *app) testLLM(cfg settings.Settings) error {
 	ep := a.llmEndpoint(cfg)
+	if cfg.LLMProvider == settings.LLMProviderOpenRouter {
+		if len(cfg.OpenRouterAccounts) == 0 || cfg.OpenRouterActive == "" {
+			return errors.New("add an OpenRouter account first")
+		}
+		if strings.TrimSpace(cfg.OpenRouterModel) == "" {
+			return errors.New("choose a model first")
+		}
+		if err := llm.CheckOpenRouterKey(ep.APIKey); err != nil {
+			return err
+		}
+	}
 	if !ep.Remote() {
 		if !asr.IsDownloaded(a.modelsDir, llm.Spec) {
 			return errors.New("the local model is not downloaded yet")
@@ -496,5 +546,149 @@ func (a *app) testLLM(cfg settings.Settings) error {
 			return err
 		}
 	}
-	return llm.Ping(ep)
+	err := llm.Ping(ep)
+	a.noteLLMResult(cfg, err)
+	return err
+}
+
+type cachedQuota struct {
+	q  llm.FreeQuota
+	at time.Time
+}
+
+// quotaTTL is how long a read count is shown before it is read again.
+const quotaTTL = 20 * time.Second
+
+// openRouterQuotas is how today's free requests stand for each account with
+// a key, for the panes. The count comes from OpenRouter itself; an account
+// found used up is marked limited (see limitedLLM) before any request is
+// refused, and one found with requests left again is cleared.
+func (a *app) openRouterQuotas(ids []string) map[string]ui.OpenRouterQuota {
+	out := map[string]ui.OpenRouterQuota{}
+	for _, id := range ids {
+		key, err := a.secrets.Get(secrets.OpenRouterService, id)
+		if err != nil || llm.CheckOpenRouterKey(key) != nil {
+			continue
+		}
+		q, ok := a.freeQuota(id, key)
+		entry := ui.OpenRouterQuota{Used: q.Used, Limit: q.Limit, Remaining: q.Remaining}
+		if ok {
+			a.orLimitMu.Lock()
+			if q.Remaining > 0 {
+				delete(a.orLimits, id)
+			} else if _, known := a.orLimits[id]; !known {
+				if a.orLimits == nil {
+					a.orLimits = map[string]time.Time{}
+				}
+				a.orLimits[id] = nextUTCMidnight()
+			}
+			a.orLimitMu.Unlock()
+		}
+		if reset := a.openRouterLimit(id); !reset.IsZero() {
+			entry.Reset = reset.UnixMilli()
+			entry.Remaining = 0
+		}
+		out[id] = entry
+	}
+	return out
+}
+
+// freeQuota is the cached count for id, read again once it is older than
+// quotaTTL. ok is false when it could not be read at all.
+func (a *app) freeQuota(id, key string) (llm.FreeQuota, bool) {
+	a.orLimitMu.Lock()
+	c, hit := a.orQuotas[id]
+	a.orLimitMu.Unlock()
+	if hit && time.Since(c.at) < quotaTTL {
+		return c.q, true
+	}
+	q, err := llm.KeyFreeQuota(llm.OpenRouterBaseURL, key)
+	if err != nil {
+		log.Printf("openrouter: reading the free request count: %v", err)
+		return c.q, hit
+	}
+	a.orLimitMu.Lock()
+	if a.orQuotas == nil {
+		a.orQuotas = map[string]cachedQuota{}
+	}
+	a.orQuotas[id] = cachedQuota{q: q, at: time.Now()}
+	a.orLimitMu.Unlock()
+	return q, true
+}
+
+// nextUTCMidnight is when OpenRouter's free allowance comes back.
+func nextUTCMidnight() time.Time {
+	return time.Now().UTC().Truncate(24 * time.Hour).Add(24 * time.Hour)
+}
+
+// openRouterLimit is when account id's free daily limit comes back, or zero
+// if it has not run out (or has already come back).
+func (a *app) openRouterLimit(id string) time.Time {
+	a.orLimitMu.Lock()
+	defer a.orLimitMu.Unlock()
+	reset, ok := a.orLimits[id]
+	if !ok || time.Now().After(reset) {
+		return time.Time{}
+	}
+	return reset
+}
+
+// limitedLLM is the error for a request not worth sending: the active
+// OpenRouter account has used up its free requests for today, and asking
+// again before the reset only burns time -- which, before a paste, the user
+// is waiting through.
+func (a *app) limitedLLM(cfg settings.Settings) error {
+	if cfg.LLMProvider != settings.LLMProviderOpenRouter {
+		return nil
+	}
+	if reset := a.openRouterLimit(cfg.OpenRouterActive); !reset.IsZero() {
+		return fmt.Errorf("the OpenRouter account's free daily limit is used up until %s", reset.Local().Format("15:04"))
+	}
+	return nil
+}
+
+// noteLLMResult keeps track of the active OpenRouter account's daily limit:
+// a refusal marks the account until the reset (with one notification, so
+// the missing tasks and summaries have a reason), and any success clears it
+// -- credits added, or the reset has passed early.
+func (a *app) noteLLMResult(cfg settings.Settings, err error) {
+	if cfg.LLMProvider != settings.LLMProviderOpenRouter || cfg.OpenRouterActive == "" {
+		return
+	}
+	id := cfg.OpenRouterActive
+	// Whatever the outcome, a request may have moved the count.
+	a.orLimitMu.Lock()
+	delete(a.orQuotas, id)
+	a.orLimitMu.Unlock()
+	var limit *llm.RateLimitError
+	if err == nil || !errors.As(err, &limit) || !limit.Daily {
+		if err == nil {
+			a.orLimitMu.Lock()
+			_, was := a.orLimits[id]
+			delete(a.orLimits, id)
+			a.orLimitMu.Unlock()
+			if was {
+				ui.RefreshMainWindowIfOpen(a.hist, a.meetings, a.tasks)
+			}
+		}
+		return
+	}
+	reset := limit.Reset
+	if reset.IsZero() {
+		// Not said: OpenRouter's day is UTC's.
+		reset = nextUTCMidnight()
+	}
+	a.orLimitMu.Lock()
+	if a.orLimits == nil {
+		a.orLimits = map[string]time.Time{}
+	}
+	_, known := a.orLimits[id]
+	a.orLimits[id] = reset
+	a.orLimitMu.Unlock()
+	if !known {
+		// Overview's AI line reads the limit when it is drawn.
+		ui.RefreshMainWindowIfOpen(a.hist, a.meetings, a.tasks)
+		notifyPane("OpenRouter: the free limit for today is used up, until "+reset.Local().Format("15:04")+
+			". Tasks and summaries wait until then, or switch to another account in Settings.", ui.PaneSettings)
+	}
 }

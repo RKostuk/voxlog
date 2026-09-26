@@ -76,6 +76,21 @@
   .panel { background: var(--card); border: none; border-radius: var(--r-md); padding: 13px 14px; box-shadow: var(--glass-low); }
   .panel.spaced { margin-top: 14px; }
   .panel.spaced-below { margin-bottom: 14px; }
+  /* Numbered, because an action item list is read as "how many, and
+     which one" -- the number sits in a small accent disc so the list reads
+     as steps rather than as a paragraph broken into lines. */
+  .action-items { margin: 0; padding: 0; list-style: none; counter-reset: ai; }
+  .action-items li { counter-increment: ai; position: relative; padding-left: 30px; line-height: 1.45; }
+  .action-items li::before {
+    content: counter(ai); position: absolute; left: 0; top: 0;
+    width: 20px; height: 20px; border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 11px; font-weight: 600; font-variant-numeric: tabular-nums;
+    background: color-mix(in srgb, var(--accent) 16%, transparent); color: var(--accent);
+  }
+  .action-items li + li { margin-top: 8px; padding-top: 8px; border-top: 0.5px solid var(--separator); }
+  .action-items li + li::before { top: 8px; }
+  .summary-text { line-height: 1.5; }
   .panel h3 { margin: 0 0 10px; font-size: var(--fs-caption); font-weight: 600; text-transform: uppercase; letter-spacing: .06em; color: var(--secondary); }
   /* align-items: start, or the shorter panel is stretched to the taller
      one's height and ends in a band of empty glass. */
@@ -214,6 +229,17 @@
   .spk-row:hover .act, .spk-row:focus-within .act,
   .voice-item.open .act, .act:focus-visible { opacity: 1; }
   .act.danger { color: var(--red); }
+  .ai-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 10px 12px; }
+  .ai-what { flex: 1; min-width: 0; color: var(--label); }
+  .ai-model { color: var(--secondary); }
+  .ai-state { border: none; background: none; padding: 0; font: inherit; font-size: 12px; font-weight: 600; }
+  .ai-state.ok { color: var(--green); }
+  .ai-state.bad { color: var(--red); cursor: pointer; }
+  .ai-state.low { color: var(--orange); }
+  /* An OpenRouter account out of free requests for the day, and the line
+     above the accounts that says so (settings-pane.html). */
+  .subtext.warn#or-limit-banner { color: var(--red); font-weight: 600; }
+  .pill-limit { color: var(--red); font-weight: 600; font-size: 12px; }
   .act.danger:hover:not(:disabled) { background: var(--red); color: #fff; }
   .act.primary { background: var(--accent); color: #fff; }
   .act.quiet { background: none; color: var(--accent); }
@@ -629,10 +655,12 @@
   :is(.tag, .status-select, .entry .pill).status-blocked { background: color-mix(in srgb, var(--red) 16%, transparent); color: var(--red-ink); }
   :is(.tag, .status-select, .entry .pill).status-done { background: color-mix(in srgb, var(--green) 18%, transparent); color: var(--green-ink); }
 
-  .task-summary { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-top: 16px; }
-  /* The same object as an Overview tile -- four numbers in a row across the
-     top of a pane -- so the same geometry, not a near-miss of it. */
+  .task-summary { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; }
+  @media (max-width: 560px) { .task-summary { grid-template-columns: 1fr 1fr; } }
+  /* The same object as an Overview tile, so the same geometry, not a
+     near-miss of it. A button: each one opens Tasks on that status. */
   .task-stat {
+    border: none; font: inherit; color: inherit; text-align: left; cursor: pointer;
     background: var(--card);
     -webkit-backdrop-filter: blur(20px) saturate(180%);
     backdrop-filter: blur(20px) saturate(180%);
@@ -841,8 +869,12 @@
           </div>
         </div>
         <div class="provenance" id="overview-provenance"></div>
-        <div class="group-title day">Recent</div>
-        <div class="card" id="overview-recent"></div>
+        <!-- Where the tasks stand, under the dictation figures and above
+             the AI line that produces them. -->
+        <div class="group-title day">Tasks</div>
+        <div class="task-summary" id="overview-tasks"></div>
+        <div class="group-title day">AI</div>
+        <div class="card" id="overview-ai"></div>
       </div>
       <div class="pane" data-pane="history"><div id="history-list"></div></div>
       <div class="pane" data-pane="meetings">
@@ -859,7 +891,6 @@
         <div id="people-pane" hidden></div>
       </div>
       <div class="pane" data-pane="tasks">
-        <div class="task-summary" id="task-summary"></div>
         <div class="pane-filters" id="task-filters"></div>
         <!-- List and one task open beside it. The detail used to expand
              inside the row, which pushed everything under it down the page;
@@ -906,7 +937,7 @@
         (window.voxlog && window.voxlog.days) || [], 'No transcripts yet.');
       renderMeetings(document.getElementById('meetings-filters'), document.getElementById('meetings-list'),
         (window.voxlog && window.voxlog.meetings) || [], 'No meetings recorded yet.');
-      renderTasks(document.getElementById('task-summary'), document.getElementById('task-filters'),
+      renderTasks(document.getElementById('task-filters'),
         document.getElementById('task-groups'), (window.voxlog && window.voxlog.tasks) || []);
       renderOverview();
       renderDecodeBanners();
@@ -1085,9 +1116,31 @@
       return '<div class="talk-strip" aria-hidden="true">' + parts + '</div>';
     }
 
+    // splitSummary separates a stored summary into its sentences and its
+    // action items: the Go side stores them as one string, the items after
+    // an "ACTION ITEMS:" line, one "- " line each (llm.ActionItemsLabel).
+    function splitSummary(s) {
+      var at = s.indexOf('\nACTION ITEMS:');
+      if (at === -1) return { text: s, items: [] };
+      var items = s.slice(at).split('\n').slice(2).map(function (l) {
+        return l.replace(/^\s*-\s*/, '').replace(/^\d{1,2}[.)]\s+/, '').trim();
+      }).filter(Boolean);
+      return { text: s.slice(0, at).trim(), items: items };
+    }
+
+    // meetingSummaryHTML is the meeting's summary and, when it has any, its
+    // action items as a list of their own.
+    function meetingSummaryHTML(summary) {
+      if (!summary) return '';
+      var s = splitSummary(summary);
+      return (s.text ? '<div class="panel spaced-below"><h3>Summary</h3><div class="summary-text">' + escapeHtml(s.text) + '</div></div>' : '') +
+        (s.items.length ? '<div class="panel spaced-below"><h3>Action items &middot; ' + s.items.length + '</h3><ol class="action-items">' +
+          s.items.map(function (i) { return '<li>' + escapeHtml(i) + '</li>'; }).join('') + '</ol></div>' : '');
+    }
+
     function meetingCardHTML(e) {
       var summary = e.summary
-        ? '<div class="m-sum">' + escapeHtml(e.summary) + '</div>'
+        ? '<div class="m-sum">' + escapeHtml(splitSummary(e.summary).text) + '</div>'
         : '<div class="m-sum none">' + (e.text
             ? escapeHtml(e.text.slice(0, 220))
             : (e.has_audio ? 'Not transcribed yet' : 'No transcript, and the audio is gone')) + '</div>';
@@ -1541,7 +1594,7 @@
           '<span class="detail-field">Project <select id="meeting-entity" class="select"></select></span>' +
           detailTranscribeHTML(meeting) +
         '</div>' +
-        (meeting.summary ? '<div class="panel spaced-below"><h3>Summary</h3>' + escapeHtml(meeting.summary) + '</div>' : '') +
+        meetingSummaryHTML(meeting.summary) +
         statsHTML(meeting) +
         timelineHTML(meeting) +
         turnsHTML() +
@@ -2516,7 +2569,7 @@
       root.innerHTML = entitySelect + '<div class="filter-chips">' + statusChips + '</div>';
 
       var reRender = function () {
-        renderTasks(document.getElementById('task-summary'), document.getElementById('task-filters'),
+        renderTasks(document.getElementById('task-filters'),
           document.getElementById('task-groups'), window.voxlog.tasks || []);
       };
       var entitySel = root.querySelector('#task-filter-entity');
@@ -2526,15 +2579,7 @@
       });
     }
 
-    function renderTasks(summaryRoot, filtersRoot, groupsRoot, allTasks) {
-      var counts = { todo: 0, in_progress: 0, blocked: 0, done: 0 };
-      allTasks.forEach(function (t) { if (counts[t.status] !== undefined) counts[t.status]++; });
-      summaryRoot.innerHTML =
-        '<div class="task-stat todo"><div class="n">' + counts.todo + '</div><div class="k">To do</div></div>' +
-        '<div class="task-stat progress"><div class="n">' + counts.in_progress + '</div><div class="k">In progress</div></div>' +
-        '<div class="task-stat blocked"><div class="n">' + counts.blocked + '</div><div class="k">Blocked</div></div>' +
-        '<div class="task-stat done"><div class="n">' + counts.done + '</div><div class="k">Done</div></div>';
-
+    function renderTasks(filtersRoot, groupsRoot, allTasks) {
       renderTaskFilters(filtersRoot, allTasks);
       var tasks = allTasks.filter(function (t) {
         return (!taskFilter.entity || t.entity === taskFilter.entity) &&
@@ -3040,7 +3085,8 @@
       renderOverviewTiles(ov);
       renderOverviewProvenance(ov);
       renderOverviewChart(ov);
-      renderOverviewRecent();
+      renderOverviewTasks();
+      renderOverviewAI();
     }
 
     var spanWired = false;
@@ -3159,14 +3205,6 @@
           grouped(words) + ' words \u00b7 ' + duration(seconds) + ' of audio</span>';
     }
 
-    // Recent reuses the same row markup History and Meetings draw from --
-    // never a second copy of it -- picking the three newest across both
-    // lists by their id, which both sides format as a sortable RFC3339Nano
-    // timestamp.
-    // Overview's Recent card mixes dictations and meetings in one list, so a
-    // meeting appears there as the same compact .entry row a dictation does
-    // -- the full card belongs in the Meetings pane, where there is room for
-    // it and somewhere to click through to.
     // decodeTagHTML is the one place that decides between "in the queue" and
     // "nobody has asked for it": a row is only "Not transcribed" once it is
     // certain nothing is about to transcribe it.
@@ -3193,98 +3231,70 @@
       return '<span class="tag pending">Not transcribed</span>';
     }
 
-    function meetingRecentRowHTML(e, gi, ei) {
-      var body = e.summary || e.text || (e.has_audio ? 'Not transcribed yet' : 'No transcript');
-      return '<div class="entry" data-day="' + gi + '" data-entry="' + ei + '">' +
-        '<span class="pill" title="Length of the recording">' + duration(e.recording_seconds) + '</span>' +
-        '<div class="body"><div class="text">' + escapeHtml(body) + '</div>' +
-          '<div class="meta"><span>' + e.time + '</span><span>Meeting</span>' +
-            entityTagHTML(e.entity) +
-            decodeTagHTML(e) +
-          '</div></div>' +
-      '</div>';
-    }
-
-    // A task row is the same .entry every other row is, with one substitution:
-    // the left pill carries no elapsed time (a task has none) but the status,
-    // which is the thing worth scanning down that column for a task.
-    function taskRecentRowHTML(t, ei) {
-      var from = t.source_kind === 'meeting' ? 'meetings' : 'history';
-      return '<div class="entry task-detected" data-kind="task" data-entry="' + ei + '" data-task="' + escapeHtml(t.id) + '">' +
-        '<span class="pill ' + taskStatusClass(t.status) + '" title="Status">' +
-          escapeHtml(taskStatusLabel[t.status] || t.status) + '</span>' +
-        '<div class="body"><div class="text">' + escapeHtml(t.text) + '</div>' +
-          '<div class="meta"><span>' + escapeHtml(clockOf(t.created)) + '</span><span class="tag">Task</span>' +
-            entityTagHTML(t.entity) +
-            '<span>from ' + (from === 'meetings' ? 'meeting' : 'dictation') + '</span>' +
-          '</div></div>' +
-      '</div>';
-    }
-
-    // HH:MM out of an RFC3339 stamp. Dictations and meetings arrive with the
-    // time already formatted by Go; a task carries only its timestamp.
-    function clockOf(stamp) {
-      if (!stamp) return '';
-      var at = new Date(stamp);
-      return isNaN(at) ? '' : at.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
-    }
-
-    // Sortable to the nanosecond where there is one. Dictation and meeting ids
-    // are RFC3339Nano, a task's created stamp is plain RFC3339 -- comparing
-    // those as strings puts a task before a dictation from the same second
-    // whichever way round they happened, so the key is the parsed time.
-    function recentKey(stamp) {
-      var at = Date.parse(stamp);
-      return isNaN(at) ? 0 : at;
-    }
-
-    var overviewRecentRows = 10;
-
-    function renderOverviewRecent() {
-      var root = document.getElementById('overview-recent');
+    // renderOverviewTasks counts the tasks by status. Each tile opens Tasks
+    // filtered to its status, so the number is also the way to the list.
+    function renderOverviewTasks() {
+      var root = document.getElementById('overview-tasks');
       if (!root) return;
-      var dictations = ((window.voxlog && window.voxlog.days) || []).reduce(function (acc, g) {
-        return acc.concat(g.entries);
-      }, []);
-      var meetings = (window.voxlog && window.voxlog.meetings) || [];
       var tasks = (window.voxlog && window.voxlog.tasks) || [];
-
-      var recent = dictations.map(function (e) { return { kind: 'd', at: recentKey(e.id), e: e }; })
-        .concat(meetings.map(function (e) { return { kind: 'm', at: recentKey(e.id), e: e }; }))
-        // A task appears where it was created, which is when it was said --
-        // editing one later does not make it news again.
-        .concat(tasks.map(function (t) { return { kind: 't', at: recentKey(t.created), e: t }; }))
-        .sort(function (a, b) { return b.at - a.at; })
-        .slice(0, overviewRecentRows);
-
-      root.innerHTML = recent.length
-        ? recent.map(function (r, i) {
-            if (r.kind === 't') return taskRecentRowHTML(r.e, i);
-            return r.kind === 'm' ? meetingRecentRowHTML(r.e, 0, i) : dictationRowHTML(r.e, 0, i);
-          }).join('')
-        : '<div class="empty">Nothing recorded yet.</div>';
-
-      wireEntries(root, function (row) {
-        return recent[parseInt(row.dataset.entry, 10)] && recent[parseInt(row.dataset.entry, 10)].e;
-      });
-
-      // A task row goes where it says it goes: the Tasks pane, with that task
-      // already open. Copying its one-line text -- what every other row does
-      // on click -- would be the wrong promise for a row that is a thing to
-      // work on rather than a thing that was said.
-      root.querySelectorAll('.entry[data-kind="task"]').forEach(function (row) {
-        row.addEventListener('click', function () { openTaskInPane(row.dataset.task); });
+      var counts = { todo: 0, in_progress: 0, blocked: 0, done: 0 };
+      tasks.forEach(function (t) { if (counts[t.status] !== undefined) counts[t.status]++; });
+      var kinds = [['todo', 'todo'], ['in_progress', 'progress'], ['blocked', 'blocked'], ['done', 'done']];
+      root.innerHTML = kinds.map(function (k) {
+        return '<button type="button" class="task-stat ' + k[1] + '" data-status="' + k[0] + '">' +
+          '<div class="n">' + counts[k[0]] + '</div><div class="k">' + taskStatusLabel[k[0]] + '</div></button>';
+      }).join('');
+      root.querySelectorAll('.task-stat').forEach(function (btn) {
+        btn.addEventListener('click', function () {
+          taskFilter.status = btn.dataset.status;
+          renderTasks(document.getElementById('task-filters'),
+            document.getElementById('task-groups'), tasks);
+          window.selectPane('tasks');
+        });
       });
     }
 
-    function openTaskInPane(id) {
-      if (!id) return;
-      selectedTaskID = id;
-      renderTasks(document.getElementById('task-summary'), document.getElementById('task-filters'),
-        document.getElementById('task-groups'), (window.voxlog && window.voxlog.tasks) || []);
-      window.selectPane('tasks');
-      var row = document.querySelector('#task-groups .task-row[data-id="' + id.replace(/"/g, '\\"') + '"]');
-      if (row) row.scrollIntoView({ block: 'center' });
+    // renderOverviewAI is the one line Overview keeps about the LLM: which
+    // model answers, and whether the OpenRouter account still has free
+    // requests today -- when it has not, tasks and summaries are quietly
+    // waiting, and this is where that shows.
+    function renderOverviewAI() {
+      var root = document.getElementById('overview-ai');
+      if (!root) return;
+      var st = (window.voxlog && window.voxlog.settings) || {};
+      var provider = st.llm_provider || 'openrouter';
+      function draw(what, state) {
+        root.innerHTML = '<div class="ai-row"><div class="ai-what">' + what + '</div>' + state + '</div>';
+        var go = root.querySelector('[data-go=settings]');
+        if (go) go.addEventListener('click', function () { window.selectPane('settings'); });
+      }
+      if (provider !== 'openrouter') {
+        draw(escapeHtml(provider === 'api' ? (st.llm_model || 'API') + ' · ' + (st.llm_base_url || '') : 'Local model'), '');
+        return;
+      }
+      var acc = (st.openrouter_accounts || []).filter(function (a) { return a.id === st.openrouter_active; })[0];
+      if (!acc) {
+        draw('OpenRouter', '<button type="button" class="ai-state bad" data-go="settings">No account &middot; add one</button>');
+        return;
+      }
+      var what = 'OpenRouter &middot; ' + escapeHtml(acc.label) + ' &middot; <span class="ai-model">' + escapeHtml(st.openrouter_model || 'no model') + '</span>';
+      draw(what, '');
+      if (!window.openRouterLimits) return;
+      window.openRouterLimits([acc.id]).then(function (limits) {
+        var q = limits && limits[acc.id];
+        if (!q) return;
+        if (q.reset) {
+          draw(what, '<button type="button" class="ai-state bad" data-go="settings" title="Switch to another account in Settings">Free limit used up &middot; back at ' +
+            new Date(q.reset).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) + '</button>');
+        } else if (q.limit) {
+          // Amber for the last tenth: still working, but not for long.
+          var low = q.remaining <= Math.max(5, q.limit / 10);
+          draw(what, '<span class="ai-state ' + (low ? 'low' : 'ok') + '" title="Free-model requests left today; the count resets at midnight UTC">' +
+            q.remaining + ' of ' + q.limit + ' free requests left today</span>');
+        } else {
+          draw(what, '<span class="ai-state ok">Free requests available</span>');
+        }
+      }).catch(function () {});
     }
 
     // decodeQueue is what the app last told us is queued or decoding. The
